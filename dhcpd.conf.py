@@ -9,7 +9,7 @@ GDOC="https://docs.google.com/spreadsheets/d/e/2PACX-1vR5j6yiZCEv5YNoeVNLM4MMsxz
 r = urllib.request.urlopen(GDOC)
 d = r.read().decode('utf-8').splitlines()
 
-OUTPUT = 'static.conf'
+OUTPUT = 'dhcpd.static.conf'
 output = open(OUTPUT, 'w')
 for i, r in enumerate(csv.DictReader(d)):
     d = {}
@@ -37,6 +37,8 @@ for i, r in enumerate(csv.DictReader(d)):
         pprint.pprint(r)
         print()
         continue
+
+    r['MAC Address'] = r['MAC Address'].lower()
 
     print(file=output)
     for k, v in sorted(r.items()):
