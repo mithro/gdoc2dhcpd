@@ -1,2 +1,3 @@
 dnsmasq.static.conf
 dhcpd.static.conf
+info.json
