@@ -73,8 +73,11 @@ for (name, lineno), r in data:
     r['DHCP Name'] = dhcp_name
 
     print("dhcp-host={MAC Address},{IP},{DHCP Name}".format(**r),file=output)
+    # `host-record` should add both address and ptr-record
+    print("host-record={DHCP Name}.k207.mithis.com,{IP}".format(**r),file=output)
+    #print("address=/{DHCP Name}.k207.mithis.com/{IP}".format(**r),file=output)
+    #print("ptr-record=/{DHCP Name}.k207.mithis.com/{IP}".format(**r),file=output)
     print("address=/{DHCP Name}/{IP}".format(**r),file=output)
-    print("address=/{DHCP Name}.k207.mithis.com/{IP}".format(**r),file=output)
 
 print('-'*75)
 
