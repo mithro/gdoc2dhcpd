@@ -4,6 +4,9 @@ all: dnsmasq.static.conf dhcpd.static.conf
 
 dnsmasq.static.conf: dnsmasq.py
 	./dnsmasq.py
+	dnsmasq --test
+
+dnsmasq.reload:
 	systemctl restart dnsmasq
 	systemctl status dnsmasq
 
