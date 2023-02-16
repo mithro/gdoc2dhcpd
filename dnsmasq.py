@@ -37,7 +37,6 @@ for name, doc in GDOC.items():
 with open('info.json', 'w') as f:
     json.dump(data, f, indent="  ", sort_keys=True)
 
-
 good_data = []
 for i, ((name, lineno), r) in enumerate(data):
     skip = []
@@ -107,8 +106,12 @@ for r in good_data:
         print('# {}: {}'.format(k, v), file=output)
 
     print("dhcp-host={MAC Address},{IP},{DHCP Name}".format(**r),file=output)
+    # `host-record` should add both address and ptr-record
     print("host-record={Host Name}.k207.mithis.com,{IP}".format(**r),file=output)
     print("address=/{Host Name}/{IP}".format(**r),file=output)
+    #print("address=/{DHCP Name}.k207.mithis.com/{IP}".format(**r),file=output)
+    print("address=/{DHCP Name}/{IP}".format(**r),file=output)
+    #print("ptr-record=/{DHCP Name}.k207.mithis.com/{IP}".format(**r),file=output)
 
 print('-'*75)
 
