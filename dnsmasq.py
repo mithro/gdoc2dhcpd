@@ -34,8 +34,61 @@ for name, doc in GDOC.items():
             continue
         data.append(((name, i), d))
 
+
 with open('info.json', 'w') as f:
     json.dump(data, f, indent="  ", sort_keys=True)
+
+
+def is_iot(ip):
+    return ip.startswith('10.1.20.')
+
+
+def is_local(ip):
+    """
++--------------------+-------------------------------+-------------+-----------------+-
+| Address block      | Address range                 | Addresses   | Scope           | Description
++--------------------+-------------------------------+-------------+-----------------+-
+| 0.0.0.0         /8  | 0.0.0.0      0  .255.255.255 |  16,777,216 | Software        | Current network.
+| 10.0.0.0        /8  | 10.0.0.0     10 .255.255.255 |  16,777,216 | Private network | Used for local communications within a private network.
+| 100.64.0.0      /10 | 100.64.0.0   100.127.255.255 |   4,194,304 | Private network | Shared address space[9] for communications between a service provider and its subscribers when using a carrier-grade NAT.
+| 127.0.0.0       /8  | 127.0.0.0    127.255.255.255 |  16,777,216 | Host            | Used for loopback addresses to the local host.
+| 169.254.0.0     /16 | 169.254.0.0  169.254.255.255 |      65,536 | Subnet          | Used for link-local addresses between two hosts on a single link when no IP address is otherwise specified, such as would have normally been retrieved from a DHCP server.
+| 172.16.0.0      /12 | 172.16.0.0   172.31 .255.255 |   1,048,576 | Private network | Used for local communications within a private network.
+| 192.0.0.0       /24 | 192.0.0.0    192.0  .0  .255 |         256 | Private network | IETF Protocol Assignments.
+| 192.0.2.0       /24 | 192.0.2.0    192.0  .2  .255 |         256 | Documentation   | Assigned as TEST-NET-1, documentation and examples.
+| 192.88.99.0     /24 | 192.88.99.0  192.88 .99 .255 |         256 | Internet        | Reserved. (Formerly used for IPv6 to IPv4 relay, included IPv6 address block 2002::/16.)
+| 192.168.0.0     /16 | 192.168.0.0  192.168.255.255 |      65,536 | Private network | Used for local communications within a private network.
+| 198.18.0.0      /15 | 198.18.0.0   198.19 .255.255 |     131,072 | Private network | Used for benchmark testing of inter-network communications between two separate subnets.
+| 198.51.100.0    /24 | 198.51.100.0 198.51 .100.255 |         256 | Documentation   | Assigned as TEST-NET-2, documentation and examples.
+| 203.0.113.0     /24 | 203.0.113.0  203.0  .113.255 |         256 | Documentation   | Assigned as TEST-NET-3, documentation and examples.
+| 224.0.0.0       /4  | 224.0.0.0    239.255.255.255 | 268,435,456 | Internet        | In use for IP multicast. (Former Class D network.)
+| 233.252.0.0     /24 | 233.252.0.0  233.252.0  .255 |         256 | Documentation   | Assigned as MCAST-TEST-NET, documentation and examples.
+| 240.0.0.0       /4  | 240.0.0.0    255.255.255.254 | 268,435,455 | Internet        | Reserved for future use. (Former Class E network.)
+| 255.255.255.255 /32 |              255.255.255.255 |           1 | Subnet          | Reserved for the "limited broadcast" destination address.
++--------------------+-------------------------------+-------------+-----------------+-
+    """
+    # https://en.wikipedia.org/wiki/Reserved_IP_addresses
+    # 10.0.0.0 to 10.255.255.255, a range that provides up to 16 million unique IP addresses.
+    # 172.16.0.0 to 172.31.255.255, providing about 1 million unique IP addresses.
+    # 192.168.0.0 to 192.168.255.255, which offers about 65,000 unique IP addresses.
+    if ip.startswith('10.'):
+        return True
+    elif ip.startswith('172.'): # Eh, close enough....
+        return True
+    elif ip.startswith('192.168.'):
+        return True
+    # Private...
+    elif ip.startswith('192.0.'):
+        return True
+    # Test NETs
+    elif ip.startswith('198.0.'):
+        return True
+    # Link-local IP address ranges
+    elif ip.startswith('169.254.'):
+        return True
+    #  Carrier-grade NAT - 100.64.0.0/10 (100.64.0.0 to 100.127.255.255, netmask 255.192.0.0)
+    return False
+
 
 good_data = []
 for i, ((name, lineno), r) in enumerate(data):
