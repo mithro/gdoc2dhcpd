@@ -37,9 +37,9 @@ for name, doc in GDOC.items():
 with open('info.json', 'w') as f:
     json.dump(data, f, indent="  ", sort_keys=True)
 
-OUTPUT = 'dnsmasq.static.conf'
-output = open(OUTPUT, 'w')
-for (name, lineno), r in data:
+
+good_data = []
+for i, ((name, lineno), r) in enumerate(data):
     skip = []
     if not r.get('MAC Address', None):
         skip.append('No MAC address')
@@ -58,23 +58,57 @@ for (name, lineno), r in data:
 
     r['MAC Address'] = r['MAC Address'].lower()
 
+    host_name = r['Machine'].lower().strip()
+    if 'Interface' in r and r['Interface'].strip():
+        host_name = r['Interface'].lower().strip()+'.'+host_name
+    #if name == 'IoT':
+    #    host_name += '.iot'
+    r['Host Name'] = host_name
+
+    dhcp_name = r['Machine'].lower().strip()
+    if 'Interface' in r and r['Interface'].strip():
+        dhcp_name = r['Interface'].lower().strip()+'-'+dhcp_name
+    simple_dhcp_name = re.sub('[^a-z0-9.\-_]+','#',dhcp_name)
+    assert dhcp_name == simple_dhcp_name, ('Invalid characters in machine name!', dhcp_name, simple_dhcp_name)
+    r['DHCP Name'] = dhcp_name
+
+    good_data.append(r)
+
+
+hostname2ip = {}
+ip2hostname = {}
+for r in good_data:
+    hostname = r['Machine']
+    ip = r['IP']
+
+    if ip not in ip2hostname:
+        ip2hostname[ip] = []
+    ip2hostname[ip].append(hostname)
+
+    hostname.split('.')
+
+    if hostname not in hostname2ip:
+        hostname2ip[hostname] = []
+
+    hostname2ip[hostname].append(ip)
+
+pprint.pprint(hostname2ip)
+pprint.pprint(ip2hostname)
+
+sys.exit(1)
+
+OUTPUT = 'dnsmasq.static.conf'
+output = open(OUTPUT, 'w')
+for r in good_data:
     print(file=output)
     for k, v in sorted(r.items()):
         if not v.strip():
             continue
         print('# {}: {}'.format(k, v), file=output)
 
-    dhcp_name = r['Machine'].lower().strip()
-    if 'Interface' in r and r['Interface'].strip():
-        dhcp_name = r['Interface'].lower().strip()+'.'+dhcp_name
-
-    simple_dhcp_name = re.sub('[^a-z0-9.\-_]+','#',dhcp_name)
-    assert dhcp_name == simple_dhcp_name, ('Invalid characters in machine name!', dhcp_name, simple_dhcp_name)
-    r['DHCP Name'] = dhcp_name
-
     print("dhcp-host={MAC Address},{IP},{DHCP Name}".format(**r),file=output)
-    print("address=/{DHCP Name}/{IP}".format(**r),file=output)
-    print("address=/{DHCP Name}.k207.mithis.com/{IP}".format(**r),file=output)
+    print("host-record={Host Name}.k207.mithis.com,{IP}".format(**r),file=output)
+    print("address=/{Host Name}/{IP}".format(**r),file=output)
 
 print('-'*75)
 
