@@ -1,4 +1,8 @@
 dnsmasq.static.conf
 dhcpd.static.conf
 info.json
+good.json
+hosts.json
+macs.json
+sshfp.json
 .*.sw*
