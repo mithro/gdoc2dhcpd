@@ -313,7 +313,7 @@ def dhcp_host_config(ip2mac):
     output.append('# '+'-'*70)
     for ip, macs in sorted(ip2mac.items(), key=lambda x: ip_sort(x[0])):
         dhcp_names = set(m[1] for m in macs)
-        dhcp_name = common_suffix(*dhcp_names)
+        dhcp_name = common_suffix(*dhcp_names).strip('-')
 
         output.append("dhcp-host=%s,%s,%s" % (",".join(m[0] for m in macs), ip, dhcp_name))
     output.append('# '+'-'*70)
@@ -524,18 +524,16 @@ def main(argv):
 
     output.append('')
 
-    print("-"*75)
-    for l in output:
-        print(l)
-    print("-"*75)
-    return 1
-
     OUTPUT = 'dnsmasq.static.conf'
-    output = open(OUTPUT, 'w')
-    output.close()
+    with open(OUTPUT, 'w') as f:
+        for l in output:
+            f.write(l)
+            f.write('\n')
+
+    print("-"*75)
     with open(OUTPUT) as f:
         print(f.read())
-
+    print("-"*75)
 
 
 # DNSMasq configuration directives
