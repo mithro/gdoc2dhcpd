@@ -134,9 +134,9 @@ def get_data():
         simple_dhcp_name = re.sub('[^a-z0-9.\-_]+','#',dhcp_name)
         assert dhcp_name == simple_dhcp_name, ('Invalid characters in machine name!', dhcp_name, simple_dhcp_name)
         if name == 'IoT':
-            dhcp_name += '-iot'
-        elif name == 'Test':
-            dhcp_name += '-test'
+            dhcp_name += '.iot'
+        #elif name == 'Test':
+        #    dhcp_name += '-test'
         r['DHCP Name'] = dhcp_name.lower()
 
         good_data.append(r)
@@ -347,7 +347,25 @@ def ptr_config(ip2hostname):
     output.append('')
     return output
 
+
 def address_config(hostname2ip):
+    """Generate the address entries for dnsmasq.
+
+    ########################
+    # address config
+    ########################
+
+    # Add domains which you want to force to an IP address here.
+    # The example below send any host in double-click.net to a local
+    # web-server.
+    address=/double-click.net/127.0.0.1
+
+    # --address (and --server) work with IPv6 addresses too.
+    address=/www.thekelleys.org.uk/fe80::20d:60ff:fe36:f83
+    """
+
+
+def host_record_config(hostname2ip):
     """Generate the host-record entries for dnsmasq.
 
     ########################
@@ -398,23 +416,6 @@ def address_config(hostname2ip):
     record will be created. The TTL of the records is always zero, and any changes
     to interface addresses will be immediately reflected in them.
     """
-
-
-def address_config(hostname2ip):
-    """Generate the address entries for dnsmasq.
-
-    ########################
-    # address config
-    ########################
-
-    # Add domains which you want to force to an IP address here.
-    # The example below send any host in double-click.net to a local
-    # web-server.
-    address=/double-click.net/127.0.0.1
-
-    # --address (and --server) work with IPv6 addresses too.
-    address=/www.thekelleys.org.uk/fe80::20d:60ff:fe36:f83
-    """
     output = []
     output.append('')
     output.append('# '+'-'*70)
@@ -427,11 +428,12 @@ def address_config(hostname2ip):
         if len(ips) == 1:
             ((inf, ip),) = ips.items()
             if inf:
-                output.append('address=/%s.%s.%s/%s' % (inf, host, DOMAIN, ip))
-            output.append('address=/%s.%s/%s' % (host, DOMAIN, ip))
+                output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
+            output.append('host-record=%s.%s,%s' % (host, DOMAIN, ip))
+            output.append('host-record=%s,%s' % (host, ip))
         else:
             for inf, ip in sorted(ips.items()):
-                output.append('address=/%s.%s.%s/%s' % (inf, host, DOMAIN, ip))
+                output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
 
             # IP address for bare hostname
             # - Public IPs are first choice
@@ -441,12 +443,12 @@ def address_config(hostname2ip):
                     public_ips.append(ip)
             if public_ips:
                 assert len(public_ips) == 1, (public_ips, host, ips)
-                output.append('address=/%s.%s/%s' % (host, DOMAIN, public_ips[0]))
-                continue
-
-            # - Else use the earlist private IP address
-            ips = list(sorted(ips.values(), key=ip_sort))
-            output.append('address=/%s.%s/%s' % (host, DOMAIN, ips[0]))
+                output.append('host-record=%s.%s,%s' % (host, DOMAIN, public_ips[0]))
+            else:
+                # - Else use the earlist private IP address
+                ips = list(sorted(ips.values(), key=ip_sort))
+                output.append('host-record=%s.%s,%s' % (host, DOMAIN, ips[0]))
+            output.append('host-record=%s,%s' % (host, ip))
 
     output.append('# '+'-'*70)
     output.append('')
@@ -518,7 +520,7 @@ def main(argv):
     # Reverse addresses
     output.extend(ptr_config(ip2hostname))
     # Forward addresses
-    output.extend(address_config(hostname2ip))
+    output.extend(host_record_config(hostname2ip))
     # SSHFP records
     output.extend(sshfp_records(hostname2ip))
 
