@@ -73,7 +73,7 @@ def main(args):
 
         try:
             stdout = subprocess.check_output(
-                    ['ssh-keyscan', '-D', ssh_ip],
+                    ['/usr/local/bin/insecure-ssh-keyscan', '-D', ssh_ip],
                     stderr=subprocess.DEVNULL,
                     encoding='utf-8',
                 ).replace(ssh_ip, host).splitlines()

@@ -1,0 +1,16 @@
+diff --git a/myproposal.h b/myproposal.h
+index ee6e9f74..a800fa3b 100644
+--- a/myproposal.h
++++ b/myproposal.h
+@@ -34,7 +34,10 @@
+ 	"diffie-hellman-group-exchange-sha256," \
+ 	"diffie-hellman-group16-sha512," \
+ 	"diffie-hellman-group18-sha512," \
+-	"diffie-hellman-group14-sha256"
++	"diffie-hellman-group14-sha256," \
++        "diffie-hellman-group-exchange-sha1," \
++        "diffie-hellman-group14-sha1," \
++        "diffie-hellman-group1-sha1"
+ 
+ #define KEX_CLIENT_KEX KEX_SERVER_KEX
+ 
