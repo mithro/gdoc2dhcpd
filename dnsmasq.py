@@ -492,6 +492,8 @@ def sshfp_records(hostname2ips):
         records('%s.%s' % (hostname, DOMAIN))
 
         for inf in ips.keys():
+            if not inf:
+                continue
             records('%s.%s.%s' % (inf, hostname, DOMAIN))
 
         for ip in ips.values():
