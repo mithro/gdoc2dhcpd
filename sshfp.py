@@ -71,11 +71,15 @@ def main(args):
             print('no-ssh')
             continue
 
-        stdout = subprocess.check_output(
-                ['ssh-keyscan', '-D', ssh_ip],
-                stderr=subprocess.DEVNULL,
-                encoding='utf-8',
-            ).replace(ssh_ip, host).splitlines()
+        try:
+            stdout = subprocess.check_output(
+                    ['ssh-keyscan', '-D', ssh_ip],
+                    stderr=subprocess.DEVNULL,
+                    encoding='utf-8',
+                ).replace(ssh_ip, host).splitlines()
+        except subprocess.CalledProcessError as e:
+            print(e)
+            continue
 
         stdout.sort()
 
