@@ -89,7 +89,7 @@ def main(args):
         sshfp[host] = stdout
 
     with open('sshfp.json', 'w') as f:
-        json.dump(sshfp, f)
+        json.dump(sshfp, f, indent="  ", sort_keys=True)
 
     print()
     print('='*75)
