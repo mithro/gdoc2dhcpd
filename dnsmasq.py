@@ -313,6 +313,7 @@ def dhcp_host_config(ip2mac):
     output.append('# '+'-'*70)
     for ip, macs in sorted(ip2mac.items(), key=lambda x: ip_sort(x[0])):
         dhcp_names = set(m[1] for m in macs)
+        assert (len(macs) == 1) or ip.startswith('10.1.50'), ('Multiple MAC addresses but not in roaming range! (10.1.50.X)', ip, macs)
         dhcp_name = common_suffix(*dhcp_names).strip('-')
 
         output.append("dhcp-host=%s,%s,%s" % (",".join(m[0] for m in macs), ip, dhcp_name))
