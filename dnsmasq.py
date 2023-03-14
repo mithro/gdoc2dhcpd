@@ -55,7 +55,9 @@ def is_local(ip):
     elif ip.startswith('192.0.'):
         return True
     # Test NETs
-    elif ip.startswith('198.0.'):
+    elif ip.startswith('198.18.'):
+        return True
+    elif ip.startswith('198.51.100.'):
         return True
     # Link-local IP address ranges
     elif ip.startswith('169.254.'):
