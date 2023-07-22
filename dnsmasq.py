@@ -66,6 +66,26 @@ def is_local(ip):
     return False
 
 
+def default_ip(ips):
+    # IP address for bare hostname
+    # - Public IPs are first choice
+    public_ips = []
+    for ip in ips.values():
+        if not is_local(ip):
+            public_ips.append(ip)
+    if public_ips:
+        assert len(public_ips) == 1, (public_ips, host, ips)
+        return public_ips[0]
+
+    # - Else use the IP address which doesn't have an interface name
+    if None in ips:
+        return ips[None]
+
+    # - Else use the earlist private IP address
+    ips = list(sorted(ips.values(), key=ip_sort))
+    return ips[0]
+
+
 GDOC={
     'Network': "https://docs.google.com/spreadsheets/d/e/2PACX-1vR5j6yiZCEv5YNoeVNLM4MMsxzBVjG4OtViBz7tXXF1LydHd8bCOOVWt7MvfVEPZtK0TeWgyxF3i9Tj/pub?gid=1476589425&single=true&output=csv",
     'IoT':     "https://docs.google.com/spreadsheets/d/e/2PACX-1vR5j6yiZCEv5YNoeVNLM4MMsxzBVjG4OtViBz7tXXF1LydHd8bCOOVWt7MvfVEPZtK0TeWgyxF3i9Tj/pub?gid=1695016218&single=true&output=csv",
@@ -133,6 +153,9 @@ def get_data():
         dhcp_name = r['Machine'].lower().strip()
         if 'Interface' in r and r['Interface'].strip():
             dhcp_name = r['Interface'].lower().strip()+'-'+dhcp_name
+
+            if 'bmc' in dhcp_name:
+                r['Host Name'] = 'bmc.'+r['Host Name']
         simple_dhcp_name = re.sub('[^a-z0-9.\-_]+','#',dhcp_name)
         assert dhcp_name == simple_dhcp_name, ('Invalid characters in machine name!', dhcp_name, simple_dhcp_name)
         if name == 'IoT':
@@ -145,7 +168,6 @@ def get_data():
 
     with open('good.json', 'w') as f:
         json.dump(good_data, f, indent="  ", sort_keys=True)
-
     return good_data
 
 
@@ -187,7 +209,6 @@ def common_suffix(a, *others):
     if i == 0:
         return ''
     return a[-i:]
-
 
 
 def get_ip_info(data):
@@ -428,30 +449,12 @@ def host_record_config(hostname2ip):
     for host, ips in sorted(hostname2ip.items(), key=lambda x: x[0].split('.')[::-1]):
         output.append('')
         output.append('# '+host)
-        if len(ips) == 1:
-            ((inf, ip),) = ips.items()
+        for inf, ip in sorted(ips.items()):
             if inf:
                 output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
-            output.append('host-record=%s.%s,%s' % (host, DOMAIN, ip))
-            output.append('host-record=%s,%s' % (host, ip))
-        else:
-            for inf, ip in sorted(ips.items()):
-                output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
-
-            # IP address for bare hostname
-            # - Public IPs are first choice
-            public_ips = []
-            for ip in ips.values():
-                if not is_local(ip):
-                    public_ips.append(ip)
-            if public_ips:
-                assert len(public_ips) == 1, (public_ips, host, ips)
-                output.append('host-record=%s.%s,%s' % (host, DOMAIN, public_ips[0]))
-            else:
-                # - Else use the earlist private IP address
-                ips = list(sorted(ips.values(), key=ip_sort))
-                output.append('host-record=%s.%s,%s' % (host, DOMAIN, ips[0]))
-            output.append('host-record=%s,%s' % (host, ip))
+        dip = default_ip(ips)
+        output.append('host-record=%s.%s,%s' % (host, DOMAIN, dip))
+        output.append('host-record=%s,%s' % (host, dip))
 
     output.append('# '+'-'*70)
     output.append('')
