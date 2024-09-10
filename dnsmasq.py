@@ -83,6 +83,7 @@ def default_ip(ips):
 
     # - Else use the earlist private IP address
     ips = list(sorted(ips.values(), key=ip_sort))
+    print('???:', ips)
     return ips[0]
 
 
@@ -154,8 +155,8 @@ def get_data():
         if 'Interface' in r and r['Interface'].strip():
             dhcp_name = r['Interface'].lower().strip()+'-'+dhcp_name
 
-            if 'bmc' in dhcp_name:
-                r['Host Name'] = 'bmc.'+r['Host Name']
+            #if 'bmc' in dhcp_name:
+            #    r['Host Name'] = r['Interface'].lower().strip()+'.'+r['Host Name']
         simple_dhcp_name = re.sub('[^a-z0-9.\-_]+','#',dhcp_name)
         assert dhcp_name == simple_dhcp_name, ('Invalid characters in machine name!', dhcp_name, simple_dhcp_name)
         if name == 'IoT':
@@ -224,6 +225,9 @@ def get_ip_info(data):
         if ip not in ip2hostname:
             ip2hostname[ip] = []
         name = hostname
+        if inf and 'bmc' in inf:
+            hostname = inf+'.'+hostname
+            inf = None
         if inf:
             name = inf+'.'+hostname
         ip2hostname[ip].append(name)
@@ -455,6 +459,7 @@ def host_record_config(hostname2ip):
         dip = default_ip(ips)
         output.append('host-record=%s.%s,%s' % (host, DOMAIN, dip))
         output.append('host-record=%s,%s' % (host, dip))
+        output.append('dns-rr=%s.%s,257,000569737375656C657473656E63727970742E6F7267' % (host,DOMAIN))
 
     output.append('# '+'-'*70)
     output.append('')
@@ -486,10 +491,16 @@ def sshfp_records(hostname2ips):
             output.append('')
             output.append('# sshfp for %s' % dnsname)
             for l in fp:
-                _, a, b, c, d, e = l.split()
-                assert a == "IN", (a, l)
-                assert b == "SSHFP", (b, l)
-                output.append('dns-rr=%s,44,%s:%s:%s' % (dnsname, c, d, e))
+                if l.startswith(';'):
+                    continue
+                try:
+                    _, a, b, c, d, e = l.split()
+                    assert a == "IN", (a, l)
+                    assert b == "SSHFP", (b, l)
+                    output.append('dns-rr=%s,44,%s:%s:%s' % (dnsname, c, d, e))
+                except:
+                    print('Broken line: %r' % l)
+                    raise
 
         output.append('')
         output.append('# ' + '-'*70)
