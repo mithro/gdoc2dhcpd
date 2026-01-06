@@ -2,6 +2,7 @@
 
 
 import csv
+import ipaddress
 import json
 import pprint
 import re
@@ -10,7 +11,34 @@ import sys
 import urllib.request
 
 
-DOMAIN='k207.mithis.com'
+DOMAIN='welland.mithis.com'
+
+# IPv6 prefix constants for dual-prefix setup
+IPV6_PREFIXES = [
+    '2404:e80:a137:00',  # ISP prefix
+    '2001:470:82b3:00',  # HE.net prefix
+]
+
+
+def ipv4_to_ipv6_list(ipv4):
+    """Convert IPv4 to IPv6 addresses for all prefixes.
+    Returns list of IPv6 addresses, or empty list if not mappable.
+    Example: 10.1.10.124 -> ['2404:e80:a137:00::1:10:124', '2001:470:82b3:00::1:10:124']
+    """
+    parts = ipv4.split('.')
+    if parts[0] == '10':
+        return [f'{prefix}::{parts[1]}:{parts[2]}:{parts[3]}' for prefix in IPV6_PREFIXES]
+    return []
+
+
+def ipv6_to_ptr(ipv6_str):
+    """Convert IPv6 address to PTR record format (ip6.arpa nibble format).
+    Example: 2404:e80:a137:00::1:10:1 -> 1.0.0.0.0.1.0.0.1.0.0.0...7.3.1.a.0.8.e.4.0.4.2.ip6.arpa
+    """
+    addr = ipaddress.ip_address(ipv6_str)
+    # Expand to full 32 hex digits, reverse nibbles, join with dots
+    full_hex = addr.exploded.replace(':', '')
+    return '.'.join(reversed(full_hex)) + '.ip6.arpa'
 
 
 def is_iot(ip):
@@ -343,7 +371,13 @@ def dhcp_host_config(ip2mac):
         assert (len(macs) == 1) or ip.startswith('10.1.50'), ('Multiple MAC addresses but not in roaming range! (10.1.50.X)', ip, macs)
         dhcp_name = common_suffix(*dhcp_names).strip('-')
 
-        output.append("dhcp-host=%s,%s,%s" % (",".join(m[0] for m in macs), ip, dhcp_name))
+        # Include IPv6 addresses from both prefixes if mappable
+        ipv6_addrs = ipv4_to_ipv6_list(ip)
+        if ipv6_addrs:
+            ipv6_str = ','.join(f'[{addr}]' for addr in ipv6_addrs)
+            output.append("dhcp-host=%s,%s,%s,%s" % (",".join(m[0] for m in macs), ip, ipv6_str, dhcp_name))
+        else:
+            output.append("dhcp-host=%s,%s,%s" % (",".join(m[0] for m in macs), ip, dhcp_name))
     output.append('# '+'-'*70)
     output.append('')
     return output
@@ -367,10 +401,19 @@ def ptr_config(ip2hostname):
     output = []
     output.append('')
     output.append('# '+'-'*70)
-    output.append('# Reverse names for IP addresses')
+    output.append('# Reverse names for IP addresses (IPv4)')
     output.append('# '+'-'*70)
     for ip, hostname in sorted(ip2hostname.items(), key=lambda x: ip_sort(x[0])):
         output.append("ptr-record=/%s.%s/%s" % (hostname, DOMAIN, ip))
+    output.append('# '+'-'*70)
+    output.append('')
+    output.append('# '+'-'*70)
+    output.append('# Reverse names for IP addresses (IPv6)')
+    output.append('# '+'-'*70)
+    for ip, hostname in sorted(ip2hostname.items(), key=lambda x: ip_sort(x[0])):
+        ipv6_addrs = ipv4_to_ipv6_list(ip)
+        for ipv6 in ipv6_addrs:
+            output.append("ptr-record=%s,%s.%s" % (ipv6_to_ptr(ipv6), hostname, DOMAIN))
     output.append('# '+'-'*70)
     output.append('')
     return output
@@ -455,10 +498,21 @@ def host_record_config(hostname2ip):
         output.append('# '+host)
         for inf, ip in sorted(ips.items()):
             if inf:
-                output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
+                # Include IPv6 addresses for interface-specific records
+                ipv6_addrs = ipv4_to_ipv6_list(ip)
+                if ipv6_addrs:
+                    output.append('host-record=%s.%s.%s,%s,%s' % (inf, host, DOMAIN, ip, ','.join(ipv6_addrs)))
+                else:
+                    output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
         dip = default_ip(ips)
-        output.append('host-record=%s.%s,%s' % (host, DOMAIN, dip))
-        output.append('host-record=%s,%s' % (host, dip))
+        # Include IPv6 addresses for default host records
+        ipv6_addrs = ipv4_to_ipv6_list(dip)
+        if ipv6_addrs:
+            output.append('host-record=%s.%s,%s,%s' % (host, DOMAIN, dip, ','.join(ipv6_addrs)))
+            output.append('host-record=%s,%s,%s' % (host, dip, ','.join(ipv6_addrs)))
+        else:
+            output.append('host-record=%s.%s,%s' % (host, DOMAIN, dip))
+            output.append('host-record=%s,%s' % (host, dip))
         output.append('dns-rr=%s.%s,257,000569737375656C657473656E63727970742E6F7267' % (host,DOMAIN))
 
     output.append('# '+'-'*70)
