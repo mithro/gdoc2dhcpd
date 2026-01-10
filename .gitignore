@@ -6,3 +6,4 @@ hosts.json
 macs.json
 sshfp.json
 .*.sw*
+node_modules/
