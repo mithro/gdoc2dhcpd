@@ -2,6 +2,7 @@
 
 
 import csv
+import ipaddress
 import json
 import pprint
 import re
@@ -10,7 +11,34 @@ import sys
 import urllib.request
 
 
-DOMAIN='k207.mithis.com'
+DOMAIN='welland.mithis.com'
+
+# IPv6 prefix constants for dual-prefix setup
+IPV6_PREFIXES = [
+    '2404:e80:a137:00',  # ISP prefix
+    '2001:470:82b3:00',  # HE.net prefix
+]
+
+
+def ipv4_to_ipv6_list(ipv4):
+    """Convert IPv4 to IPv6 addresses for all prefixes.
+    Returns list of IPv6 addresses, or empty list if not mappable.
+    Example: 10.1.10.124 -> ['2404:e80:a137:00::1:10:124', '2001:470:82b3:00::1:10:124']
+    """
+    parts = ipv4.split('.')
+    if parts[0] == '10':
+        return [f'{prefix}::{parts[1]}:{parts[2]}:{parts[3]}' for prefix in IPV6_PREFIXES]
+    return []
+
+
+def ipv6_to_ptr(ipv6_str):
+    """Convert IPv6 address to PTR record format (ip6.arpa nibble format).
+    Example: 2404:e80:a137:00::1:10:1 -> 1.0.0.0.0.1.0.0.1.0.0.0...7.3.1.a.0.8.e.4.0.4.2.ip6.arpa
+    """
+    addr = ipaddress.ip_address(ipv6_str)
+    # Expand to full 32 hex digits, reverse nibbles, join with dots
+    full_hex = addr.exploded.replace(':', '')
+    return '.'.join(reversed(full_hex)) + '.ip6.arpa'
 
 
 def is_iot(ip):
@@ -64,6 +92,27 @@ def is_local(ip):
         return True
     #  Carrier-grade NAT - 100.64.0.0/10 (100.64.0.0 to 100.127.255.255, netmask 255.192.0.0)
     return False
+
+
+def default_ip(ips):
+    # IP address for bare hostname
+    # - Public IPs are first choice
+    public_ips = []
+    for ip in ips.values():
+        if not is_local(ip):
+            public_ips.append(ip)
+    if public_ips:
+        assert len(public_ips) == 1, (public_ips, host, ips)
+        return public_ips[0]
+
+    # - Else use the IP address which doesn't have an interface name
+    if None in ips:
+        return ips[None]
+
+    # - Else use the earlist private IP address
+    ips = list(sorted(ips.values(), key=ip_sort))
+    print('???:', ips)
+    return ips[0]
 
 
 GDOC={
@@ -133,6 +182,9 @@ def get_data():
         dhcp_name = r['Machine'].lower().strip()
         if 'Interface' in r and r['Interface'].strip():
             dhcp_name = r['Interface'].lower().strip()+'-'+dhcp_name
+
+            #if 'bmc' in dhcp_name:
+            #    r['Host Name'] = r['Interface'].lower().strip()+'.'+r['Host Name']
         simple_dhcp_name = re.sub('[^a-z0-9.\-_]+','#',dhcp_name)
         assert dhcp_name == simple_dhcp_name, ('Invalid characters in machine name!', dhcp_name, simple_dhcp_name)
         if name == 'IoT':
@@ -145,7 +197,6 @@ def get_data():
 
     with open('good.json', 'w') as f:
         json.dump(good_data, f, indent="  ", sort_keys=True)
-
     return good_data
 
 
@@ -189,7 +240,6 @@ def common_suffix(a, *others):
     return a[-i:]
 
 
-
 def get_ip_info(data):
     """ Process the raw data into a useful form. """
 
@@ -203,6 +253,9 @@ def get_ip_info(data):
         if ip not in ip2hostname:
             ip2hostname[ip] = []
         name = hostname
+        if inf and 'bmc' in inf:
+            hostname = inf+'.'+hostname
+            inf = None
         if inf:
             name = inf+'.'+hostname
         ip2hostname[ip].append(name)
@@ -318,7 +371,13 @@ def dhcp_host_config(ip2mac):
         assert (len(macs) == 1) or ip.startswith('10.1.50'), ('Multiple MAC addresses but not in roaming range! (10.1.50.X)', ip, macs)
         dhcp_name = common_suffix(*dhcp_names).strip('-')
 
-        output.append("dhcp-host=%s,%s,%s" % (",".join(m[0] for m in macs), ip, dhcp_name))
+        # Include IPv6 addresses from both prefixes if mappable
+        ipv6_addrs = ipv4_to_ipv6_list(ip)
+        if ipv6_addrs:
+            ipv6_str = ','.join(f'[{addr}]' for addr in ipv6_addrs)
+            output.append("dhcp-host=%s,%s,%s,%s" % (",".join(m[0] for m in macs), ip, ipv6_str, dhcp_name))
+        else:
+            output.append("dhcp-host=%s,%s,%s" % (",".join(m[0] for m in macs), ip, dhcp_name))
     output.append('# '+'-'*70)
     output.append('')
     return output
@@ -342,10 +401,19 @@ def ptr_config(ip2hostname):
     output = []
     output.append('')
     output.append('# '+'-'*70)
-    output.append('# Reverse names for IP addresses')
+    output.append('# Reverse names for IP addresses (IPv4)')
     output.append('# '+'-'*70)
     for ip, hostname in sorted(ip2hostname.items(), key=lambda x: ip_sort(x[0])):
         output.append("ptr-record=/%s.%s/%s" % (hostname, DOMAIN, ip))
+    output.append('# '+'-'*70)
+    output.append('')
+    output.append('# '+'-'*70)
+    output.append('# Reverse names for IP addresses (IPv6)')
+    output.append('# '+'-'*70)
+    for ip, hostname in sorted(ip2hostname.items(), key=lambda x: ip_sort(x[0])):
+        ipv6_addrs = ipv4_to_ipv6_list(ip)
+        for ipv6 in ipv6_addrs:
+            output.append("ptr-record=%s,%s.%s" % (ipv6_to_ptr(ipv6), hostname, DOMAIN))
     output.append('# '+'-'*70)
     output.append('')
     return output
@@ -428,30 +496,24 @@ def host_record_config(hostname2ip):
     for host, ips in sorted(hostname2ip.items(), key=lambda x: x[0].split('.')[::-1]):
         output.append('')
         output.append('# '+host)
-        if len(ips) == 1:
-            ((inf, ip),) = ips.items()
+        for inf, ip in sorted(ips.items()):
             if inf:
-                output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
-            output.append('host-record=%s.%s,%s' % (host, DOMAIN, ip))
-            output.append('host-record=%s,%s' % (host, ip))
+                # Include IPv6 addresses for interface-specific records
+                ipv6_addrs = ipv4_to_ipv6_list(ip)
+                if ipv6_addrs:
+                    output.append('host-record=%s.%s.%s,%s,%s' % (inf, host, DOMAIN, ip, ','.join(ipv6_addrs)))
+                else:
+                    output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
+        dip = default_ip(ips)
+        # Include IPv6 addresses for default host records
+        ipv6_addrs = ipv4_to_ipv6_list(dip)
+        if ipv6_addrs:
+            output.append('host-record=%s.%s,%s,%s' % (host, DOMAIN, dip, ','.join(ipv6_addrs)))
+            output.append('host-record=%s,%s,%s' % (host, dip, ','.join(ipv6_addrs)))
         else:
-            for inf, ip in sorted(ips.items()):
-                output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
-
-            # IP address for bare hostname
-            # - Public IPs are first choice
-            public_ips = []
-            for ip in ips.values():
-                if not is_local(ip):
-                    public_ips.append(ip)
-            if public_ips:
-                assert len(public_ips) == 1, (public_ips, host, ips)
-                output.append('host-record=%s.%s,%s' % (host, DOMAIN, public_ips[0]))
-            else:
-                # - Else use the earlist private IP address
-                ips = list(sorted(ips.values(), key=ip_sort))
-                output.append('host-record=%s.%s,%s' % (host, DOMAIN, ips[0]))
-            output.append('host-record=%s,%s' % (host, ip))
+            output.append('host-record=%s.%s,%s' % (host, DOMAIN, dip))
+            output.append('host-record=%s,%s' % (host, dip))
+        output.append('dns-rr=%s.%s,257,000569737375656C657473656E63727970742E6F7267' % (host,DOMAIN))
 
     output.append('# '+'-'*70)
     output.append('')
@@ -483,10 +545,16 @@ def sshfp_records(hostname2ips):
             output.append('')
             output.append('# sshfp for %s' % dnsname)
             for l in fp:
-                _, a, b, c, d, e = l.split()
-                assert a == "IN", (a, l)
-                assert b == "SSHFP", (b, l)
-                output.append('dns-rr=%s,44,%s:%s:%s' % (dnsname, c, d, e))
+                if l.startswith(';'):
+                    continue
+                try:
+                    _, a, b, c, d, e = l.split()
+                    assert a == "IN", (a, l)
+                    assert b == "SSHFP", (b, l)
+                    output.append('dns-rr=%s,44,%s:%s:%s' % (dnsname, c, d, e))
+                except:
+                    print('Broken line: %r' % l)
+                    raise
 
         output.append('')
         output.append('# ' + '-'*70)
