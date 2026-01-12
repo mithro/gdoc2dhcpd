@@ -14,21 +14,36 @@ import urllib.request
 DOMAIN='welland.mithis.com'
 
 # IPv6 prefix constants for dual-prefix setup
+# Format: 10.AA.BB.CCC -> {prefix}AABB::CCC
+# See Allocations.md for full documentation
 IPV6_PREFIXES = [
-    '2404:e80:a137:00',  # ISP prefix
-    '2001:470:82b3:00',  # HE.net prefix
+    '2404:e80:a137:',  # ISP prefix (Launtel)
+    '2001:470:82b3:',  # HE.net prefix
 ]
 
 
 def ipv4_to_ipv6_list(ipv4):
     """Convert IPv4 to IPv6 addresses for all prefixes.
+
+    Mapping scheme: 10.AA.BB.CCC -> {prefix}AABB::CCC
+    - AA: second octet, no padding (1-99)
+    - BB: third octet, zero-padded to 2 digits (01-99)
+    - CCC: fourth octet, no padding (1-256)
+
     Returns list of IPv6 addresses, or empty list if not mappable.
-    Example: 10.1.10.124 -> ['2404:e80:a137:00::1:10:124', '2001:470:82b3:00::1:10:124']
+
+    Example: 10.1.10.124 -> ['2404:e80:a137:110::124', '2001:470:82b3:110::124']
+    Example: 10.12.80.240 -> ['2404:e80:a137:1280::240', '2001:470:82b3:1280::240']
     """
     parts = ipv4.split('.')
-    if parts[0] == '10':
-        return [f'{prefix}::{parts[1]}:{parts[2]}:{parts[3]}' for prefix in IPV6_PREFIXES]
-    return []
+    if parts[0] != '10':
+        return []
+
+    aa = parts[1]  # No padding
+    bb = parts[2].zfill(2)  # Zero-pad to 2 digits
+    ccc = parts[3]  # No padding
+
+    return [f'{prefix}{aa}{bb}::{ccc}' for prefix in IPV6_PREFIXES]
 
 
 def ipv6_to_ptr(ipv6_str):
