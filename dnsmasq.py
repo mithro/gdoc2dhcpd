@@ -13,6 +13,40 @@ import urllib.request
 
 DOMAIN='welland.mithis.com'
 
+# Network subdomain mapping based on IP ranges
+# Maps third octet to subdomain name
+NETWORK_SUBDOMAINS = {
+    1: 'tmp',    # 10.1.1.x - Temporary/quarantine
+    5: 'net',    # 10.1.5.x - Network infrastructure
+    6: 'pwr',    # 10.1.6.x - Power infrastructure
+    10: 'int',   # 10.1.10.x - Internal (primary)
+    11: 'int',   # 10.1.11.x - Internal (complex hosts)
+    15: 'int',   # 10.1.15.x - Internal (25G backbone)
+    16: 'int',   # 10.1.16.x - Internal (100G backbone)
+    20: 'roam',  # 10.1.20.x - Roaming hosts
+    90: 'iot',   # 10.1.90.x - IoT devices
+    99: 'guest', # 10.1.99.x - Guest network
+}
+
+
+def ip_to_subdomain(ip):
+    """Get the network subdomain for an IP address.
+
+    >>> ip_to_subdomain('10.1.10.124')
+    'int'
+    >>> ip_to_subdomain('10.1.90.10')
+    'iot'
+    >>> ip_to_subdomain('10.1.5.100')
+    'net'
+    >>> ip_to_subdomain('192.168.1.1')
+    """
+    parts = ip.split('.')
+    if parts[0] != '10' or parts[1] != '1':
+        return None
+    third_octet = int(parts[2])
+    return NETWORK_SUBDOMAINS.get(third_octet)
+
+
 # IPv6 prefix constants for dual-prefix setup
 # Format: 10.AA.BB.CCC -> {prefix}AABB::CCC
 # See Allocations.md for full documentation
@@ -551,6 +585,13 @@ def host_record_config(hostname2ip):
                     output.append('host-record=%s.%s.%s,%s,%s' % (inf, host, DOMAIN, ip, ','.join(ipv6_addrs)))
                 else:
                     output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
+                # Also generate subdomain variant (e.g., eno0.desktop.int.welland.mithis.com)
+                subdomain = ip_to_subdomain(ip)
+                if subdomain:
+                    if ipv6_addrs:
+                        output.append('host-record=%s.%s.%s.%s,%s,%s' % (inf, host, subdomain, DOMAIN, ip, ','.join(ipv6_addrs)))
+                    else:
+                        output.append('host-record=%s.%s.%s.%s,%s' % (inf, host, subdomain, DOMAIN, ip))
         dip = default_ip(ips)
         # Include IPv6 addresses for default host records
         ipv6_addrs = ipv4_to_ipv6_list(dip)
@@ -560,6 +601,13 @@ def host_record_config(hostname2ip):
         else:
             output.append('host-record=%s.%s,%s' % (host, DOMAIN, dip))
             output.append('host-record=%s,%s' % (host, dip))
+        # Also generate subdomain variant (e.g., desktop.int.welland.mithis.com)
+        subdomain = ip_to_subdomain(dip)
+        if subdomain:
+            if ipv6_addrs:
+                output.append('host-record=%s.%s.%s,%s,%s' % (host, subdomain, DOMAIN, dip, ','.join(ipv6_addrs)))
+            else:
+                output.append('host-record=%s.%s.%s,%s' % (host, subdomain, DOMAIN, dip))
         output.append('dns-rr=%s.%s,257,000569737375656C657473656E63727970742E6F7267' % (host,DOMAIN))
 
     output.append('# '+'-'*70)
