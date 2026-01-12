@@ -403,7 +403,17 @@ def dhcp_host_config(ip2mac):
     output.append('# '+'-'*70)
     output.append('# DHCP Host Configuration')
     output.append('# '+'-'*70)
+
+    current_group = None
     for ip, macs in sorted(ip2mac.items(), key=lambda x: ip_sort(x[0])):
+        # Add comment when IP group changes (first 3 octets)
+        ip_group = '.'.join(ip.split('.')[:3])
+        if ip_group != current_group:
+            if current_group is not None:
+                output.append('')
+            output.append(f'# {ip_group}.X')
+            current_group = ip_group
+
         dhcp_names = set(m[1] for m in macs)
         assert (len(macs) == 1) or ip.startswith('10.1.20.'), ('Multiple MAC addresses but not in roaming range! (10.1.20.X)', ip, macs)
         dhcp_name = common_suffix(*dhcp_names).strip('-')
