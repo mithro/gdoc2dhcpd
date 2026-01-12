@@ -200,7 +200,7 @@ def get_data():
 
             #if 'bmc' in dhcp_name:
             #    r['Host Name'] = r['Interface'].lower().strip()+'.'+r['Host Name']
-        simple_dhcp_name = re.sub('[^a-z0-9.\-_]+','#',dhcp_name)
+        simple_dhcp_name = re.sub(r'[^a-z0-9.\-_]+', '#', dhcp_name)
         assert dhcp_name == simple_dhcp_name, ('Invalid characters in machine name!', dhcp_name, simple_dhcp_name)
         if name == 'IoT':
             dhcp_name += '.iot'
