@@ -146,11 +146,29 @@ def get_data():
         r = urllib.request.urlopen(doc)
         csv_data = r.read().decode('utf-8').splitlines()
 
-        for i, r in enumerate(csv.DictReader(csv_data)):
+        # Network sheet has headers on row 2 (row 1 has IPv6 prefixes)
+        # Detect by checking if first row looks like headers
+        reader = csv.reader(csv_data)
+        rows = list(reader)
+        if not rows:
+            continue
+
+        # Find header row - look for row containing 'Machine' or 'MAC Address'
+        header_row = 0
+        for i, row in enumerate(rows[:5]):  # Check first 5 rows
+            row_str = ','.join(row).lower()
+            if 'machine' in row_str and 'mac' in row_str:
+                header_row = i
+                break
+
+        headers = rows[header_row]
+        for i, row in enumerate(rows[header_row + 1:], start=header_row + 1):
+            if len(row) != len(headers):
+                continue
             d = {}
-            for k, v in list(r.items()):
-                if v.strip():
-                    d[k] = v
+            for k, v in zip(headers, row):
+                if k and v and v.strip():
+                    d[k.strip()] = v.strip()
 
             if '' in d:
                 del d['']
@@ -176,7 +194,11 @@ def get_data():
         else:
             r['Machine'] = r['Machine'].lower()
 
-        if not r.get('IP', None):
+        # Handle both 'IP' and 'IPv4' column names
+        ip = r.get('IP') or r.get('IPv4')
+        if ip:
+            r['IP'] = ip
+        else:
             skip.append('No IP address')
 
         if skip:
@@ -383,7 +405,7 @@ def dhcp_host_config(ip2mac):
     output.append('# '+'-'*70)
     for ip, macs in sorted(ip2mac.items(), key=lambda x: ip_sort(x[0])):
         dhcp_names = set(m[1] for m in macs)
-        assert (len(macs) == 1) or ip.startswith('10.1.50'), ('Multiple MAC addresses but not in roaming range! (10.1.50.X)', ip, macs)
+        assert (len(macs) == 1) or ip.startswith('10.1.20.'), ('Multiple MAC addresses but not in roaming range! (10.1.20.X)', ip, macs)
         dhcp_name = common_suffix(*dhcp_names).strip('-')
 
         # Include IPv6 addresses from both prefixes if mappable
