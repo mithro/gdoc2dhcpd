@@ -186,8 +186,8 @@ function findColumnsAndPrefixes(sheet) {
     for (let col = 0; col < rowValues.length; col++) {
       const cellValue = String(rowValues[col]).trim();
 
-      // Check for IPv4 header
-      if (!ipv4Col && /^IPv4/i.test(cellValue)) {
+      // Check for IPv4 header (accepts "IP", "IPv4", or "IPv4 ...")
+      if (!ipv4Col && /^(IPv4|IP)$/i.test(cellValue)) {
         ipv4Col = col + 1; // Convert to 1-based
         if (!headerRow) headerRow = row;
       }
