@@ -370,6 +370,7 @@ def get_ip_info(data):
 
 def get_mac_info(data):
     ip2mac = {}
+    mac2ip = {}  # Track MAC to IP mappings for duplicate detection
     for r in data:
         mac = r['MAC Address']
         ip = r['IP']
@@ -391,10 +392,27 @@ def get_mac_info(data):
                     f'{dhcp_name} has IP {ip}, expected 10.1.5.X'
                 )
 
+        # Track MAC to IP mapping for duplicate detection
+        if mac not in mac2ip:
+            mac2ip[mac] = []
+        mac2ip[mac].append((ip, dhcp_name))
+
         if ip not in ip2mac:
             ip2mac[ip] = []
 
         ip2mac[ip].append((mac, dhcp_name))
+
+    # Check for MAC addresses assigned to multiple IPs
+    for mac, ips in mac2ip.items():
+        if len(ips) > 1:
+            # Get unique IPs (same MAC on same IP is OK)
+            unique_ips = set(ip for ip, _ in ips)
+            if len(unique_ips) > 1:
+                ip_list = ', '.join(f'{ip} ({name})' for ip, name in ips)
+                assert False, (
+                    f'MAC address {mac} assigned to multiple IPs: {ip_list}'
+                )
+
     return ip2mac
 
 
