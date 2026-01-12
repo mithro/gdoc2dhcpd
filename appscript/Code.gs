@@ -80,13 +80,14 @@ function IPv4toIPv6(ipv4, prefix) {
 /**
  * Converts IPv4 to IPv6 with formatting preservation.
  * Automatically finds columns by header names and gets prefix from above header.
+ * Supports multiple IPv6 output columns, each with their own prefix.
  */
 function convertWithFormatting() {
   const sheet = SpreadsheetApp.getActiveSheet();
   const ui = SpreadsheetApp.getUi();
 
   // Find headers and columns
-  const config = findColumnsAndPrefix(sheet);
+  const config = findColumnsAndPrefixes(sheet);
 
   if (!config) {
     ui.alert('Error', 'Could not find IPv4 and/or IPv6 columns.\n\n' +
@@ -94,23 +95,28 @@ function convertWithFormatting() {
     return;
   }
 
-  const { ipv4Col, ipv6Col, ipv6CidrCol, headerRow, prefix } = config;
+  const { ipv4Col, headerRow, ipv6Targets } = config;
 
-  if (!prefix) {
-    ui.alert('Error', 'Could not find IPv6 prefix.\n\n' +
-      'The prefix should be in the cell above the IPv6 header.', ui.ButtonSet.OK);
+  // Check all targets have prefixes
+  const missingPrefixes = ipv6Targets.filter(t => !t.prefix);
+  if (missingPrefixes.length > 0) {
+    const cols = missingPrefixes.map(t => columnToLetter(t.col)).join(', ');
+    ui.alert('Error', `Missing IPv6 prefix for column(s): ${cols}\n\n` +
+      'The prefix should be in the cell above each IPv6 header.', ui.ButtonSet.OK);
     return;
   }
 
-  // Confirm with user
+  // Build confirmation message
+  let targetInfo = ipv6Targets.map(t =>
+    `  - Column ${columnToLetter(t.col)}: ${t.prefix} (CIDR: ${t.cidrCol ? columnToLetter(t.cidrCol) : '/128'})`
+  ).join('\n');
+
   const response = ui.alert(
     'Convert IPv4 to IPv6',
     `Found configuration:\n` +
     `• IPv4 column: ${columnToLetter(ipv4Col)}\n` +
-    `• IPv6 column: ${columnToLetter(ipv6Col)}\n` +
-    `• IPv6 CIDR column: ${ipv6CidrCol ? columnToLetter(ipv6CidrCol) : '(not found, using /128)'}\n` +
     `• Header row: ${headerRow}\n` +
-    `• Prefix: ${prefix}\n\n` +
+    `• IPv6 targets:\n${targetInfo}\n\n` +
     `Proceed with conversion?`,
     ui.ButtonSet.OK_CANCEL
   );
@@ -125,26 +131,30 @@ function convertWithFormatting() {
 
   for (let row = headerRow + 1; row <= lastRow; row++) {
     const sourceCell = sheet.getRange(row, ipv4Col);
-    const targetCell = sheet.getRange(row, ipv6Col);
 
-    // Get CIDR value (default to /128 if not found or empty)
-    let cidr = 128;
-    if (ipv6CidrCol) {
-      const cidrValue = String(sheet.getRange(row, ipv6CidrCol).getValue()).trim();
-      const cidrMatch = cidrValue.match(/\/(\d+)/);
-      if (cidrMatch) {
-        cidr = parseInt(cidrMatch[1], 10);
-      }
-    }
+    // Process each IPv6 target column
+    for (const target of ipv6Targets) {
+      const targetCell = sheet.getRange(row, target.col);
 
-    try {
-      if (convertCellWithFormatting(sourceCell, targetCell, prefix, cidr)) {
-        processed++;
-      } else {
-        skipped++;
+      // Get CIDR value (default to /128 if not found or empty)
+      let cidr = 128;
+      if (target.cidrCol) {
+        const cidrValue = String(sheet.getRange(row, target.cidrCol).getValue()).trim();
+        const cidrMatch = cidrValue.match(/\/(\d+)/);
+        if (cidrMatch) {
+          cidr = parseInt(cidrMatch[1], 10);
+        }
       }
-    } catch (e) {
-      errors.push(`Row ${row}: ${e.message}`);
+
+      try {
+        if (convertCellWithFormatting(sourceCell, targetCell, target.prefix, cidr)) {
+          processed++;
+        } else {
+          skipped++;
+        }
+      } catch (e) {
+        errors.push(`Row ${row}, Col ${columnToLetter(target.col)}: ${e.message}`);
+      }
     }
   }
 
@@ -157,17 +167,17 @@ function convertWithFormatting() {
 }
 
 /**
- * Find IPv4 column, IPv6 column (leftmost), IPv6 CIDR column, header row, and prefix.
+ * Find IPv4 column and all IPv6 columns with their prefixes and CIDR columns.
  * Handles multi-row headers by scanning first 10 rows.
+ * Returns: { ipv4Col, headerRow, ipv6Targets: [{ col, prefix, cidrCol }, ...] }
  */
-function findColumnsAndPrefix(sheet) {
+function findColumnsAndPrefixes(sheet) {
   const maxHeaderRows = 10;
   const lastCol = sheet.getLastColumn();
 
   let ipv4Col = null;
-  let ipv6Col = null;
-  let ipv6CidrCol = null;
   let headerRow = null;
+  let ipv6Cols = [];
 
   // Scan first rows for headers
   for (let row = 1; row <= maxHeaderRows; row++) {
@@ -182,44 +192,52 @@ function findColumnsAndPrefix(sheet) {
         if (!headerRow) headerRow = row;
       }
 
-      // Check for IPv6 header (take leftmost)
-      if (!ipv6Col && /^IPv6/i.test(cellValue)) {
-        ipv6Col = col + 1; // Convert to 1-based
+      // Check for IPv6 headers (collect all)
+      if (/^IPv6/i.test(cellValue)) {
+        ipv6Cols.push(col + 1); // Convert to 1-based
         if (!headerRow) headerRow = row;
       }
     }
 
-    // If we found both, stop scanning
-    if (ipv4Col && ipv6Col) break;
+    // If we found IPv4 and at least one IPv6, stop scanning
+    if (ipv4Col && ipv6Cols.length > 0) break;
   }
 
-  if (!ipv4Col || !ipv6Col || !headerRow) {
+  if (!ipv4Col || ipv6Cols.length === 0 || !headerRow) {
     return null;
   }
 
-  // Find CIDR column - look for "CIDR" header after the IPv6 column
+  // Build IPv6 targets with their prefixes and CIDR columns
   const headerValues = sheet.getRange(headerRow, 1, 1, lastCol).getValues()[0];
-  for (let col = ipv6Col; col < headerValues.length; col++) {
-    const cellValue = String(headerValues[col]).trim();
-    if (/^CIDR$/i.test(cellValue)) {
-      ipv6CidrCol = col + 1; // Convert to 1-based
-      break;
+  const ipv6Targets = [];
+
+  for (const ipv6Col of ipv6Cols) {
+    // Find CIDR column - look for nearest "CIDR" header to the right of this IPv6 column
+    let cidrCol = null;
+    for (let col = ipv6Col; col < headerValues.length; col++) {
+      const cellValue = String(headerValues[col]).trim();
+      if (/^CIDR$/i.test(cellValue)) {
+        cidrCol = col + 1; // Convert to 1-based
+        break;
+      }
     }
+
+    // Get prefix from cell above IPv6 header
+    let prefix = null;
+    if (headerRow > 1) {
+      const prefixCell = sheet.getRange(headerRow - 1, ipv6Col);
+      prefix = String(prefixCell.getValue()).trim();
+
+      // Normalize prefix - ensure exactly one trailing colon
+      if (prefix) {
+        prefix = prefix.replace(/:+$/, '') + ':';
+      }
+    }
+
+    ipv6Targets.push({ col: ipv6Col, prefix, cidrCol });
   }
 
-  // Get prefix from cell above IPv6 header
-  let prefix = null;
-  if (headerRow > 1) {
-    const prefixCell = sheet.getRange(headerRow - 1, ipv6Col);
-    prefix = String(prefixCell.getValue()).trim();
-
-    // Normalize prefix - ensure exactly one trailing colon
-    if (prefix) {
-      prefix = prefix.replace(/:+$/, '') + ':';
-    }
-  }
-
-  return { ipv4Col, ipv6Col, ipv6CidrCol, headerRow, prefix };
+  return { ipv4Col, headerRow, ipv6Targets };
 }
 
 /**
