@@ -52,7 +52,7 @@ def ip_to_subdomain(ip):
 # See Allocations.md for full documentation
 IPV6_PREFIXES = [
     '2404:e80:a137:',  # ISP prefix (Launtel)
-    '2001:470:82b3:',  # HE.net prefix
+    # '2001:470:82b3:',  # HE.net prefix - DISABLED
 ]
 
 

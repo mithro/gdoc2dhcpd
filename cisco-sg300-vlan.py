@@ -235,7 +235,7 @@ def generate_cisco_config(mappings, interfaces=None, clear_first=True):
     """
     if interfaces is None:
         # Default: all gigabit ports
-        interfaces = [f'gi{i}' for i in range(1, 29)]
+        interfaces = [f'gigabitethernet{i}' for i in range(1, 29)]
 
     # Optimize MAC entries by finding common prefixes
     optimized = optimize_mac_entries(mappings)
@@ -286,20 +286,18 @@ def generate_cisco_config(mappings, interfaces=None, clear_first=True):
     lines.append('exit')
     lines.append('')
 
-    # Step 2: Map groups to VLANs on interfaces
+    # Step 2: Map groups to VLANs on interfaces (using range for efficiency)
     lines.append('! Interface configuration - map macs-groups to VLANs')
     lines.append('! Interfaces must be in general mode')
-
-    for iface in interfaces:
-        lines.append(f'interface {iface}')
-        lines.append('switchport mode general')
-        # First add interface to all VLANs as tagged member
-        for vlan in sorted(by_vlan.keys()):
-            lines.append(f'switchport general allowed vlan add {vlan} tagged')
-        # Then map macs-groups to VLANs
-        for vlan in sorted(by_vlan.keys()):
-            lines.append(f'switchport general map macs-group {vlan} vlan {vlan}')
-        lines.append('exit')
+    lines.append('interface range gigabitethernet1-28')
+    lines.append('switchport mode general')
+    # First add interface to all VLANs as tagged member
+    for vlan in sorted(by_vlan.keys()):
+        lines.append(f'switchport general allowed vlan add {vlan} tagged')
+    # Then map macs-groups to VLANs
+    for vlan in sorted(by_vlan.keys()):
+        lines.append(f'switchport general map macs-group {vlan} vlan {vlan}')
+    lines.append('exit')
 
     lines.append('')
     lines.append('end')
