@@ -608,6 +608,10 @@ def host_record_config(hostname2ip):
                 output.append('host-record=%s.%s.%s,%s,%s' % (host, subdomain, DOMAIN, dip, ','.join(ipv6_addrs)))
             else:
                 output.append('host-record=%s.%s.%s,%s' % (host, subdomain, DOMAIN, dip))
+        # IPv4-only and IPv6-only prefixed records
+        output.append('host-record=ipv4.%s.%s,%s' % (host, DOMAIN, dip))
+        if ipv6_addrs:
+            output.append('host-record=ipv6.%s.%s,%s' % (host, DOMAIN, ','.join(ipv6_addrs)))
         output.append('dns-rr=%s.%s,257,000569737375656C657473656E63727970742E6F7267' % (host,DOMAIN))
 
     output.append('# '+'-'*70)
