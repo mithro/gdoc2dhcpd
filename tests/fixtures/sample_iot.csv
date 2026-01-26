@@ -1,0 +1,3 @@
+Machine,MAC Address,IP,Interface,Hardware
+thermostat,aa:00:11:22:33:44,10.1.90.10,,ESP32
+camera-front,bb:00:11:22:33:44,10.1.90.20,,Reolink

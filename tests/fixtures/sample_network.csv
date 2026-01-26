@@ -1,0 +1,7 @@
+IPv6 Prefix:,2404:e80:a137:,,,,
+Machine,MAC Address,IP,Interface,Driver,Notes
+desktop,aa:bb:cc:dd:ee:01,10.1.10.100,eth0,i225,Main desktop
+desktop,aa:bb:cc:dd:ee:02,10.1.10.101,eth1,i225,Secondary NIC
+server,11:22:33:44:55:66,10.1.10.200,,mlx5,Server
+switch-core,aa:bb:cc:00:11:22,10.1.5.1,,switch,Core switch
+bmc-server,bb:cc:dd:ee:ff:00,10.1.5.200,bmc,,Server BMC
