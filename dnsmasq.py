@@ -95,6 +95,21 @@ def is_iot(ip):
     return ip.startswith('10.1.20.')
 
 
+def is_bmc(name):
+    """Check if a DHCP name is a BMC (Baseboard Management Controller)."""
+    return 'bmc' in name.lower()
+
+
+def is_network_management(ip):
+    """Check if IP is on the Network Management network (10.1.5.X)."""
+    return ip.startswith('10.1.5.')
+
+
+def is_test_hardware(ip):
+    """Check if IP is on the test-hardware network (10.41.X.X)."""
+    return ip.startswith('10.41.')
+
+
 def is_local(ip):
     """
 +--------------------+-------------------------------+-------------+-----------------+-
@@ -357,11 +372,28 @@ def get_mac_info(data):
     for r in data:
         mac = r['MAC Address']
         ip = r['IP']
+        dhcp_name = r['DHCP Name']
+
+        # Verify BMC network placement:
+        # - Test-hardware BMCs (10.41.X.X) must be on 10.X.1.X subnet
+        # - All other BMCs must be on Network Management network (10.1.5.X)
+        if is_bmc(dhcp_name):
+            if is_test_hardware(ip):
+                third_octet = ip.split('.')[2]
+                assert third_octet == '1', (
+                    f'Test-hardware BMC must be on 10.X.1.X subnet! '
+                    f'{dhcp_name} has IP {ip}, expected 10.41.1.X'
+                )
+            else:
+                assert is_network_management(ip), (
+                    f'BMC not on Network Management network! '
+                    f'{dhcp_name} has IP {ip}, expected 10.1.5.X'
+                )
 
         if ip not in ip2mac:
             ip2mac[ip] = []
 
-        ip2mac[ip].append((mac, r['DHCP Name']))
+        ip2mac[ip].append((mac, dhcp_name))
     return ip2mac
 
 
