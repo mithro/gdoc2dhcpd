@@ -1,4 +1,5 @@
 dnsmasq.static.conf
+dnsmasq.external.conf
 dhcpd.static.conf
 info.json
 good.json
@@ -7,3 +8,4 @@ macs.json
 sshfp.json
 .*.sw*
 node_modules/
+__pycache__/
