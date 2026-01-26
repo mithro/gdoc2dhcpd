@@ -4,6 +4,7 @@
 import csv
 import ipaddress
 import json
+import os
 import pprint
 import re
 import subprocess
@@ -624,10 +625,12 @@ def sshfp_records(hostname2ips):
     44 is the RR type for SSHFP, according to RFC 4255.
     """
 
-    # Check the sshfp
-    subprocess.check_call('./sshfp.py')
-    with open('sshfp.json', 'r') as f:
-        sshfp = json.load(f)
+    # Read cached SSHFP data (generated separately by: make sshfp)
+    if os.path.exists('sshfp.json'):
+        with open('sshfp.json', 'r') as f:
+            sshfp = json.load(f)
+    else:
+        sshfp = {}
 
     output = []
     output.append('')
