@@ -1,0 +1,67 @@
+[site]
+name = "welland"
+domain = "welland.mithis.com"
+
+[sheets]
+# Google Sheets published CSV URLs for each data source
+network = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR5j6yiZCEv5YNoeVNLM4MMsxzBVjG4OtViBz7tXXF1LydHd8bCOOVWt7MvfVEPZtK0TeWgyxF3i9Tj/pub?gid=1476589425&single=true&output=csv"
+iot = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR5j6yiZCEv5YNoeVNLM4MMsxzBVjG4OtViBz7tXXF1LydHd8bCOOVWt7MvfVEPZtK0TeWgyxF3i9Tj/pub?gid=1695016218&single=true&output=csv"
+
+[cache]
+directory = ".cache"
+
+[ipv6]
+# Active IPv6 prefixes for dual-stack address generation
+# Format: 10.AA.BB.CCC -> {prefix}AABB::CCC
+prefixes = [
+    "2404:e80:a137:",    # ISP prefix (Launtel)
+    # "2001:470:82b3:",  # HE.net prefix - DISABLED
+]
+
+[vlans]
+# VLAN ID to name/subdomain mapping
+# Maps IP subnet third octet to VLAN identity
+1 = { name = "tmp", subdomain = "tmp" }       # 10.1.1.x - Temporary/quarantine
+5 = { name = "net", subdomain = "net" }        # 10.1.5.x - Network infrastructure
+6 = { name = "pwr", subdomain = "pwr" }        # 10.1.6.x - Power infrastructure
+10 = { name = "int", subdomain = "int" }       # 10.1.10-16.x - Internal
+20 = { name = "roam", subdomain = "roam" }     # 10.1.20.x - Roaming hosts
+31 = { name = "sm", subdomain = "sm" }         # 10.31.x.x - Supermicro test
+41 = { name = "fpgas", subdomain = "fpgas" }   # 10.41.x.x - FPGA test
+90 = { name = "iot", subdomain = "iot" }       # 10.1.90.x - IoT devices
+99 = { name = "guest", subdomain = "guest" }   # 10.1.99.x - Guest network
+
+[network_subdomains]
+# Third octet to subdomain mapping (for IPs on 10.1.X.Y)
+# Multiple octets can map to the same subdomain
+1 = "tmp"
+5 = "net"
+6 = "pwr"
+10 = "int"
+11 = "int"
+15 = "int"
+16 = "int"
+20 = "roam"
+90 = "iot"
+99 = "guest"
+
+[generators]
+# Which generators to enable
+enabled = ["dnsmasq", "dnsmasq_external", "cisco_sg300", "tc_mac_vlan", "nagios"]
+
+[generators.dnsmasq]
+output = "dnsmasq.static.conf"
+
+[generators.dnsmasq_external]
+output = "dnsmasq.external.conf"
+# public_ipv4 = "203.0.113.1"  # Set to enable split-horizon
+
+[generators.cisco_sg300]
+output = "sg300-config.txt"
+deploy_path = "/srv/tftp/cisco/sg300-config.txt"
+
+[generators.tc_mac_vlan]
+bridge = "br-raw"
+
+[generators.nagios]
+output = "nagios-switches.cfg"

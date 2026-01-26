@@ -8,4 +8,13 @@ macs.json
 sshfp.json
 .*.sw*
 node_modules/
+
+# Python package artifacts
 __pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.cache/
+.pytest_cache/
