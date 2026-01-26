@@ -13,6 +13,7 @@ import urllib.request
 
 
 DOMAIN='welland.mithis.com'
+PUBLIC_IPV4='87.121.95.37'
 
 # Network subdomain mapping based on IP ranges
 # Maps third octet to subdomain name
@@ -550,61 +551,27 @@ def address_config(hostname2ip):
     """
 
 
-def host_record_config(hostname2ip):
+def host_record_config(hostname2ip, public_ipv4=None):
     """Generate the host-record entries for dnsmasq.
 
-    ########################
-    # host-record
-    ########################
-
-    --host-record=<name>[,<name>....],[<IPv4-address>],[<IPv6-address>][,<TTL>]
-
-    Add A, AAAA and PTR records to the DNS.
-
-    This adds one or more names to the DNS with associated IPv4 (A) and IPv6 (AAAA)
-    records.
-
-    A name may appear in more than one --host-record and therefore be assigned more
-    than one address.
-
-    Only the first address creates a PTR record linking the address to the name.
-    This is the same rule as is used reading hosts-files.
-
-    --host-record options are considered to be read before host-files, so a name
-    appearing there inhibits PTR-record creation if it appears in hosts-file also.
-
-    Unlike hosts-files, names are not expanded, even when --expand-hosts is in
-    effect.
-
-    Short and long names may appear in the same --host-record, eg.
-    --host-record=laptop,laptop.thekelleys.org,192.168.0.1,1234::100
-
-    If the time-to-live is given, it overrides the default, which is zero or the
-    value of --local-ttl. The value is a positive integer and gives the
-    time-to-live in seconds.
-
-    --dynamic-host=<name>,[IPv4-address],[IPv6-address],<interface>
-
-    Add A, AAAA and PTR records to the DNS in the same subnet as the specified
-    interface.
-
-    The address is derived from the network part of each address associated with
-    the interface, and the host part from the specified address.
-
-    For example --dynamic-host=example.com,0.0.0.8,eth0 will, when eth0 has the
-    address 192.168.78.x and netmask 255.255.255.0 give the name example.com an A
-    record for 192.168.78.8.
-
-    The same principle applies to IPv6 addresses.
-
-    Note that if an interface has more than one address, more than one A or AAAA
-    record will be created. The TTL of the records is always zero, and any changes
-    to interface addresses will be immediately reflected in them.
+    If public_ipv4 is set, all local (RFC1918) IPv4 addresses in host-records
+    are replaced with this value. IPv6 derivation still uses the real internal
+    IP. Used for external/split-horizon DNS.
     """
+    def record_ipv4(ip):
+        """Return public_ipv4 for local IPs when in external mode."""
+        if public_ipv4 and is_local(ip):
+            return public_ipv4
+        return ip
+
+    label = 'Forward names'
+    if public_ipv4:
+        label += ' (external - all local IPv4 mapped to %s)' % public_ipv4
+
     output = []
     output.append('')
     output.append('# '+'-'*70)
-    output.append('# Forward names')
+    output.append('# ' + label)
     output.append('# '+'-'*70)
 
     for host, ips in sorted(hostname2ip.items(), key=lambda x: x[0].split('.')[::-1]):
@@ -613,36 +580,38 @@ def host_record_config(hostname2ip):
         for inf, ip in sorted(ips.items()):
             if inf:
                 # Include IPv6 addresses for interface-specific records
+                rip = record_ipv4(ip)
                 ipv6_addrs = ipv4_to_ipv6_list(ip)
                 if ipv6_addrs:
-                    output.append('host-record=%s.%s.%s,%s,%s' % (inf, host, DOMAIN, ip, ','.join(ipv6_addrs)))
+                    output.append('host-record=%s.%s.%s,%s,%s' % (inf, host, DOMAIN, rip, ','.join(ipv6_addrs)))
                 else:
-                    output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, ip))
+                    output.append('host-record=%s.%s.%s,%s' % (inf, host, DOMAIN, rip))
                 # Also generate subdomain variant (e.g., eno0.desktop.int.welland.mithis.com)
                 subdomain = ip_to_subdomain(ip)
                 if subdomain:
                     if ipv6_addrs:
-                        output.append('host-record=%s.%s.%s.%s,%s,%s' % (inf, host, subdomain, DOMAIN, ip, ','.join(ipv6_addrs)))
+                        output.append('host-record=%s.%s.%s.%s,%s,%s' % (inf, host, subdomain, DOMAIN, rip, ','.join(ipv6_addrs)))
                     else:
-                        output.append('host-record=%s.%s.%s.%s,%s' % (inf, host, subdomain, DOMAIN, ip))
+                        output.append('host-record=%s.%s.%s.%s,%s' % (inf, host, subdomain, DOMAIN, rip))
         dip = default_ip(ips)
+        rdip = record_ipv4(dip)
         # Include IPv6 addresses for default host records
         ipv6_addrs = ipv4_to_ipv6_list(dip)
         if ipv6_addrs:
-            output.append('host-record=%s.%s,%s,%s' % (host, DOMAIN, dip, ','.join(ipv6_addrs)))
-            output.append('host-record=%s,%s,%s' % (host, dip, ','.join(ipv6_addrs)))
+            output.append('host-record=%s.%s,%s,%s' % (host, DOMAIN, rdip, ','.join(ipv6_addrs)))
+            output.append('host-record=%s,%s,%s' % (host, rdip, ','.join(ipv6_addrs)))
         else:
-            output.append('host-record=%s.%s,%s' % (host, DOMAIN, dip))
-            output.append('host-record=%s,%s' % (host, dip))
+            output.append('host-record=%s.%s,%s' % (host, DOMAIN, rdip))
+            output.append('host-record=%s,%s' % (host, rdip))
         # Also generate subdomain variant (e.g., desktop.int.welland.mithis.com)
         subdomain = ip_to_subdomain(dip)
         if subdomain:
             if ipv6_addrs:
-                output.append('host-record=%s.%s.%s,%s,%s' % (host, subdomain, DOMAIN, dip, ','.join(ipv6_addrs)))
+                output.append('host-record=%s.%s.%s,%s,%s' % (host, subdomain, DOMAIN, rdip, ','.join(ipv6_addrs)))
             else:
-                output.append('host-record=%s.%s.%s,%s' % (host, subdomain, DOMAIN, dip))
+                output.append('host-record=%s.%s.%s,%s' % (host, subdomain, DOMAIN, rdip))
         # IPv4-only and IPv6-only prefixed records
-        output.append('host-record=ipv4.%s.%s,%s' % (host, DOMAIN, dip))
+        output.append('host-record=ipv4.%s.%s,%s' % (host, DOMAIN, rdip))
         if ipv6_addrs:
             output.append('host-record=ipv6.%s.%s,%s' % (host, DOMAIN, ','.join(ipv6_addrs)))
         output.append('dns-rr=%s.%s,257,000569737375656C657473656E63727970742E6F7267' % (host,DOMAIN))
@@ -721,6 +690,7 @@ def main(argv):
         json.dump(ip2mac, f, indent="  ", sort_keys=True)
     printd("MAC Info", ip2mac=ip2mac)
 
+    # --- Internal config (DHCP + DNS with real IPs) ---
     output = []
     # Static DHCP Hosts
     output.extend(dhcp_host_config(ip2mac))
@@ -742,6 +712,27 @@ def main(argv):
     print("-"*75)
     with open(OUTPUT) as f:
         print(f.read())
+    print("-"*75)
+
+    # --- External config (DNS only, local IPv4 -> public IP) ---
+    external = []
+    # Reverse addresses (unchanged - PTR zones are for 10.x.x.x and IPv6)
+    external.extend(ptr_config(ip2hostname))
+    # Forward addresses (local IPv4 replaced with public IP)
+    external.extend(host_record_config(hostname2ip, public_ipv4=PUBLIC_IPV4))
+    # SSHFP records (unchanged)
+    external.extend(sshfp_records(hostname2ip))
+
+    external.append('')
+
+    EXTERNAL_OUTPUT = 'dnsmasq.external.conf'
+    with open(EXTERNAL_OUTPUT, 'w') as f:
+        for l in external:
+            f.write(l)
+            f.write('\n')
+
+    print("-"*75)
+    print("External config written to", EXTERNAL_OUTPUT)
     print("-"*75)
 
 
