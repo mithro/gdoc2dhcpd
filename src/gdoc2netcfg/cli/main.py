@@ -145,6 +145,7 @@ def _get_generator(name: str):
         "cisco_sg300": ("gdoc2netcfg.generators.cisco_sg300", "generate_cisco_sg300"),
         "tc_mac_vlan": ("gdoc2netcfg.generators.tc_mac_vlan", "generate_tc_mac_vlan"),
         "nagios": ("gdoc2netcfg.generators.nagios", "generate_nagios"),
+        "letsencrypt": ("gdoc2netcfg.generators.letsencrypt", "generate_letsencrypt"),
     }
     if name not in generators:
         return None
@@ -220,6 +221,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
             kwargs["public_ipv4"] = config.site.public_ipv4
         elif name == "tc_mac_vlan" and gen_config and gen_config.params.get("bridge"):
             kwargs["bridge"] = gen_config.params["bridge"]
+        elif name == "letsencrypt" and gen_config and gen_config.params.get("acme_webroot"):
+            kwargs["acme_webroot"] = gen_config.params["acme_webroot"]
 
         output = gen_func(inventory, **kwargs)
 
