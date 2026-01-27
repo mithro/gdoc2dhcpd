@@ -26,11 +26,17 @@ class CacheConfig:
 
 @dataclass
 class GeneratorConfig:
-    """Configuration for a single generator."""
+    """Configuration for a single generator.
+
+    Generators produce either a single file (output) or multiple files
+    (output_dir). Single-file generators write to 'output'; multi-file
+    generators write relative paths under 'output_dir'.
+    """
 
     name: str
     enabled: bool = True
     output: str = ""
+    output_dir: str = ""
     params: dict[str, str] = field(default_factory=dict)
 
 
@@ -103,7 +109,11 @@ def _build_generators(data: dict) -> dict[str, GeneratorConfig]:
             name=name,
             enabled=True,
             output=gen_section.get("output", ""),
-            params={k: v for k, v in gen_section.items() if k != "output"},
+            output_dir=gen_section.get("output_dir", ""),
+            params={
+                k: v for k, v in gen_section.items()
+                if k not in ("output", "output_dir")
+            },
         )
     return generators
 

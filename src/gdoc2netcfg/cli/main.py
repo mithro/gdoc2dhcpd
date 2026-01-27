@@ -148,6 +148,28 @@ def _get_generator(name: str):
     return getattr(mod, func_name)
 
 
+def _write_multi_file_output(name, file_dict, gen_config, args):
+    """Write a multi-file generator output (dict[str, str]).
+
+    Each key is a relative path, written under the generator's output_dir.
+    """
+    if args.stdout:
+        for rel_path, content in sorted(file_dict.items()):
+            print(f"# === {name}: {rel_path} ===")
+            print(content)
+        return
+
+    output_dir = gen_config.output_dir if gen_config and gen_config.output_dir else name
+    base = Path(output_dir)
+    total_bytes = 0
+    for rel_path, content in sorted(file_dict.items()):
+        file_path = base / rel_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+        total_bytes += len(content)
+    print(f"  {name}: wrote {len(file_dict)} files to {output_dir}/ ({total_bytes} bytes)")
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     """Run the pipeline and produce output config files."""
     config = _load_config(args)
@@ -189,15 +211,18 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
         output = gen_func(inventory, **kwargs)
 
-        # Write to file or stdout
-        output_path = gen_config.output if gen_config and gen_config.output else None
-        if output_path and not args.stdout:
-            Path(output_path).write_text(output, encoding="utf-8")
-            print(f"  {name}: wrote {output_path} ({len(output)} bytes)")
+        # Write output: single file (str) or multiple files (dict)
+        if isinstance(output, dict):
+            _write_multi_file_output(name, output, gen_config, args)
         else:
-            if len(gen_names) > 1:
-                print(f"# === {name} ===")
-            print(output)
+            output_path = gen_config.output if gen_config and gen_config.output else None
+            if output_path and not args.stdout:
+                Path(output_path).write_text(output, encoding="utf-8")
+                print(f"  {name}: wrote {output_path} ({len(output)} bytes)")
+            else:
+                if len(gen_names) > 1:
+                    print(f"# === {name} ===")
+                print(output)
 
         generated += 1
 

@@ -1,12 +1,14 @@
 """Tests for the CLI entry point."""
 
+import argparse
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from gdoc2netcfg.cli.main import main
+from gdoc2netcfg.cli.main import _write_multi_file_output, main
+from gdoc2netcfg.config import GeneratorConfig
 
 
 @pytest.fixture
@@ -157,6 +159,43 @@ class TestGenerateCommand:
         assert result == 0
         captured = capsys.readouterr()
         assert "unknown generator" in captured.err
+
+
+class TestMultiFileOutput:
+    def test_writes_multiple_files(self, tmp_path):
+        output_dir = tmp_path / "nginx"
+        gen_config = GeneratorConfig(name="nginx", output_dir=str(output_dir))
+        args = argparse.Namespace(stdout=False)
+        file_dict = {
+            "sites-available/host1": "server { }",
+            "snippets/acme.conf": "location /.well-known { }",
+        }
+        _write_multi_file_output("nginx", file_dict, gen_config, args)
+
+        assert (output_dir / "sites-available" / "host1").exists()
+        assert (output_dir / "snippets" / "acme.conf").exists()
+        assert (output_dir / "sites-available" / "host1").read_text() == "server { }"
+
+    def test_stdout_mode(self, capsys):
+        gen_config = GeneratorConfig(name="nginx", output_dir="nginx")
+        args = argparse.Namespace(stdout=True)
+        file_dict = {
+            "file1": "content1",
+            "file2": "content2",
+        }
+        _write_multi_file_output("nginx", file_dict, gen_config, args)
+
+        captured = capsys.readouterr()
+        assert "# === nginx: file1 ===" in captured.out
+        assert "content1" in captured.out
+        assert "# === nginx: file2 ===" in captured.out
+
+    def test_default_output_dir_is_name(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        gen_config = GeneratorConfig(name="nginx", output_dir="")
+        args = argparse.Namespace(stdout=False)
+        _write_multi_file_output("nginx", {"f.txt": "x"}, gen_config, args)
+        assert (tmp_path / "nginx" / "f.txt").exists()
 
 
 class TestDnsmasqExternalGenerator:
