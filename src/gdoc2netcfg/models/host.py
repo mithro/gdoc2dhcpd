@@ -45,6 +45,20 @@ class NetworkInterface:
     dhcp_name: str = ""
 
 
+@dataclass(frozen=True)
+class SSLCertInfo:
+    """SSL/TLS certificate information for a host.
+
+    Populated by the ssl_certs supplement after scanning port 443.
+    """
+
+    issuer: str
+    self_signed: bool
+    valid: bool
+    expiry: str
+    sans: tuple[str, ...] = ()
+
+
 @dataclass
 class Host:
     """A logical host with one or more network interfaces.
@@ -72,6 +86,7 @@ class Host:
     extra: dict[str, str] = field(default_factory=dict)
     dns_names: list[DNSName] = field(default_factory=list)
     hardware_type: str | None = None
+    ssl_cert_info: SSLCertInfo | None = None
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:

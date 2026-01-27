@@ -66,6 +66,7 @@ def _build_pipeline(config):
     from gdoc2netcfg.constraints.validators import validate_all
     from gdoc2netcfg.derivations.host_builder import build_hosts, build_inventory
     from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.ssl_certs import enrich_hosts_with_ssl_certs, load_ssl_cert_cache
     from gdoc2netcfg.supplements.sshfp import enrich_hosts_with_sshfp, load_sshfp_cache
 
     # Fetch or load CSVs
@@ -91,6 +92,11 @@ def _build_pipeline(config):
     sshfp_cache = Path(config.cache.directory) / "sshfp.json"
     sshfp_data = load_sshfp_cache(sshfp_cache)
     enrich_hosts_with_sshfp(hosts, sshfp_data)
+
+    # Load SSL cert cache and enrich (don't scan — that's a separate subcommand)
+    ssl_cache = Path(config.cache.directory) / "ssl_certs.json"
+    ssl_data = load_ssl_cert_cache(ssl_cache)
+    enrich_hosts_with_ssl_certs(hosts, ssl_data)
 
     # Validate
     result = validate_all(all_records, hosts, inventory)
@@ -333,6 +339,47 @@ def cmd_sshfp(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: ssl-certs
+# ---------------------------------------------------------------------------
+
+def cmd_ssl_certs(args: argparse.Namespace) -> int:
+    """Scan hosts for SSL/TLS certificates."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.ssl_certs import (
+        enrich_hosts_with_ssl_certs,
+        scan_ssl_certs,
+    )
+
+    # Minimal pipeline to get hosts with IPs
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    all_records = []
+    for name, csv_text in csv_data:
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    cache_path = Path(config.cache.directory) / "ssl_certs.json"
+    cert_data = scan_ssl_certs(
+        hosts,
+        cache_path=cache_path,
+        force=args.force,
+        verbose=True,
+    )
+
+    enrich_hosts_with_ssl_certs(hosts, cert_data)
+
+    # Report
+    hosts_with_cert = sum(1 for h in hosts if h.ssl_cert_info is not None)
+    print(f"\nSSL certificates for {hosts_with_cert}/{len(hosts)} hosts.")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -380,6 +427,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Force re-scan even if cache is fresh",
     )
 
+    # ssl-certs
+    ssl_parser = subparsers.add_parser("ssl-certs", help="Scan hosts for SSL/TLS certificates")
+    ssl_parser.add_argument(
+        "--force", action="store_true",
+        help="Force re-scan even if cache is fresh",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -392,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
         "validate": cmd_validate,
         "info": cmd_info,
         "sshfp": cmd_sshfp,
+        "ssl-certs": cmd_ssl_certs,
     }
 
     return commands[args.command](args)
