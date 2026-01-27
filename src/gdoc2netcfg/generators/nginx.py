@@ -17,6 +17,7 @@ Admins activate configs via symlinks in sites-enabled/.
 from __future__ import annotations
 
 from gdoc2netcfg.models.host import NetworkInventory
+from gdoc2netcfg.utils.dns import is_safe_dns_name
 
 
 def generate_nginx(
@@ -34,12 +35,18 @@ def generate_nginx(
     files["snippets/acme-challenge.conf"] = _acme_challenge_snippet(acme_webroot)
 
     for host in inventory.hosts_sorted():
-        fqdns = [dn.name for dn in host.dns_names if dn.is_fqdn]
+        fqdns = [
+            dn.name for dn in host.dns_names
+            if dn.is_fqdn and is_safe_dns_name(dn.name)
+        ]
         if not fqdns:
             continue
 
         primary_fqdn = fqdns[0]
-        all_names = [dn.name for dn in host.dns_names]
+        all_names = [
+            dn.name for dn in host.dns_names
+            if is_safe_dns_name(dn.name)
+        ]
         target_ip = str(host.default_ipv4)
 
         # Determine verify/noverify for HTTPS
@@ -91,23 +98,6 @@ def _server_names(names: list[str]) -> str:
     """Format the server_name directive."""
     return " ".join(names)
 
-
-def _auth_block(htpasswd_file: str) -> str:
-    """Generate auth_basic directives."""
-    return (
-        f'        auth_basic "Restricted";\n'
-        f"        auth_basic_user_file {htpasswd_file};\n"
-    )
-
-
-def _proxy_headers() -> str:
-    """Generate standard proxy headers."""
-    return (
-        "        proxy_set_header Host $host;\n"
-        "        proxy_set_header X-Real-IP $remote_addr;\n"
-        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-        "        proxy_set_header X-Forwarded-Proto $scheme;\n"
-    )
 
 
 def _http_block(

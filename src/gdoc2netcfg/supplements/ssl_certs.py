@@ -23,14 +23,21 @@ from gdoc2netcfg.supplements.reachability import check_port_open, check_reachabl
 def _fetch_cert(ip: str, timeout: float = 5.0) -> dict | None:
     """Connect to port 443 and retrieve certificate details.
 
+    Connects by IP address, so hostname verification is intentionally
+    disabled. The 'valid' flag indicates certificate chain validity
+    against the system trust store, not hostname match — hostname
+    matching is the responsibility of the consumer (e.g. nginx config
+    determines which cert maps to which server_name).
+
     Returns a dict with issuer, self_signed, valid, expiry, and sans,
     or None if the connection fails.
     """
-    # First try with system trust verification
+    # Chain verification context — hostname check disabled because we
+    # connect by IP, not by hostname.
     ctx_verify = ssl.create_default_context()
     ctx_verify.check_hostname = False
 
-    # Also prepare a non-verifying context for self-signed certs
+    # Non-verifying context for retrieving self-signed cert details
     ctx_noverify = ssl.create_default_context()
     ctx_noverify.check_hostname = False
     ctx_noverify.verify_mode = ssl.CERT_NONE

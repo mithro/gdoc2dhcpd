@@ -16,6 +16,7 @@ from gdoc2netcfg.derivations.hardware import (
     HARDWARE_SUPERMICRO_BMC,
 )
 from gdoc2netcfg.models.host import NetworkInventory
+from gdoc2netcfg.utils.dns import is_safe_dns_name
 
 # Deploy hook scripts, looked up by hardware type
 _DEPLOY_HOOKS: dict[str, str] = {
@@ -37,10 +38,10 @@ def generate_letsencrypt(
     files: dict[str, str] = {}
 
     for host in inventory.hosts_sorted():
-        # Collect only public FQDNs
+        # Collect only public FQDNs with safe characters
         fqdns = [
             dn.name for dn in host.dns_names
-            if dn.is_fqdn
+            if dn.is_fqdn and is_safe_dns_name(dn.name)
         ]
 
         if not fqdns:
