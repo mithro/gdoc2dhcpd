@@ -11,35 +11,12 @@ with additional data from external systems (SSH daemons).
 from __future__ import annotations
 
 import json
-import socket
 import subprocess
 import time
 from pathlib import Path
 
 from gdoc2netcfg.models.host import Host
-
-
-def _ping(ip: str, packets: int = 5) -> bool:
-    """Check if a host responds to ICMP ping."""
-    try:
-        result = subprocess.run(
-            ["ping", "-n", "-A", "-c", str(packets), "-w", "1", ip],
-            capture_output=True,
-            text=True,
-        )
-        return f"{packets} packets transmitted, {packets} received" in result.stdout
-    except FileNotFoundError:
-        return False
-
-
-def _check_ssh_port(ip: str, timeout: float = 0.5) -> bool:
-    """Check if SSH port 22 is open on the host."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        return sock.connect_ex((ip, 22)) == 0
-    finally:
-        sock.close()
+from gdoc2netcfg.supplements.reachability import check_port_open, check_reachable
 
 
 def _keyscan(ip: str, hostname: str) -> list[str]:
@@ -115,7 +92,7 @@ def scan_sshfp(
         active_ips = []
         for iface in host.interfaces:
             ip_str = str(iface.ipv4)
-            if _ping(ip_str):
+            if check_reachable(ip_str):
                 active_ips.append(ip_str)
 
         if not active_ips:
@@ -129,7 +106,7 @@ def scan_sshfp(
         # Check SSH availability
         ssh_ip = None
         for ip in active_ips:
-            if _check_ssh_port(ip):
+            if check_port_open(ip, 22):
                 ssh_ip = ip
                 break
 
