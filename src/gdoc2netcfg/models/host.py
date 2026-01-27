@@ -9,6 +9,22 @@ from gdoc2netcfg.models.network import Site
 
 
 @dataclass(frozen=True)
+class DNSName:
+    """A DNS name with its associated IP addresses.
+
+    Each DNS name maps to a specific IPv4 address and zero or more
+    IPv6 addresses. The is_fqdn flag distinguishes full domain names
+    (e.g. 'big-storage.welland.mithis.com') from short names
+    (e.g. 'big-storage').
+    """
+
+    name: str
+    ipv4: IPv4Address | None = None
+    ipv6_addresses: list[IPv6Address] = field(default_factory=list)
+    is_fqdn: bool = False
+
+
+@dataclass(frozen=True)
 class NetworkInterface:
     """A single network interface on a host.
 
@@ -54,6 +70,7 @@ class Host:
     subdomain: str | None = None
     sshfp_records: list[str] = field(default_factory=list)
     extra: dict[str, str] = field(default_factory=dict)
+    dns_names: list[DNSName] = field(default_factory=list)
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:

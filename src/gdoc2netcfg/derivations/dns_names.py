@@ -1,6 +1,19 @@
-"""DNS name derivations: hostname, DHCP name, common suffix, subdomain variants."""
+"""DNS name derivations: hostname, DHCP name, common suffix, subdomain variants.
+
+Includes four composable DNS name derivation passes:
+  Pass 1 — Hostname: base hostname names ({hostname}.{domain}, {hostname})
+  Pass 2 — Interface: per-interface names ({iface}.{hostname}.{domain}, ...)
+  Pass 3 — Subdomain: subdomain variants ({hostname}.{subdomain}.{domain}, ...)
+  Pass 4 — IPv4/IPv6 prefix: ipv4.{name}, ipv6.{name} for dual-stack names
+"""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gdoc2netcfg.models.host import DNSName, Host
+    from gdoc2netcfg.models.network import Site
 
 
 def compute_hostname(machine_name: str, sheet_type: str) -> str:
@@ -85,3 +98,184 @@ def common_suffix(a: str, *others: str) -> str:
     if i == 0:
         return ""
     return a[-i:]
+
+
+# ---------------------------------------------------------------------------
+# DNS name derivation passes
+# ---------------------------------------------------------------------------
+
+def _make_dns_name(
+    name: str,
+    ipv4: "IPv4Address | None",
+    ipv6_addresses: "list[IPv6Address]",
+    is_fqdn: bool,
+) -> "DNSName":
+    """Create a DNSName, importing lazily to avoid circular imports."""
+    from gdoc2netcfg.models.host import DNSName
+
+    return DNSName(
+        name=name,
+        ipv4=ipv4,
+        ipv6_addresses=list(ipv6_addresses),
+        is_fqdn=is_fqdn,
+    )
+
+
+def derive_dns_names_hostname(host: "Host", domain: str) -> list["DNSName"]:
+    """Pass 1 — Hostname: add base hostname DNS names.
+
+    Adds:
+      - {hostname}.{domain}  (FQDN)
+      - {hostname}           (short name)
+
+    Uses the host's default IP and its IPv6 addresses.
+    """
+    if host.default_ipv4 is None:
+        return []
+
+    # Find IPv6 addresses for the default IP
+    ipv6_addrs: list = []
+    for iface in host.interfaces:
+        if iface.ipv4 == host.default_ipv4:
+            ipv6_addrs = list(iface.ipv6_addresses)
+            break
+
+    return [
+        _make_dns_name(
+            f"{host.hostname}.{domain}",
+            host.default_ipv4,
+            ipv6_addrs,
+            is_fqdn=True,
+        ),
+        _make_dns_name(
+            host.hostname,
+            host.default_ipv4,
+            ipv6_addrs,
+            is_fqdn=False,
+        ),
+    ]
+
+
+def derive_dns_names_interface(host: "Host", domain: str) -> list["DNSName"]:
+    """Pass 2 — Interface: add per-interface DNS names.
+
+    For each named interface, adds:
+      - {iface}.{hostname}.{domain}  (FQDN)
+      - {iface}.{hostname}           (short name)
+    """
+    names: list["DNSName"] = []
+    for iface in host.interfaces:
+        if not iface.name:
+            continue
+        names.append(
+            _make_dns_name(
+                f"{iface.name}.{host.hostname}.{domain}",
+                iface.ipv4,
+                list(iface.ipv6_addresses),
+                is_fqdn=True,
+            )
+        )
+        names.append(
+            _make_dns_name(
+                f"{iface.name}.{host.hostname}",
+                iface.ipv4,
+                list(iface.ipv6_addresses),
+                is_fqdn=False,
+            )
+        )
+    return names
+
+
+def derive_dns_names_subdomain(
+    host: "Host", domain: str, site: "Site",
+) -> list["DNSName"]:
+    """Pass 3 — Subdomain: add subdomain variants for existing FQDN names.
+
+    For each existing FQDN name {x}.{domain}, adds:
+      - {x}.{subdomain}.{domain}
+
+    The subdomain is determined by the IP address of each name.
+    """
+    names: list["DNSName"] = []
+    for dns_name in list(host.dns_names):
+        if not dns_name.is_fqdn:
+            continue
+        if dns_name.ipv4 is None:
+            continue
+        # Determine subdomain from IP
+        parts = str(dns_name.ipv4).split(".")
+        if parts[0] != "10" or parts[1] != "1":
+            continue
+        subdomain = site.network_subdomains.get(int(parts[2]))
+        if not subdomain:
+            continue
+        # Replace .{domain} with .{subdomain}.{domain}
+        base = dns_name.name
+        if base.endswith(f".{domain}"):
+            prefix = base[: -len(f".{domain}")]
+            new_name = f"{prefix}.{subdomain}.{domain}"
+            names.append(
+                _make_dns_name(
+                    new_name,
+                    dns_name.ipv4,
+                    list(dns_name.ipv6_addresses),
+                    is_fqdn=True,
+                )
+            )
+    return names
+
+
+def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list["DNSName"]:
+    """Pass 4 — IPv4/IPv6 prefix: add ipv4.{name} and ipv6.{name} variants.
+
+    Scans ALL existing names. For any FQDN name that resolves to both IPv4
+    and IPv6, adds:
+      - ipv4.{name}  (IPv4 only)
+      - ipv6.{name}  (IPv6 only)
+    """
+    names: list["DNSName"] = []
+    for dns_name in list(host.dns_names):
+        if not dns_name.is_fqdn:
+            continue
+        if dns_name.ipv4 is None:
+            continue
+        if not dns_name.ipv6_addresses:
+            continue
+        names.append(
+            _make_dns_name(
+                f"ipv4.{dns_name.name}",
+                dns_name.ipv4,
+                [],
+                is_fqdn=True,
+            )
+        )
+        names.append(
+            _make_dns_name(
+                f"ipv6.{dns_name.name}",
+                None,
+                list(dns_name.ipv6_addresses),
+                is_fqdn=True,
+            )
+        )
+    return names
+
+
+def derive_all_dns_names(host: "Host", site: "Site") -> None:
+    """Run all four DNS name derivation passes on a host (in-place).
+
+    Order matters: Pass 4 must run last since it scans all names
+    from previous passes.
+    """
+    domain = site.domain
+
+    # Pass 1 — Hostname
+    host.dns_names = derive_dns_names_hostname(host, domain)
+
+    # Pass 2 — Interface
+    host.dns_names.extend(derive_dns_names_interface(host, domain))
+
+    # Pass 3 — Subdomain
+    host.dns_names.extend(derive_dns_names_subdomain(host, domain, site))
+
+    # Pass 4 — IPv4/IPv6 prefix
+    host.dns_names.extend(derive_dns_names_ip_prefix(host, domain))

@@ -11,6 +11,7 @@ from gdoc2netcfg.derivations.dns_names import (
     common_suffix,
     compute_dhcp_name,
     compute_hostname,
+    derive_all_dns_names,
 )
 from gdoc2netcfg.derivations.ipv6 import ipv4_to_ipv6_list
 from gdoc2netcfg.derivations.vlan import ip_to_subdomain, ip_to_vlan_id
@@ -136,17 +137,20 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
         # Collect extra fields from first record (they should be the same)
         extra = group[0].extra.copy()
 
-        hosts.append(
-            Host(
-                machine_name=group[0].machine.lower(),
-                hostname=hostname,
-                sheet_type=sheet_type,
-                interfaces=interfaces,
-                default_ipv4=default_ipv4,
-                subdomain=subdomain,
-                extra=extra,
-            )
+        host = Host(
+            machine_name=group[0].machine.lower(),
+            hostname=hostname,
+            sheet_type=sheet_type,
+            interfaces=interfaces,
+            default_ipv4=default_ipv4,
+            subdomain=subdomain,
+            extra=extra,
         )
+
+        # Derive DNS names (all four passes)
+        derive_all_dns_names(host, site)
+
+        hosts.append(host)
 
     return hosts
 
