@@ -71,6 +71,7 @@ class Host:
     sshfp_records: list[str] = field(default_factory=list)
     extra: dict[str, str] = field(default_factory=dict)
     dns_names: list[DNSName] = field(default_factory=list)
+    hardware_type: str | None = None
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:

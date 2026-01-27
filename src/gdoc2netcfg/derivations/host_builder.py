@@ -13,6 +13,7 @@ from gdoc2netcfg.derivations.dns_names import (
     compute_hostname,
     derive_all_dns_names,
 )
+from gdoc2netcfg.derivations.hardware import detect_hardware_type
 from gdoc2netcfg.derivations.ipv6 import ipv4_to_ipv6_list
 from gdoc2netcfg.derivations.vlan import ip_to_subdomain, ip_to_vlan_id
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
@@ -149,6 +150,9 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
 
         # Derive DNS names (all four passes)
         derive_all_dns_names(host, site)
+
+        # Detect hardware type from MAC OUI
+        host.hardware_type = detect_hardware_type(host)
 
         hosts.append(host)
 
