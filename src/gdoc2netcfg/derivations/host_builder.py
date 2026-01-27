@@ -47,18 +47,36 @@ def _build_interface(record: DeviceRecord, site: Site) -> NetworkInterface:
     )
 
 
+def _is_bmc_interface(interface_name: str | None) -> bool:
+    """Check if an interface name indicates a BMC (Baseboard Management Controller).
+
+    BMC interfaces are split into separate hosts in the pipeline, matching
+    the production behavior where 'bmc.machine_name' becomes its own host.
+    """
+    return bool(interface_name and "bmc" in interface_name.lower())
+
+
 def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
     """Build Host objects from raw DeviceRecords.
 
     Groups records by machine name into Host objects, computing all
     derived fields (hostname, DHCP name, IPv6, VLAN, subdomain, default IP).
 
+    BMC interfaces are split into separate hosts: a record with interface
+    'bmc' on machine 'big-storage' creates a host 'bmc.big-storage' with
+    a bare (None) interface, separate from the parent 'big-storage' host.
+    This matches the production behavior where BMCs are treated as
+    independent network entities.
+
     Records missing required fields (machine, mac, ip) are skipped
     with a warning.
     """
-    # Group records by (machine_name_lower, sheet_name) to build hosts
+    # Group records by hostname to build hosts.
+    # BMC interfaces get their own hostname: {interface}.{machine_hostname}
     host_groups: dict[str, list[DeviceRecord]] = {}
     host_sheet_type: dict[str, str] = {}
+    # Track BMC records that need interface→None transformation
+    bmc_hostnames: set[str] = set()
 
     for record in records:
         if not record.machine or not record.mac_address or not record.ip:
@@ -71,7 +89,14 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
         elif sheet_type.lower() == "iot":
             sheet_type = "IoT"
 
-        hostname = compute_hostname(record.machine, sheet_type)
+        base_hostname = compute_hostname(record.machine, sheet_type)
+
+        # BMC interfaces become separate hosts
+        if _is_bmc_interface(record.interface):
+            hostname = f"{record.interface.lower()}.{base_hostname}"
+            bmc_hostnames.add(hostname)
+        else:
+            hostname = base_hostname
 
         if hostname not in host_groups:
             host_groups[hostname] = []
@@ -82,7 +107,22 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
 
     for hostname, group in host_groups.items():
         sheet_type = host_sheet_type[hostname]
-        interfaces = [_build_interface(r, site) for r in group]
+        is_bmc_host = hostname in bmc_hostnames
+        interfaces = []
+        for r in group:
+            iface = _build_interface(r, site)
+            if is_bmc_host:
+                # BMC host: strip the interface name so it becomes
+                # the bare/default interface (None)
+                iface = NetworkInterface(
+                    name=None,
+                    mac=iface.mac,
+                    ipv4=iface.ipv4,
+                    ipv6_addresses=iface.ipv6_addresses,
+                    vlan_id=iface.vlan_id,
+                    dhcp_name=iface.dhcp_name,
+                )
+            interfaces.append(iface)
 
         # Compute default IP
         interface_ips: dict[str | None, IPv4Address] = {}
@@ -129,9 +169,7 @@ def build_inventory(hosts: list[Host], site: Site) -> NetworkInventory:
             ip_str = str(iface.ipv4)
 
             # Build name for this interface
-            if iface.name and "bmc" in iface.name.lower():
-                name = f"{iface.name}.{host.hostname}"
-            elif iface.name:
+            if iface.name:
                 name = f"{iface.name}.{host.hostname}"
             else:
                 name = host.hostname
