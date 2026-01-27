@@ -11,8 +11,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from gdoc2netcfg.models.host import DNSName
+
 if TYPE_CHECKING:
-    from gdoc2netcfg.models.host import DNSName, Host
+    from gdoc2netcfg.models.addressing import IPv4Address, IPv6Address
+    from gdoc2netcfg.models.host import Host
     from gdoc2netcfg.models.network import Site
 
 
@@ -107,21 +110,19 @@ def common_suffix(a: str, *others: str) -> str:
 def _make_dns_name(
     name: str,
     ipv4: "IPv4Address | None",
-    ipv6_addresses: "list[IPv6Address]",
+    ipv6_addresses: "tuple[IPv6Address, ...] | list[IPv6Address]",
     is_fqdn: bool,
-) -> "DNSName":
-    """Create a DNSName, importing lazily to avoid circular imports."""
-    from gdoc2netcfg.models.host import DNSName
-
+) -> DNSName:
+    """Create a DNSName with immutable IPv6 tuple."""
     return DNSName(
         name=name,
         ipv4=ipv4,
-        ipv6_addresses=list(ipv6_addresses),
+        ipv6_addresses=tuple(ipv6_addresses),
         is_fqdn=is_fqdn,
     )
 
 
-def derive_dns_names_hostname(host: "Host", domain: str) -> list["DNSName"]:
+def derive_dns_names_hostname(host: "Host", domain: str) -> list[DNSName]:
     """Pass 1 — Hostname: add base hostname DNS names.
 
     Adds:
@@ -134,10 +135,10 @@ def derive_dns_names_hostname(host: "Host", domain: str) -> list["DNSName"]:
         return []
 
     # Find IPv6 addresses for the default IP
-    ipv6_addrs: list = []
+    ipv6_addrs: tuple["IPv6Address", ...] = ()
     for iface in host.interfaces:
         if iface.ipv4 == host.default_ipv4:
-            ipv6_addrs = list(iface.ipv6_addresses)
+            ipv6_addrs = tuple(iface.ipv6_addresses)
             break
 
     return [
@@ -156,14 +157,14 @@ def derive_dns_names_hostname(host: "Host", domain: str) -> list["DNSName"]:
     ]
 
 
-def derive_dns_names_interface(host: "Host", domain: str) -> list["DNSName"]:
+def derive_dns_names_interface(host: "Host", domain: str) -> list[DNSName]:
     """Pass 2 — Interface: add per-interface DNS names.
 
     For each named interface, adds:
       - {iface}.{hostname}.{domain}  (FQDN)
       - {iface}.{hostname}           (short name)
     """
-    names: list["DNSName"] = []
+    names: list[DNSName] = []
     for iface in host.interfaces:
         if not iface.name:
             continue
@@ -171,7 +172,7 @@ def derive_dns_names_interface(host: "Host", domain: str) -> list["DNSName"]:
             _make_dns_name(
                 f"{iface.name}.{host.hostname}.{domain}",
                 iface.ipv4,
-                list(iface.ipv6_addresses),
+                iface.ipv6_addresses,
                 is_fqdn=True,
             )
         )
@@ -179,7 +180,7 @@ def derive_dns_names_interface(host: "Host", domain: str) -> list["DNSName"]:
             _make_dns_name(
                 f"{iface.name}.{host.hostname}",
                 iface.ipv4,
-                list(iface.ipv6_addresses),
+                iface.ipv6_addresses,
                 is_fqdn=False,
             )
         )
@@ -188,25 +189,23 @@ def derive_dns_names_interface(host: "Host", domain: str) -> list["DNSName"]:
 
 def derive_dns_names_subdomain(
     host: "Host", domain: str, site: "Site",
-) -> list["DNSName"]:
+) -> list[DNSName]:
     """Pass 3 — Subdomain: add subdomain variants for existing FQDN names.
 
     For each existing FQDN name {x}.{domain}, adds:
       - {x}.{subdomain}.{domain}
 
-    The subdomain is determined by the IP address of each name.
+    Uses ip_to_subdomain from vlan.py for subdomain lookup.
     """
-    names: list["DNSName"] = []
+    from gdoc2netcfg.derivations.vlan import ip_to_subdomain
+
+    names: list[DNSName] = []
     for dns_name in list(host.dns_names):
         if not dns_name.is_fqdn:
             continue
         if dns_name.ipv4 is None:
             continue
-        # Determine subdomain from IP
-        parts = str(dns_name.ipv4).split(".")
-        if parts[0] != "10" or parts[1] != "1":
-            continue
-        subdomain = site.network_subdomains.get(int(parts[2]))
+        subdomain = ip_to_subdomain(dns_name.ipv4, site)
         if not subdomain:
             continue
         # Replace .{domain} with .{subdomain}.{domain}
@@ -218,14 +217,14 @@ def derive_dns_names_subdomain(
                 _make_dns_name(
                     new_name,
                     dns_name.ipv4,
-                    list(dns_name.ipv6_addresses),
+                    dns_name.ipv6_addresses,
                     is_fqdn=True,
                 )
             )
     return names
 
 
-def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list["DNSName"]:
+def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list[DNSName]:
     """Pass 4 — IPv4/IPv6 prefix: add ipv4.{name} and ipv6.{name} variants.
 
     Scans ALL existing names. For any FQDN name that resolves to both IPv4
@@ -233,7 +232,7 @@ def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list["DNSName"]:
       - ipv4.{name}  (IPv4 only)
       - ipv6.{name}  (IPv6 only)
     """
-    names: list["DNSName"] = []
+    names: list[DNSName] = []
     for dns_name in list(host.dns_names):
         if not dns_name.is_fqdn:
             continue
@@ -245,7 +244,7 @@ def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list["DNSName"]:
             _make_dns_name(
                 f"ipv4.{dns_name.name}",
                 dns_name.ipv4,
-                [],
+                (),
                 is_fqdn=True,
             )
         )
@@ -253,7 +252,7 @@ def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list["DNSName"]:
             _make_dns_name(
                 f"ipv6.{dns_name.name}",
                 None,
-                list(dns_name.ipv6_addresses),
+                dns_name.ipv6_addresses,
                 is_fqdn=True,
             )
         )

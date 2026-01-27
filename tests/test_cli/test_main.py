@@ -2,8 +2,6 @@
 
 import argparse
 import textwrap
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -196,6 +194,23 @@ class TestMultiFileOutput:
         args = argparse.Namespace(stdout=False)
         _write_multi_file_output("nginx", {"f.txt": "x"}, gen_config, args)
         assert (tmp_path / "nginx" / "f.txt").exists()
+
+    def test_path_traversal_blocked(self, tmp_path, capsys):
+        output_dir = tmp_path / "nginx"
+        gen_config = GeneratorConfig(name="nginx", output_dir=str(output_dir))
+        args = argparse.Namespace(stdout=False)
+        file_dict = {
+            "../../etc/passwd": "malicious content",
+            "sites-available/legit": "good content",
+        }
+        _write_multi_file_output("nginx", file_dict, gen_config, args)
+
+        # Legitimate file should be written
+        assert (output_dir / "sites-available" / "legit").exists()
+        # Traversal path should NOT be written
+        assert not (tmp_path / "etc" / "passwd").exists()
+        captured = capsys.readouterr()
+        assert "path traversal" in captured.err
 
 
 class TestDnsmasqExternalGenerator:

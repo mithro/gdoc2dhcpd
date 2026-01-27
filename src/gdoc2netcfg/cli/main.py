@@ -160,10 +160,16 @@ def _write_multi_file_output(name, file_dict, gen_config, args):
         return
 
     output_dir = gen_config.output_dir if gen_config and gen_config.output_dir else name
-    base = Path(output_dir)
+    base = Path(output_dir).resolve()
     total_bytes = 0
     for rel_path, content in sorted(file_dict.items()):
-        file_path = base / rel_path
+        file_path = (base / rel_path).resolve()
+        if not str(file_path).startswith(str(base)):
+            print(
+                f"  {name}: skipping path traversal: {rel_path}",
+                file=sys.stderr,
+            )
+            continue
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
         total_bytes += len(content)

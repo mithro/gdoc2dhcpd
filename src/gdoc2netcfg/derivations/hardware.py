@@ -12,6 +12,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from gdoc2netcfg.models.host import Host
 
+# Hardware type constants — use these in generators for matching
+HARDWARE_SUPERMICRO_BMC = "supermicro-bmc"
+HARDWARE_NETGEAR_SWITCH = "netgear-switch"
+
 # IEEE OUI prefixes registered to Super Micro Computer, Inc.
 # Source: https://maclookup.app/vendors/super-micro-computer-inc
 SUPERMICRO_OUIS: set[str] = {
@@ -68,10 +72,10 @@ def detect_hardware_type(host: "Host") -> str | None:
     # Supermicro BMC: must be a BMC host with a Supermicro OUI
     is_bmc_host = "bmc" in host.hostname.lower()
     if is_bmc_host and ouis & SUPERMICRO_OUIS:
-        return "supermicro-bmc"
+        return HARDWARE_SUPERMICRO_BMC
 
     # Netgear switch: any interface with a Netgear OUI
     if ouis & NETGEAR_OUIS:
-        return "netgear-switch"
+        return HARDWARE_NETGEAR_SWITCH
 
     return None

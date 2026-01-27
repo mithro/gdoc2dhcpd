@@ -20,7 +20,7 @@ class DNSName:
 
     name: str
     ipv4: IPv4Address | None = None
-    ipv6_addresses: list[IPv6Address] = field(default_factory=list)
+    ipv6_addresses: tuple[IPv6Address, ...] = ()
     is_fqdn: bool = False
 
 

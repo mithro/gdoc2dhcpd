@@ -12,7 +12,7 @@ from gdoc2netcfg.derivations.dns_names import (
     derive_dns_names_subdomain,
 )
 from gdoc2netcfg.models.addressing import IPv4Address, IPv6Address, MACAddress
-from gdoc2netcfg.models.host import DNSName, Host, NetworkInterface
+from gdoc2netcfg.models.host import Host, NetworkInterface
 from gdoc2netcfg.models.network import IPv6Prefix, Site
 
 DOMAIN = "welland.mithis.com"
@@ -230,7 +230,7 @@ class TestPass4IpPrefix:
 
         ipv4_name = next(n for n in names if n.name.startswith("ipv4."))
         assert ipv4_name.ipv4 is not None
-        assert ipv4_name.ipv6_addresses == []
+        assert ipv4_name.ipv6_addresses == ()
 
     def test_ipv6_prefix_has_only_ipv6(self):
         host = _make_host()
