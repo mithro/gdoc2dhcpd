@@ -175,7 +175,15 @@ class TestScanSSLCerts:
     @patch("gdoc2netcfg.supplements.ssl_certs._fetch_cert")
     def test_scan_uses_cache_when_fresh(self, mock_fetch, mock_port, mock_reach, tmp_path):
         cache_path = tmp_path / "ssl_certs.json"
-        existing = {"desktop": {"issuer": "Cached", "self_signed": False, "valid": True, "expiry": "", "sans": []}}
+        existing = {
+            "desktop": {
+                "issuer": "Cached",
+                "self_signed": False,
+                "valid": True,
+                "expiry": "",
+                "sans": [],
+            }
+        }
         save_ssl_cert_cache(cache_path, existing)
 
         host = _make_host()

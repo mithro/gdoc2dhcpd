@@ -66,8 +66,8 @@ def _build_pipeline(config):
     from gdoc2netcfg.constraints.validators import validate_all
     from gdoc2netcfg.derivations.host_builder import build_hosts, build_inventory
     from gdoc2netcfg.sources.parser import parse_csv
-    from gdoc2netcfg.supplements.ssl_certs import enrich_hosts_with_ssl_certs, load_ssl_cert_cache
     from gdoc2netcfg.supplements.sshfp import enrich_hosts_with_sshfp, load_sshfp_cache
+    from gdoc2netcfg.supplements.ssl_certs import enrich_hosts_with_ssl_certs, load_ssl_cert_cache
 
     # Fetch or load CSVs
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
@@ -146,6 +146,7 @@ def _get_generator(name: str):
         "tc_mac_vlan": ("gdoc2netcfg.generators.tc_mac_vlan", "generate_tc_mac_vlan"),
         "nagios": ("gdoc2netcfg.generators.nagios", "generate_nagios"),
         "letsencrypt": ("gdoc2netcfg.generators.letsencrypt", "generate_letsencrypt"),
+        "nginx": ("gdoc2netcfg.generators.nginx", "generate_nginx"),
     }
     if name not in generators:
         return None
@@ -223,6 +224,11 @@ def cmd_generate(args: argparse.Namespace) -> int:
             kwargs["bridge"] = gen_config.params["bridge"]
         elif name == "letsencrypt" and gen_config and gen_config.params.get("acme_webroot"):
             kwargs["acme_webroot"] = gen_config.params["acme_webroot"]
+        elif name == "nginx" and gen_config:
+            if gen_config.params.get("acme_webroot"):
+                kwargs["acme_webroot"] = gen_config.params["acme_webroot"]
+            if gen_config.params.get("htpasswd_file"):
+                kwargs["htpasswd_file"] = gen_config.params["htpasswd_file"]
 
         output = gen_func(inventory, **kwargs)
 

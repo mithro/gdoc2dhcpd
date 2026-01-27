@@ -10,8 +10,8 @@ with additional data from external systems (TLS endpoints).
 from __future__ import annotations
 
 import json
-import ssl
 import socket
+import ssl
 import time
 from datetime import datetime, timezone
 from pathlib import Path
