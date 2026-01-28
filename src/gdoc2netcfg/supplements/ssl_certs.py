@@ -13,8 +13,11 @@ import json
 import socket
 import ssl
 import time
-from datetime import datetime, timezone
 from pathlib import Path
+
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.x509.oid import ExtensionOID, NameOID
 
 from gdoc2netcfg.models.host import Host, SSLCertInfo
 from gdoc2netcfg.supplements.reachability import check_port_open, check_reachable
@@ -29,6 +32,10 @@ def _fetch_cert(ip: str, timeout: float = 5.0) -> dict | None:
     matching is the responsibility of the consumer (e.g. nginx config
     determines which cert maps to which server_name).
 
+    Uses the cryptography library to parse the binary DER certificate,
+    which works even for self-signed certificates where Python's
+    getpeercert() returns minimal information.
+
     Returns a dict with issuer, self_signed, valid, expiry, and sans,
     or None if the connection fails.
     """
@@ -42,51 +49,61 @@ def _fetch_cert(ip: str, timeout: float = 5.0) -> dict | None:
     ctx_noverify.check_hostname = False
     ctx_noverify.verify_mode = ssl.CERT_NONE
 
-    cert_dict = None
+    cert_der = None
     valid = False
 
     # Try verified first
     try:
         with socket.create_connection((ip, 443), timeout=timeout) as sock:
             with ctx_verify.wrap_socket(sock) as ssock:
-                cert_dict = ssock.getpeercert()
+                cert_der = ssock.getpeercert(binary_form=True)
                 valid = True
     except ssl.SSLCertVerificationError:
         # Cert exists but doesn't validate — try without verification
         try:
             with socket.create_connection((ip, 443), timeout=timeout) as sock:
                 with ctx_noverify.wrap_socket(sock) as ssock:
-                    cert_dict = ssock.getpeercert()
+                    cert_der = ssock.getpeercert(binary_form=True)
         except (OSError, ssl.SSLError):
             return None
     except (OSError, ssl.SSLError):
         return None
 
-    if cert_dict is None:
+    if cert_der is None:
         return None
 
-    # Extract issuer organization
-    issuer_parts = dict(x[0] for x in cert_dict.get("issuer", ()))
-    issuer = issuer_parts.get("organizationName", "Unknown")
+    # Parse with cryptography library for full details
+    try:
+        cert = x509.load_der_x509_certificate(cert_der, default_backend())
+    except Exception:
+        return None
+
+    # Extract issuer organization or common name
+    issuer_org = _get_name_attribute(cert.issuer, NameOID.ORGANIZATION_NAME)
+    issuer_cn = _get_name_attribute(cert.issuer, NameOID.COMMON_NAME)
+    issuer = issuer_org or issuer_cn or "Unknown"
+
+    # Extract subject for self-signed detection
+    subject_org = _get_name_attribute(cert.subject, NameOID.ORGANIZATION_NAME)
+    subject_cn = _get_name_attribute(cert.subject, NameOID.COMMON_NAME)
+
+    # Detect self-signed: issuer == subject (compare full Name objects)
+    self_signed = cert.issuer == cert.subject
 
     # Extract expiry
-    not_after = cert_dict.get("notAfter", "")
-    try:
-        expiry_dt = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
-        expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
-        expiry = expiry_dt.strftime("%Y-%m-%d")
-    except (ValueError, TypeError):
-        expiry = ""
+    expiry = cert.not_valid_after_utc.strftime("%Y-%m-%d")
 
-    # Extract SANs
+    # Extract SANs (Subject Alternative Names)
     sans = []
-    for san_type, san_value in cert_dict.get("subjectAltName", ()):
-        if san_type == "DNS":
-            sans.append(san_value)
-
-    # Detect self-signed: issuer == subject
-    subject_parts = dict(x[0] for x in cert_dict.get("subject", ()))
-    self_signed = issuer_parts == subject_parts
+    try:
+        san_ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+        for name in san_ext.value:
+            if isinstance(name, x509.DNSName):
+                sans.append(name.value)
+    except x509.ExtensionNotFound:
+        # No SAN extension — fall back to subject CN
+        if subject_cn:
+            sans.append(subject_cn)
 
     return {
         "issuer": issuer,
@@ -95,6 +112,17 @@ def _fetch_cert(ip: str, timeout: float = 5.0) -> dict | None:
         "expiry": expiry,
         "sans": sans,
     }
+
+
+def _get_name_attribute(name: x509.Name, oid: x509.ObjectIdentifier) -> str | None:
+    """Extract a single attribute from an X.509 Name, or None if not present."""
+    try:
+        attrs = name.get_attributes_for_oid(oid)
+        if attrs:
+            return attrs[0].value
+    except Exception:
+        pass
+    return None
 
 
 def load_ssl_cert_cache(cache_path: Path) -> dict[str, dict]:
