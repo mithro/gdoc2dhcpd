@@ -355,6 +355,11 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
     """Scan hosts for SSL/TLS certificates."""
     config = _load_config(args)
 
+    from gdoc2netcfg.constraints.ssl_validation import (
+        format_ssl_validation_report,
+        validate_ssl_certificates,
+    )
+    from gdoc2netcfg.derivations.dns_names import derive_all_dns_names
     from gdoc2netcfg.derivations.host_builder import build_hosts
     from gdoc2netcfg.sources.parser import parse_csv
     from gdoc2netcfg.supplements.ssl_certs import (
@@ -371,6 +376,10 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
+    # Derive DNS names for validation comparison
+    for host in hosts:
+        derive_all_dns_names(host, config.site)
+
     cache_path = Path(config.cache.directory) / "ssl_certs.json"
     cert_data = scan_ssl_certs(
         hosts,
@@ -381,9 +390,15 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
 
     enrich_hosts_with_ssl_certs(hosts, cert_data)
 
-    # Report
+    # Report scan results
     hosts_with_cert = sum(1 for h in hosts if h.ssl_cert_info is not None)
-    print(f"\nSSL certificates for {hosts_with_cert}/{len(hosts)} hosts.")
+    print(f"SSL certificates for {hosts_with_cert}/{len(hosts)} hosts.")
+
+    # Run validation and print report
+    validation_result = validate_ssl_certificates(hosts)
+    if validation_result.violations:
+        print()
+        print(format_ssl_validation_report(validation_result))
 
     return 0
 
