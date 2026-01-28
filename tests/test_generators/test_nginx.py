@@ -87,29 +87,37 @@ class TestNginxFileStructure:
         assert f"{fqdn}-http-public" in prefixes
         assert f"{fqdn}-http-private" in prefixes
 
-    def test_noverify_when_no_cert(self):
+    def test_https_files_have_consistent_names(self):
         host = _make_host()  # No ssl_cert_info
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        assert f"sites-available/{fqdn}-https-public-noverify" in files
-        assert f"sites-available/{fqdn}-https-private-noverify" in files
+        assert f"sites-available/{fqdn}-https-public" in files
+        assert f"sites-available/{fqdn}-https-private" in files
 
-    def test_verify_when_valid_le_cert(self):
+    def test_ssl_verify_off_when_no_cert(self):
+        host = _make_host()  # No ssl_cert_info
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "desktop.welland.mithis.com"
+        block = files[f"sites-available/{fqdn}-https-public"]
+        assert "proxy_ssl_verify off;" in block
+
+    def test_ssl_verify_on_when_valid_le_cert(self):
         host = _make_host(ssl_cert_info=VALID_LE_CERT)
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        assert f"sites-available/{fqdn}-https-public-verify" in files
-        assert f"sites-available/{fqdn}-https-private-verify" in files
+        block = files[f"sites-available/{fqdn}-https-public"]
+        assert "proxy_ssl_verify on;" in block
 
-    def test_noverify_when_self_signed(self):
+    def test_ssl_verify_off_when_self_signed(self):
         host = _make_host(ssl_cert_info=SELF_SIGNED_CERT)
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        assert f"sites-available/{fqdn}-https-public-noverify" in files
-        assert f"sites-available/{fqdn}-https-private-noverify" in files
+        block = files[f"sites-available/{fqdn}-https-public"]
+        assert "proxy_ssl_verify off;" in block
 
     def test_host_with_no_fqdns_skipped(self):
         host = Host(
@@ -215,7 +223,7 @@ class TestHTTPSBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-https-public-noverify"]
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
         assert "listen 443 ssl;" in block
         assert "listen [::]:443 ssl;" in block
 
@@ -223,7 +231,7 @@ class TestHTTPSBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-https-public-noverify"]
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
         fqdn = "desktop.welland.mithis.com"
         assert f"ssl_certificate /etc/letsencrypt/live/{fqdn}/fullchain.pem;" in block
         assert f"ssl_certificate_key /etc/letsencrypt/live/{fqdn}/privkey.pem;" in block
@@ -232,7 +240,7 @@ class TestHTTPSBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-https-public-noverify"]
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
         assert "proxy_ssl_verify off;" in block
         assert "proxy_pass https://10.1.10.100;" in block
 
@@ -240,21 +248,21 @@ class TestHTTPSBlock:
         host = _make_host(ssl_cert_info=VALID_LE_CERT)
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-https-public-verify"]
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
         assert "proxy_ssl_verify on;" in block
 
     def test_https_private_has_auth(self):
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-https-private-noverify"]
+        block = files["sites-available/desktop.welland.mithis.com-https-private"]
         assert 'auth_basic "Restricted";' in block
 
     def test_https_includes_acme_snippet(self):
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-https-public-noverify"]
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
         assert "include snippets/acme-challenge.conf;" in block
 
     def test_custom_htpasswd_file(self):

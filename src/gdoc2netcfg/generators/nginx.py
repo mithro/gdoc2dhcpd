@@ -5,11 +5,12 @@ shared ACME challenge snippet. Each host gets four config files:
 
   - {fqdn}-http-public       HTTP, no auth
   - {fqdn}-http-private      HTTP, auth_basic
-  - {fqdn}-https-public-*    HTTPS, no auth, verify/noverify
-  - {fqdn}-https-private-*   HTTPS, auth_basic, verify/noverify
+  - {fqdn}-https-public      HTTPS, no auth
+  - {fqdn}-https-private     HTTPS, auth_basic
 
-The HTTPS suffix (verify/noverify) depends on the host's SSL cert status:
-verify if there's a valid Let's Encrypt cert, noverify otherwise.
+The proxy_ssl_verify setting inside HTTPS configs is set based on the
+host's SSL cert status: "on" if there's a valid Let's Encrypt cert,
+"off" otherwise.
 
 Admins activate configs via symlinks in sites-enabled/.
 """
@@ -57,13 +58,12 @@ def generate_nginx(
         ]
         target_ip = str(host.default_ipv4)
 
-        # Determine verify/noverify for HTTPS
+        # Determine proxy_ssl_verify setting for HTTPS
         has_valid_cert = (
             host.ssl_cert_info is not None
             and host.ssl_cert_info.valid
             and not host.ssl_cert_info.self_signed
         )
-        verify_suffix = "verify" if has_valid_cert else "noverify"
 
         # HTTP public
         files[f"sites-available/{primary_fqdn}-http-public"] = _http_block(
@@ -77,13 +77,13 @@ def generate_nginx(
         )
 
         # HTTPS public
-        files[f"sites-available/{primary_fqdn}-https-public-{verify_suffix}"] = _https_block(
+        files[f"sites-available/{primary_fqdn}-https-public"] = _https_block(
             all_names, target_ip, primary_fqdn,
             verify=has_valid_cert, private=False,
         )
 
         # HTTPS private
-        files[f"sites-available/{primary_fqdn}-https-private-{verify_suffix}"] = _https_block(
+        files[f"sites-available/{primary_fqdn}-https-private"] = _https_block(
             all_names, target_ip, primary_fqdn,
             verify=has_valid_cert, private=True,
             htpasswd_file=htpasswd_file,
