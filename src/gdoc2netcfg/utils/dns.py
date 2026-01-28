@@ -1,8 +1,7 @@
-"""DNS name validation utilities.
+"""Validation utilities for values interpolated into config files and scripts.
 
-Provides validation for DNS names before they are interpolated into
-config files (nginx, certbot) or shell scripts. Prevents injection
-of shell metacharacters or config directives through crafted names.
+Prevents injection of shell metacharacters or config directives through
+crafted DNS names or file paths.
 """
 
 from __future__ import annotations
@@ -12,6 +11,10 @@ import re
 # RFC 952/1123 compliant: labels are alphanumeric + hyphens, separated by dots.
 # We also allow underscores (common in internal DNS) and wildcards (*).
 _DNS_NAME_RE = re.compile(r"^[a-zA-Z0-9._*-]+$")
+
+# Safe file path: alphanumeric, path separators, dots, hyphens, underscores.
+# Rejects shell metacharacters, newlines, semicolons, braces, backticks.
+_SAFE_PATH_RE = re.compile(r"^[a-zA-Z0-9/._ -]+$")
 
 
 def is_safe_dns_name(name: str) -> bool:
@@ -37,3 +40,29 @@ def is_safe_dns_name(name: str) -> bool:
     False
     """
     return bool(name and _DNS_NAME_RE.match(name))
+
+
+def is_safe_path(path: str) -> bool:
+    """Check if a file path is safe for interpolation into configs and scripts.
+
+    Returns True if the path contains only safe characters: letters, digits,
+    forward slashes, dots, hyphens, underscores, and spaces.
+
+    Returns False for paths containing shell metacharacters (;|$`),
+    control characters (newlines, nulls), or config syntax ({}).
+
+    Defense-in-depth: config paths come from gdoc2netcfg.toml (admin-managed),
+    but validating them prevents injection if the config file is compromised.
+
+    >>> is_safe_path("/var/www/acme")
+    True
+    >>> is_safe_path("/etc/nginx/.htpasswd")
+    True
+    >>> is_safe_path("/path/with spaces/dir")
+    True
+    >>> is_safe_path("/etc/passwd; rm -rf /")
+    False
+    >>> is_safe_path("")
+    False
+    """
+    return bool(path and _SAFE_PATH_RE.match(path))

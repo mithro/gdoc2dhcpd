@@ -17,7 +17,7 @@ Admins activate configs via symlinks in sites-enabled/.
 from __future__ import annotations
 
 from gdoc2netcfg.models.host import NetworkInventory
-from gdoc2netcfg.utils.dns import is_safe_dns_name
+from gdoc2netcfg.utils.dns import is_safe_dns_name, is_safe_path
 
 
 def generate_nginx(
@@ -28,7 +28,15 @@ def generate_nginx(
     """Generate nginx reverse proxy configs for each host.
 
     Returns a dict mapping relative paths to file contents.
+
+    Raises:
+        ValueError: If acme_webroot or htpasswd_file contain unsafe characters.
     """
+    if not is_safe_path(acme_webroot):
+        raise ValueError(f"Unsafe acme_webroot path: {acme_webroot!r}")
+    if not is_safe_path(htpasswd_file):
+        raise ValueError(f"Unsafe htpasswd_file path: {htpasswd_file!r}")
+
     files: dict[str, str] = {}
 
     # Shared ACME challenge snippet

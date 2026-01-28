@@ -287,3 +287,25 @@ class TestMultipleHosts:
 
         server_http = files["sites-available/server.welland.mithis.com-http-public"]
         assert "proxy_pass http://10.1.10.200;" in server_http
+
+
+class TestPathValidation:
+    def test_rejects_malicious_acme_webroot(self):
+        import pytest
+
+        host = _make_host()
+        with pytest.raises(ValueError, match="Unsafe acme_webroot"):
+            generate_nginx(
+                _make_inventory(host),
+                acme_webroot="/var/www/acme; rm -rf /",
+            )
+
+    def test_rejects_malicious_htpasswd_file(self):
+        import pytest
+
+        host = _make_host()
+        with pytest.raises(ValueError, match="Unsafe htpasswd_file"):
+            generate_nginx(
+                _make_inventory(host),
+                htpasswd_file="/etc/passwd\n    evil_directive;",
+            )

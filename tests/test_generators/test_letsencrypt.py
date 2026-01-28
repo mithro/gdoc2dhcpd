@@ -189,3 +189,15 @@ class TestDeployHooks:
         cert_files = [k for k in files if k.startswith("certs-available/")]
         assert len(cert_files) == 2
         assert "renew-enabled.sh" in files
+
+
+class TestPathValidation:
+    def test_rejects_malicious_acme_webroot(self):
+        import pytest
+
+        host = _make_host()
+        with pytest.raises(ValueError, match="Unsafe acme_webroot"):
+            generate_letsencrypt(
+                _make_inventory(host),
+                acme_webroot="/var/www; rm -rf /",
+            )

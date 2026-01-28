@@ -16,7 +16,7 @@ from gdoc2netcfg.derivations.hardware import (
     HARDWARE_SUPERMICRO_BMC,
 )
 from gdoc2netcfg.models.host import NetworkInventory
-from gdoc2netcfg.utils.dns import is_safe_dns_name
+from gdoc2netcfg.utils.dns import is_safe_dns_name, is_safe_path
 
 # Deploy hook scripts, looked up by hardware type
 _DEPLOY_HOOKS: dict[str, str] = {
@@ -34,7 +34,13 @@ def generate_letsencrypt(
     Returns a dict mapping relative paths to file contents:
       - certs-available/{primary_fqdn}  (one per host)
       - renew-enabled.sh                (orchestrator)
+
+    Raises:
+        ValueError: If acme_webroot contains unsafe characters.
     """
+    if not is_safe_path(acme_webroot):
+        raise ValueError(f"Unsafe acme_webroot path: {acme_webroot!r}")
+
     files: dict[str, str] = {}
 
     for host in inventory.hosts_sorted():
