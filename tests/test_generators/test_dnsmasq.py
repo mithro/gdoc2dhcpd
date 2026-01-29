@@ -1,5 +1,6 @@
 """Tests for the dnsmasq internal generator."""
 
+from gdoc2netcfg.derivations.dns_names import derive_all_dns_names
 from gdoc2netcfg.generators.dnsmasq import generate_dnsmasq
 from gdoc2netcfg.models.addressing import IPv4Address, IPv6Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface, NetworkInventory
@@ -39,13 +40,16 @@ def _host_with_iface(hostname, mac, ip, interface_name=None, dhcp_name="test"):
         ipv6_addresses=ipv6s,
         dhcp_name=dhcp_name,
     )
-    return Host(
+    host = Host(
         machine_name=hostname,
         hostname=hostname,
         interfaces=[iface],
         default_ipv4=ipv4,
         subdomain="int" if ip.startswith("10.1.10.") else None,
     )
+    # Run DNS name derivation to populate dns_names
+    derive_all_dns_names(host, SITE)
+    return host
 
 
 class TestDnsmasqGenerator:

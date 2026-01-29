@@ -96,7 +96,14 @@ def _ptr_config(inventory: NetworkInventory) -> list[str]:
 
 
 def _host_record_config(inventory: NetworkInventory) -> list[str]:
-    """Generate host-record entries for forward DNS."""
+    """Generate host-record entries for forward DNS.
+
+    Uses the precomputed host.dns_names list from the DNS name derivation
+    pipeline, which includes:
+    - Hostname and interface FQDNs
+    - Subdomain variants
+    - ipv4./ipv6. prefix variants for all dual-stack names
+    """
     domain = inventory.site.domain
     output: list[str] = []
     output.append("")
@@ -105,75 +112,29 @@ def _host_record_config(inventory: NetworkInventory) -> list[str]:
     output.append("# " + "-" * 70)
 
     for host in inventory.hosts_sorted():
-        ips = host.all_ipv4
+        if not host.dns_names:
+            continue
         output.append("")
         output.append(f"# {host.hostname}")
 
-        # Interface-specific records
-        for iface in sorted(host.interfaces, key=lambda i: (i.name or "")):
-            if iface.name:
-                ip_str = str(iface.ipv4)
-                ipv6_strs = [str(a) for a in iface.ipv6_addresses]
-                if ipv6_strs:
-                    ipv6_joined = ",".join(ipv6_strs)
-                    output.append(
-                        f"host-record={iface.name}.{host.hostname}.{domain},"
-                        f"{ip_str},{ipv6_joined}"
-                    )
-                else:
-                    output.append(
-                        f"host-record={iface.name}.{host.hostname}.{domain},{ip_str}"
-                    )
-                # Subdomain variant for interface records
-                subdomain = _subdomain_for_ip(ip_str, inventory)
-                if subdomain:
-                    if ipv6_strs:
-                        output.append(
-                            f"host-record={iface.name}.{host.hostname}.{subdomain}.{domain},"
-                            f"{ip_str},{ipv6_joined}"
-                        )
-                    else:
-                        output.append(
-                            f"host-record={iface.name}.{host.hostname}.{subdomain}.{domain},"
-                            f"{ip_str}"
-                        )
+        # Emit host-record for each DNS name
+        for dns_name in host.dns_names:
+            # Skip short names except for the bare hostname
+            if not dns_name.is_fqdn and dns_name.name != host.hostname:
+                continue
 
-        # Default host records
-        dip = host.default_ipv4
-        if dip is None:
-            continue
-        dip_str = str(dip)
-        ipv6_strs = _ipv6_for_ip(dip_str, inventory)
+            # Build the address list
+            addrs: list[str] = []
+            if dns_name.ipv4:
+                addrs.append(str(dns_name.ipv4))
+            addrs.extend(str(a) for a in dns_name.ipv6_addresses)
 
-        if ipv6_strs:
-            ipv6_joined = ",".join(ipv6_strs)
-            output.append(f"host-record={host.hostname}.{domain},{dip_str},{ipv6_joined}")
-            output.append(f"host-record={host.hostname},{dip_str},{ipv6_joined}")
-        else:
-            output.append(f"host-record={host.hostname}.{domain},{dip_str}")
-            output.append(f"host-record={host.hostname},{dip_str}")
+            if not addrs:
+                continue
 
-        # Subdomain variant for default records
-        subdomain = _subdomain_for_ip(dip_str, inventory)
-        if subdomain:
-            if ipv6_strs:
-                output.append(
-                    f"host-record={host.hostname}.{subdomain}.{domain},"
-                    f"{dip_str},{ipv6_joined}"
-                )
-            else:
-                output.append(
-                    f"host-record={host.hostname}.{subdomain}.{domain},{dip_str}"
-                )
+            output.append(f"host-record={dns_name.name},{','.join(addrs)}")
 
-        # IPv4-only and IPv6-only prefixed records
-        output.append(f"host-record=ipv4.{host.hostname}.{domain},{dip_str}")
-        if ipv6_strs:
-            output.append(
-                f"host-record=ipv6.{host.hostname}.{domain},{','.join(ipv6_strs)}"
-            )
-
-        # CAA record for Let's Encrypt
+        # CAA record for Let's Encrypt (on the primary FQDN)
         output.append(
             f"dns-rr={host.hostname}.{domain},"
             f"257,000569737375656C657473656E63727970742E6F7267"
@@ -243,14 +204,6 @@ def _ipv6_for_ip(ip: str, inventory: NetworkInventory) -> list[str]:
         return []
     addrs = ipv4_to_ipv6_list(ipv4, inventory.site.active_ipv6_prefixes)
     return [str(a) for a in addrs]
-
-
-def _subdomain_for_ip(ip: str, inventory: NetworkInventory) -> str | None:
-    """Get subdomain for an IPv4 address string."""
-    parts = ip.split(".")
-    if parts[0] != "10" or parts[1] != "1":
-        return None
-    return inventory.site.network_subdomains.get(int(parts[2]))
 
 
 def _ipv6_to_ptr(ipv6_str: str) -> str:
