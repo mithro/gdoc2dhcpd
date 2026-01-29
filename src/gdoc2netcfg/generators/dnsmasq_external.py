@@ -50,4 +50,49 @@ def generate_dnsmasq_external(
         output.append(f"host-record={host.hostname}.{domain},{external_ip}")
 
     output.append("")
+    output.extend(_sshfp_records(inventory))
+    output.append("")
     return "\n".join(output)
+
+
+def _sshfp_records(inventory: NetworkInventory) -> list[str]:
+    """Generate SSHFP DNS records (RR type 44) for external DNS.
+
+    Unlike the internal generator, this does NOT emit PTR records
+    since internal IPs aren't routable from external networks.
+    """
+    domain = inventory.site.domain
+    output: list[str] = []
+    output.append("# " + "=" * 70)
+    output.append("# SSHFP Records")
+    output.append("# " + "=" * 70)
+
+    for host in inventory.hosts_sorted():
+        if not host.sshfp_records:
+            continue
+
+        def _records(dnsname: str) -> None:
+            output.append("")
+            output.append(f"# sshfp for {dnsname}")
+            for line in host.sshfp_records:
+                if line.startswith(";"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 6:
+                    _, a, b, c, d, e = parts[:6]
+                    output.append(f"dns-rr={dnsname},44,{c}:{d}:{e}")
+
+        output.append("")
+        output.append("# " + "-" * 70)
+        output.append(f"# {host.hostname}")
+        output.append("# " + "-" * 70)
+        _records(f"{host.hostname}.{domain}")
+
+        # Include interface-specific FQDNs
+        for iface in host.interfaces:
+            if iface.name:
+                _records(f"{iface.name}.{host.hostname}.{domain}")
+
+        output.append("# " + "-" * 70)
+
+    return output
