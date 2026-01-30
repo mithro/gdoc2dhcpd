@@ -12,11 +12,13 @@ iot = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR5j6yiZCEv5YNoeVNLM4MMsx
 directory = ".cache"
 
 [ipv6]
-# Active IPv6 prefixes for dual-stack address generation
+# IPv6 prefixes for dual-stack address generation
 # Format: 10.AA.BB.CCC -> {prefix}AABB::CCC
 prefixes = [
     "2404:e80:a137:",    # ISP prefix (Launtel)
-    # "2001:470:82b3:",  # HE.net prefix - DISABLED
+]
+disabled_prefixes = [
+    "2001:470:82b3:",    # HE.net prefix
 ]
 
 [vlans]

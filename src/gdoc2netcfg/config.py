@@ -73,6 +73,10 @@ def _build_site(data: dict) -> Site:
     ipv6_prefixes = [
         IPv6Prefix(prefix=p.strip()) for p in ipv6_data.get("prefixes", [])
     ]
+    ipv6_prefixes.extend(
+        IPv6Prefix(prefix=p.strip(), enabled=False)
+        for p in ipv6_data.get("disabled_prefixes", [])
+    )
 
     # Build network subdomains mapping
     network_subdomains: dict[int, str] = {}
