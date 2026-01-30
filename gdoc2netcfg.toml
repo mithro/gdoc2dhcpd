@@ -1,6 +1,7 @@
 [site]
 name = "welland"
 domain = "welland.mithis.com"
+public_ipv4 = "87.121.95.37"
 
 [sheets]
 # Google Sheets published CSV URLs for each data source
@@ -54,7 +55,6 @@ output = "dnsmasq.static.conf"
 
 [generators.dnsmasq_external]
 output = "dnsmasq.external.conf"
-# public_ipv4 = "203.0.113.1"  # Set to enable split-horizon
 
 [generators.cisco_sg300]
 output = "sg300-config.txt"
