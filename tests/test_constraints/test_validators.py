@@ -8,11 +8,12 @@ from gdoc2netcfg.constraints.errors import Severity
 from gdoc2netcfg.constraints.validators import (
     validate_cross_record_constraints,
     validate_field_constraints,
+    validate_ipv6_consistency,
     validate_record_constraints,
 )
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface, NetworkInventory
-from gdoc2netcfg.models.network import Site
+from gdoc2netcfg.models.network import IPv6Prefix, Site
 from gdoc2netcfg.sources.parser import DeviceRecord
 
 
@@ -206,3 +207,83 @@ class TestCrossRecordConstraints:
         result = validate_cross_record_constraints(inv)
         assert result.has_errors
         assert result.errors[0].code == "ip_multiple_macs"
+
+
+IPV6_SITE = Site(
+    name="welland",
+    domain="welland.mithis.com",
+    ipv6_prefixes=[
+        IPv6Prefix(prefix="2404:e80:a137:", enabled=True),
+        IPv6Prefix(prefix="2001:470:82b3:", enabled=False),
+    ],
+)
+
+
+def _ipv6_record(ip="10.1.10.1", extra=None, machine="desktop", iface="eth0"):
+    return DeviceRecord(
+        sheet_name="Network", row_number=99,
+        machine=machine, mac_address="aa:bb:cc:dd:ee:ff", ip=ip,
+        interface=iface,
+        extra=extra or {},
+    )
+
+
+class TestIPv6Consistency:
+    def test_matching_ipv6_no_violations(self):
+        """Spreadsheet IPv6 matching the algorithm produces no violations."""
+        record = _ipv6_record(extra={
+            "IPv6 A": "2404:e80:a137:110::1",
+        })
+        result = validate_ipv6_consistency([record], IPV6_SITE)
+        assert result.is_valid
+        assert len(result.violations) == 0
+
+    def test_mismatched_ipv6_is_error(self):
+        """Spreadsheet IPv6 differing from algorithm is an error."""
+        record = _ipv6_record(extra={
+            "IPv6 A": "2404:e80:a137:110::99",  # Algorithm expects ::1
+        })
+        result = validate_ipv6_consistency([record], IPV6_SITE)
+        assert result.has_errors
+        assert result.errors[0].code == "ipv6_mismatch"
+
+    def test_disabled_prefix_skipped(self):
+        """IPv6 B using disabled prefix is silently skipped."""
+        record = _ipv6_record(extra={
+            "IPv6 A": "2404:e80:a137:110::1",
+            "IPv6 B": "2001:470:82b3:110::1",
+        })
+        result = validate_ipv6_consistency([record], IPV6_SITE)
+        assert result.is_valid
+        assert len(result.violations) == 0
+
+    def test_unknown_prefix_is_warning(self):
+        """IPv6 with unrecognized prefix produces a warning."""
+        record = _ipv6_record(extra={
+            "IPv6 A": "fd00:1234:5678:110::1",
+        })
+        result = validate_ipv6_consistency([record], IPV6_SITE)
+        assert len(result.warnings) == 1
+        assert result.warnings[0].code == "ipv6_unknown_prefix"
+
+    def test_no_ipv6_columns_no_violations(self):
+        """Records without IPv6 columns produce no violations."""
+        record = _ipv6_record(extra={"Location": "rack-1"})
+        result = validate_ipv6_consistency([record], IPV6_SITE)
+        assert len(result.violations) == 0
+
+    def test_empty_ipv6_value_no_violation(self):
+        """Empty IPv6 column value is not a violation."""
+        record = _ipv6_record(extra={"IPv6 A": ""})
+        result = validate_ipv6_consistency([record], IPV6_SITE)
+        assert len(result.violations) == 0
+
+    def test_non_mappable_ip_with_ipv6_warns(self):
+        """Public IP with spreadsheet IPv6 warns (no algorithmic mapping)."""
+        record = _ipv6_record(
+            ip="87.121.95.37",
+            extra={"IPv6 A": "2404:e80:a137:110::1"},
+        )
+        result = validate_ipv6_consistency([record], IPV6_SITE)
+        assert len(result.warnings) == 1
+        assert result.warnings[0].code == "ipv6_no_algorithmic"

@@ -14,7 +14,10 @@ from gdoc2netcfg.constraints.errors import (
     Severity,
     ValidationResult,
 )
+from gdoc2netcfg.derivations.ipv6 import ipv4_to_ipv6_list
+from gdoc2netcfg.models.addressing import IPv4Address
 from gdoc2netcfg.models.host import Host, NetworkInventory
+from gdoc2netcfg.models.network import Site
 from gdoc2netcfg.sources.parser import DeviceRecord
 
 _DHCP_NAME_RE = re.compile(r'^[a-z0-9.\-_]+$')
@@ -63,6 +66,101 @@ def validate_field_constraints(records: list[DeviceRecord]) -> ValidationResult:
                 record_id=record_id,
                 field="ip",
             ))
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# IPv6 Consistency Constraints (spreadsheet vs algorithmic derivation)
+# ---------------------------------------------------------------------------
+
+def validate_ipv6_consistency(
+    records: list[DeviceRecord], site: Site
+) -> ValidationResult:
+    """Validate that explicit IPv6 addresses in the spreadsheet match
+    the algorithmic derivation from IPv4.
+
+    For each record with 'IPv6 A', 'IPv6 B', etc. columns, computes the
+    expected IPv6 from the IPv4 address and checks for mismatches.
+    """
+    result = ValidationResult()
+
+    for record in records:
+        if not record.ip:
+            continue
+
+        record_id = f"{record.sheet_name}:{record.row_number}"
+
+        try:
+            ipv4 = IPv4Address(record.ip)
+        except ValueError:
+            continue
+
+        # Compute expected IPv6 addresses from algorithm
+        expected = ipv4_to_ipv6_list(ipv4, site.active_ipv6_prefixes)
+        expected_by_prefix = {addr.prefix: addr.address for addr in expected}
+
+        for key, value in record.extra.items():
+            if not key.startswith("IPv6 "):
+                continue
+            value = value.strip()
+            if not value:
+                continue
+
+            # Find which prefix this address belongs to
+            matched_prefix = None
+            for prefix in site.ipv6_prefixes:
+                if value.startswith(prefix.prefix):
+                    matched_prefix = prefix
+                    break
+
+            if matched_prefix is None:
+                result.add(ConstraintViolation(
+                    severity=Severity.WARNING,
+                    code="ipv6_unknown_prefix",
+                    message=(
+                        f"IPv6 address {value} ({key}) does not match any "
+                        f"known prefix (machine={record.machine!r}, "
+                        f"iface={record.interface!r})"
+                    ),
+                    record_id=record_id,
+                    field=key,
+                ))
+                continue
+
+            if not matched_prefix.enabled:
+                # Disabled prefix — skip validation but don't warn
+                continue
+
+            algo_addr = expected_by_prefix.get(matched_prefix.prefix)
+            if algo_addr is None:
+                # Algorithm couldn't derive an address (non-10.x IP)
+                # but spreadsheet has one — that's notable
+                result.add(ConstraintViolation(
+                    severity=Severity.WARNING,
+                    code="ipv6_no_algorithmic",
+                    message=(
+                        f"Spreadsheet has {key}={value} but IPv4 {record.ip} "
+                        f"has no algorithmic IPv6 mapping "
+                        f"(machine={record.machine!r}, "
+                        f"iface={record.interface!r})"
+                    ),
+                    record_id=record_id,
+                    field=key,
+                ))
+            elif algo_addr != value:
+                result.add(ConstraintViolation(
+                    severity=Severity.ERROR,
+                    code="ipv6_mismatch",
+                    message=(
+                        f"IPv6 mismatch for {key}: spreadsheet has {value}, "
+                        f"algorithm expects {algo_addr} "
+                        f"(machine={record.machine!r}, "
+                        f"iface={record.interface!r})"
+                    ),
+                    record_id=record_id,
+                    field=key,
+                ))
 
     return result
 
@@ -196,6 +294,7 @@ def validate_all(
 
     for result in [
         validate_field_constraints(records),
+        validate_ipv6_consistency(records, inventory.site),
         validate_record_constraints(hosts),
         validate_cross_record_constraints(inventory),
     ]:
