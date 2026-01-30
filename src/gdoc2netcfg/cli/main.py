@@ -140,7 +140,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 def _get_generator(name: str):
     """Get a generator function by name."""
     generators = {
-        "dnsmasq": ("gdoc2netcfg.generators.dnsmasq", "generate_dnsmasq"),
+        "dnsmasq_internal": ("gdoc2netcfg.generators.dnsmasq", "generate_dnsmasq_internal"),
         "dnsmasq_external": ("gdoc2netcfg.generators.dnsmasq_external", "generate_dnsmasq_external"),
         "cisco_sg300": ("gdoc2netcfg.generators.cisco_sg300", "generate_cisco_sg300"),
         "tc_mac_vlan": ("gdoc2netcfg.generators.tc_mac_vlan", "generate_tc_mac_vlan"),
@@ -156,6 +156,15 @@ def _get_generator(name: str):
     return getattr(mod, func_name)
 
 
+def _resolve_output_path(output_path: str, args: argparse.Namespace) -> Path:
+    """Resolve an output path, prepending --output-dir for relative paths."""
+    p = Path(output_path)
+    output_dir = getattr(args, "output_dir", None)
+    if output_dir and not p.is_absolute():
+        return Path(output_dir) / p
+    return p
+
+
 def _write_multi_file_output(name, file_dict, gen_config, args):
     """Write a multi-file generator output (dict[str, str]).
 
@@ -168,7 +177,7 @@ def _write_multi_file_output(name, file_dict, gen_config, args):
         return
 
     output_dir = gen_config.output_dir if gen_config and gen_config.output_dir else name
-    base = Path(output_dir).resolve()
+    base = _resolve_output_path(output_dir, args).resolve()
     total_bytes = 0
     for rel_path, content in sorted(file_dict.items()):
         file_path = (base / rel_path).resolve()
@@ -238,8 +247,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
         else:
             output_path = gen_config.output if gen_config and gen_config.output else None
             if output_path and not args.stdout:
-                Path(output_path).write_text(output, encoding="utf-8")
-                print(f"  {name}: wrote {output_path} ({len(output)} bytes)")
+                resolved = _resolve_output_path(output_path, args)
+                resolved.parent.mkdir(parents=True, exist_ok=True)
+                resolved.write_text(output, encoding="utf-8")
+                print(f"  {name}: wrote {resolved} ({len(output)} bytes)")
             else:
                 if len(gen_names) > 1:
                     print(f"# === {name} ===")
@@ -428,6 +439,10 @@ def main(argv: list[str] | None = None) -> int:
     gen_parser.add_argument(
         "generators", nargs="*",
         help="Generator names to run (default: all enabled)",
+    )
+    gen_parser.add_argument(
+        "--output-dir",
+        help="Base directory to prepend to all relative output paths",
     )
     gen_parser.add_argument(
         "--stdout", action="store_true",

@@ -39,8 +39,8 @@ class TestLoadConfig:
         assert "iot" in sheet_names
 
         # Generators
-        assert "dnsmasq" in config.generators
-        assert config.generators["dnsmasq"].output == "dnsmasq.static.conf"
+        assert "dnsmasq_internal" in config.generators
+        assert config.generators["dnsmasq_internal"].output == "internal/dnsmasq.internal.conf"
 
     def test_load_minimal_config(self, tmp_path: Path):
         """Load a minimal TOML config."""

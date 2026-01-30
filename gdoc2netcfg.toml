@@ -50,13 +50,13 @@ disabled_prefixes = [
 
 [generators]
 # Which generators to enable
-enabled = ["dnsmasq", "dnsmasq_external", "cisco_sg300", "tc_mac_vlan", "nagios"]
+enabled = ["dnsmasq_internal", "dnsmasq_external", "cisco_sg300", "tc_mac_vlan", "nagios"]
 
-[generators.dnsmasq]
-output = "dnsmasq.static.conf"
+[generators.dnsmasq_internal]
+output = "internal/dnsmasq.internal.conf"
 
 [generators.dnsmasq_external]
-output = "dnsmasq.external.conf"
+output = "external/dnsmasq.external.conf"
 
 [generators.cisco_sg300]
 output = "sg300-config.txt"

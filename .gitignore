@@ -1,5 +1,5 @@
-dnsmasq.static.conf
-dnsmasq.external.conf
+internal/
+external/
 dhcpd.static.conf
 info.json
 good.json

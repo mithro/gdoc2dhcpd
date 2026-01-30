@@ -1,6 +1,6 @@
 """Dnsmasq internal configuration generator.
 
-Produces the combined dnsmasq.static.conf with:
+Produces the internal dnsmasq config with:
 - DHCP host bindings (dhcp-host)
 - Reverse DNS PTR records (ptr-record) for IPv4 and IPv6
 - Forward DNS records (host-record) with dual-stack IPv6
@@ -17,10 +17,10 @@ from gdoc2netcfg.models.host import NetworkInventory
 from gdoc2netcfg.utils.ip import ip_sort_key
 
 
-def generate_dnsmasq(inventory: NetworkInventory) -> str:
+def generate_dnsmasq_internal(inventory: NetworkInventory) -> str:
     """Generate internal dnsmasq configuration.
 
-    This is the primary generator that produces the full dnsmasq.static.conf.
+    This is the primary generator that produces the internal dnsmasq config.
     """
     output: list[str] = []
     output.extend(_dhcp_host_config(inventory))

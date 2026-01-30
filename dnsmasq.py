@@ -2,8 +2,8 @@
 """Legacy shim — delegates to gdoc2netcfg package.
 
 Usage: ./dnsmasq.py
-  Fetches data from Google Sheets and generates dnsmasq.static.conf.
-  Equivalent to: uv run gdoc2netcfg fetch && uv run gdoc2netcfg generate dnsmasq
+  Fetches data from Google Sheets and generates dnsmasq internal config.
+  Equivalent to: uv run gdoc2netcfg fetch && uv run gdoc2netcfg generate dnsmasq_internal
 """
 
 import sys
@@ -15,4 +15,4 @@ if __name__ == "__main__":
     result = main(["fetch"])
     if result != 0:
         sys.exit(result)
-    sys.exit(main(["generate", "dnsmasq"]))
+    sys.exit(main(["generate", "dnsmasq_internal"]))

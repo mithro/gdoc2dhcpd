@@ -33,9 +33,9 @@ def test_config(tmp_path):
         10 = "int"
 
         [generators]
-        enabled = ["dnsmasq"]
+        enabled = ["dnsmasq_internal"]
 
-        [generators.dnsmasq]
+        [generators.dnsmasq_internal]
         output = "dnsmasq.conf"
     """))
     return config
@@ -109,13 +109,13 @@ class TestGenerateCommand:
             10 = "int"
 
             [generators]
-            enabled = ["dnsmasq"]
+            enabled = ["dnsmasq_internal"]
 
-            [generators.dnsmasq]
+            [generators.dnsmasq_internal]
             output = ""
         """))
 
-        result = main(["-c", str(config), "generate", "--stdout", "dnsmasq"])
+        result = main(["-c", str(config), "generate", "--stdout", "dnsmasq_internal"])
         assert result == 0
         captured = capsys.readouterr()
         assert "dhcp-host=" in captured.out
