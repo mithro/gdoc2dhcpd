@@ -35,3 +35,21 @@
   - Run BIND or similar authoritative DNS with DNSSEC signing
   - Note: dnsmasq's `dnssec` option validates upstream responses but doesn't
     sign local records served via host-record directives
+
+## SSHFP
+
+- [ ] **SSHFP records for all host interfaces**: SSHFP records should be
+  generated for all of a host's interfaces, even those which might currently
+  be inaccessible. Currently the SSHFP supplement only scans reachable hosts,
+  so interfaces that are down or firewalled at scan time get no fingerprint
+  records. The scan should attempt all interfaces and cache results
+  independently, so that previously-scanned interfaces retain their records
+  even if temporarily unreachable.
+
+## DHCP
+
+- [ ] **DHCP records matching on hostname when no MAC address exists**: Allow
+  creation of dhcp-host records that match on hostname rather than MAC address
+  when no MAC address is available in the spreadsheet. This would use
+  dnsmasq's `dhcp-host=<hostname>,<ip>` form (without MAC) for hosts that
+  are known by name but don't have a recorded hardware address.
