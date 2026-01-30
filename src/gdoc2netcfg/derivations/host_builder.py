@@ -22,46 +22,11 @@ from gdoc2netcfg.models.network import Site
 from gdoc2netcfg.sources.parser import DeviceRecord
 
 
-def _parse_explicit_ipv6(
-    extra: dict[str, str], site: Site
-) -> list[IPv6Address] | None:
-    """Parse explicit IPv6 addresses from spreadsheet extra fields.
-
-    Looks for 'IPv6 A', 'IPv6 B', etc. columns. Returns the addresses
-    whose prefix matches an enabled site prefix, or None if no explicit
-    IPv6 columns are present.
-    """
-    from gdoc2netcfg.models.addressing import IPv6Address as IPv6Addr
-
-    found_any = False
-    results: list[IPv6Addr] = []
-    for key, value in extra.items():
-        if not key.startswith("IPv6 "):
-            continue
-        found_any = True
-        value = value.strip()
-        if not value:
-            continue
-        # Match against known site prefixes (only enabled ones)
-        for prefix in site.active_ipv6_prefixes:
-            if value.startswith(prefix.prefix):
-                results.append(IPv6Addr(address=value, prefix=prefix.prefix))
-                break
-    return results if found_any else None
-
-
 def _build_interface(record: DeviceRecord, site: Site) -> NetworkInterface:
     """Build a NetworkInterface from a single DeviceRecord."""
     mac = MACAddress.parse(record.mac_address)
     ipv4 = IPv4Address(record.ip)
-
-    # Use explicit IPv6 from spreadsheet if available, otherwise derive
-    explicit_ipv6 = _parse_explicit_ipv6(record.extra, site)
-    if explicit_ipv6 is not None:
-        ipv6_addrs = explicit_ipv6
-    else:
-        ipv6_addrs = ipv4_to_ipv6_list(ipv4, site.active_ipv6_prefixes)
-
+    ipv6_addrs = ipv4_to_ipv6_list(ipv4, site.active_ipv6_prefixes)
     vlan_id = ip_to_vlan_id(ipv4, site)
     interface_name = record.interface if record.interface else None
 
