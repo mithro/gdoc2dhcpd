@@ -61,6 +61,8 @@ The dnsmasq generators produce one `.conf` file per host. Each file contains:
 
 The external dnsmasq generator implements split-horizon DNS by replacing RFC 1918 addresses with the site's public IPv4.
 
+The nginx generator produces per-host reverse proxy server blocks under `sites-available/`, with four variants per host (`http-public`, `http-private`, `https-public`, `https-private`). Multi-interface hosts get an `upstream` block for round-robin failover across all interfaces, plus per-interface server blocks with direct `proxy_pass`. HTTP variants proxy to port 80, HTTPS variants to port 443.
+
 ## Development
 
 ```bash

@@ -12,13 +12,15 @@
 
 ## Generators
 
-- [ ] **Multi-file output for all generators**: Currently generators return a
-  single string and write a single output file. The nginx and letsencrypt
-  generators need to produce multiple files (per-host configs in a directory
-  structure). Refactor the generator protocol so all generators can return
-  either a single string or a dict of `{relative_path: content}`. Migrate
-  existing generators (dnsmasq, nagios) to use the
-  multi-file approach where it makes sense (e.g., per-host dnsmasq snippets).
+- [x] **Multi-file output for generators**: The generator protocol now supports
+  returning a dict of `{relative_path: content}` for multi-file output. The
+  dnsmasq (internal and external) and nginx generators use this to produce
+  per-host config files. The nginx generator produces four config file variants
+  per host under `sites-available/`, with multi-interface hosts getting combined
+  files containing upstream failover blocks.
+
+- [ ] **Letsencrypt generator multi-file output**: The letsencrypt generator
+  still needs to be migrated to the multi-file output approach.
 
 ## DNS Verification
 
