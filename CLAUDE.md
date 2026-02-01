@@ -20,7 +20,7 @@ Always use `uv run` to execute Python commands. Never use bare `python` or `pip`
 
 ## Architecture
 
-`gdoc2netcfg` reads network device data from a Google Spreadsheet and generates configuration files for network infrastructure services (dnsmasq, Cisco SG300, Linux tc, Nagios).
+`gdoc2netcfg` reads network device data from a Google Spreadsheet and generates configuration files for network infrastructure services (dnsmasq, Nagios).
 
 ### Pipeline
 
@@ -35,7 +35,7 @@ Supplements (supplements/)  External enrichment: SSHFP scanning via ssh-keyscan 
     │
 Constraints (constraints/)  Validation: field presence, BMC placement, MAC uniqueness
     │
-Generators (generators/)    Output: dnsmasq, dnsmasq_external, cisco_sg300, tc_mac_vlan, nagios
+Generators (generators/)    Output: dnsmasq, dnsmasq_external, nagios
     │
 Config files               dnsmasq.static.conf, dnsmasq.external.conf, etc.
 ```
@@ -73,7 +73,7 @@ The dnsmasq generator has internal and external variants. External (`dnsmasq_ext
 
 ### Legacy Shims
 
-Root-level scripts (`dnsmasq.py`, `sshfp.py`, `nagios.py`, `tc-mac-vlan.py`, `cisco-sg300-vlan.py`) are thin wrappers that delegate to the CLI. They exist for backward compatibility with production scripts.
+Root-level scripts (`dnsmasq.py`, `sshfp.py`, `nagios.py`) are thin wrappers that delegate to the CLI. They exist for backward compatibility with production scripts.
 
 ## Production Deployment
 

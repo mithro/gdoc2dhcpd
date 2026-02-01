@@ -142,8 +142,6 @@ def _get_generator(name: str):
     generators = {
         "dnsmasq_internal": ("gdoc2netcfg.generators.dnsmasq", "generate_dnsmasq_internal"),
         "dnsmasq_external": ("gdoc2netcfg.generators.dnsmasq_external", "generate_dnsmasq_external"),
-        "cisco_sg300": ("gdoc2netcfg.generators.cisco_sg300", "generate_cisco_sg300"),
-        "tc_mac_vlan": ("gdoc2netcfg.generators.tc_mac_vlan", "generate_tc_mac_vlan"),
         "nagios": ("gdoc2netcfg.generators.nagios", "generate_nagios"),
         "letsencrypt": ("gdoc2netcfg.generators.letsencrypt", "generate_letsencrypt"),
         "nginx": ("gdoc2netcfg.generators.nginx", "generate_nginx"),
@@ -229,8 +227,6 @@ def cmd_generate(args: argparse.Namespace) -> int:
             kwargs["public_ipv4"] = gen_config.params["public_ipv4"]
         elif name == "dnsmasq_external":
             kwargs["public_ipv4"] = config.site.public_ipv4
-        elif name == "tc_mac_vlan" and gen_config and gen_config.params.get("bridge"):
-            kwargs["bridge"] = gen_config.params["bridge"]
         elif name == "letsencrypt" and gen_config and gen_config.params.get("acme_webroot"):
             kwargs["acme_webroot"] = gen_config.params["acme_webroot"]
         elif name == "nginx" and gen_config:

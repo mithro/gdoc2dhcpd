@@ -34,12 +34,6 @@ dnsmasq.reload:
 	systemctl restart dnsmasq@internal dnsmasq@external
 	systemctl status dnsmasq@internal dnsmasq@external
 
-cisco_sg300:
-	uv run gdoc2netcfg generate cisco_sg300
-
-tc_mac_vlan:
-	uv run gdoc2netcfg generate --stdout tc_mac_vlan
-
 nagios:
 	uv run gdoc2netcfg generate nagios
 
@@ -52,4 +46,4 @@ info:
 test:
 	uv run pytest
 
-.PHONY: all fetch dnsmasq dnsmasq_internal dnsmasq_external sshfp dnsmasq.test dnsmasq.reload cisco_sg300 tc_mac_vlan nagios validate info test
+.PHONY: all fetch dnsmasq dnsmasq_internal dnsmasq_external sshfp dnsmasq.test dnsmasq.reload nagios validate info test

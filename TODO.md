@@ -17,7 +17,7 @@
   generators need to produce multiple files (per-host configs in a directory
   structure). Refactor the generator protocol so all generators can return
   either a single string or a dict of `{relative_path: content}`. Migrate
-  existing generators (dnsmasq, cisco_sg300, tc_mac_vlan, nagios) to use the
+  existing generators (dnsmasq, nagios) to use the
   multi-file approach where it makes sense (e.g., per-host dnsmasq snippets).
 
 ## DNS Verification

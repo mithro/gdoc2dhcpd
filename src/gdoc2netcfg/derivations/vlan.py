@@ -1,7 +1,6 @@
 """IP → VLAN derivation.
 
-Determines VLAN assignment based on IP address subnet. This logic was
-previously duplicated across cisco-sg300-vlan.py and tc-mac-vlan.py.
+Determines VLAN assignment based on IP address subnet.
 """
 
 from __future__ import annotations
