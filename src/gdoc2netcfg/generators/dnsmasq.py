@@ -1,6 +1,6 @@
 """Dnsmasq internal configuration generator.
 
-Produces the internal dnsmasq config with:
+Produces per-host dnsmasq config files, each containing:
 - DHCP host bindings (dhcp-host)
 - Reverse DNS PTR records (ptr-record) for IPv4 and IPv6
 - Forward DNS records (host-record) with dual-stack IPv6
@@ -12,47 +12,56 @@ Extracted from dnsmasq.py.
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from gdoc2netcfg.derivations.dns_names import common_suffix
-from gdoc2netcfg.models.host import NetworkInventory
+from gdoc2netcfg.models.host import Host, NetworkInventory
 from gdoc2netcfg.utils.ip import ip_sort_key
 
 
-def generate_dnsmasq_internal(inventory: NetworkInventory) -> str:
-    """Generate internal dnsmasq configuration.
+def generate_dnsmasq_internal(inventory: NetworkInventory) -> dict[str, str]:
+    """Generate internal dnsmasq configuration as per-host files.
 
-    This is the primary generator that produces the internal dnsmasq config.
+    Returns a dict mapping "{hostname}.conf" to config content.
     """
+    files: dict[str, str] = {}
+    for host in inventory.hosts_sorted():
+        content = _generate_host_internal(host, inventory)
+        if content:
+            files[f"{host.hostname}.conf"] = content
+    return files
+
+
+def _generate_host_internal(host: Host, inventory: NetworkInventory) -> str:
+    """Generate all dnsmasq config sections for a single host."""
     output: list[str] = []
-    output.extend(_dhcp_host_config(inventory))
-    output.extend(_ptr_config(inventory))
-    output.extend(_host_record_config(inventory))
-    output.extend(_sshfp_records(inventory))
+    output.extend(_host_dhcp_config(host, inventory))
+    output.extend(_host_ptr_config(host, inventory))
+    output.extend(_host_record_config(host, inventory))
+    output.extend(_host_sshfp_records(host, inventory))
+    if not output:
+        return ""
     output.append("")
     return "\n".join(output)
 
 
-def _dhcp_host_config(inventory: NetworkInventory) -> list[str]:
-    """Generate dhcp-host entries."""
+def _host_dhcp_config(host: Host, inventory: NetworkInventory) -> list[str]:
+    """Generate dhcp-host entries for a single host."""
+    if not host.interfaces:
+        return []
+
+    # Group MACs by IP within this host
+    ip_to_macs: dict[str, list[tuple]] = defaultdict(list)
+    for iface in host.interfaces:
+        ip_str = str(iface.ipv4)
+        ip_to_macs[ip_str].append((iface.mac, iface.dhcp_name))
+
     output: list[str] = []
-    output.append("")
-    output.append("# " + "-" * 70)
-    output.append("# DHCP Host Configuration")
-    output.append("# " + "-" * 70)
-
-    current_group = None
-    for ip, macs in sorted(inventory.ip_to_macs.items(), key=lambda x: ip_sort_key(x[0])):
-        # Add comment when IP group changes (first 3 octets)
-        ip_group = ".".join(ip.split(".")[:3])
-        if ip_group != current_group:
-            if current_group is not None:
-                output.append("")
-            output.append(f"# {ip_group}.X")
-            current_group = ip_group
-
+    output.append(f"# {host.hostname} — DHCP")
+    for ip, macs in sorted(ip_to_macs.items(), key=lambda x: ip_sort_key(x[0])):
         dhcp_names = set(name for _, name in macs)
         dhcp_name = common_suffix(*dhcp_names).strip("-")
 
-        # Compute IPv6 addresses from the inventory's prefixes
         ipv6_strs = _ipv6_for_ip(ip, inventory)
         mac_str = ",".join(str(mac) for mac, _ in macs)
 
@@ -62,41 +71,33 @@ def _dhcp_host_config(inventory: NetworkInventory) -> list[str]:
         else:
             output.append(f"dhcp-host={mac_str},{ip},{dhcp_name}")
 
-    output.append("# " + "-" * 70)
-    output.append("")
     return output
 
 
-def _ptr_config(inventory: NetworkInventory) -> list[str]:
-    """Generate ptr-record entries for IPv4 and IPv6."""
+def _host_ptr_config(host: Host, inventory: NetworkInventory) -> list[str]:
+    """Generate ptr-record entries (IPv4 and IPv6) for a single host."""
     domain = inventory.site.domain
     output: list[str] = []
 
-    # IPv4 PTR records
-    output.append("")
-    output.append("# " + "-" * 70)
-    output.append("# Reverse names for IP addresses (IPv4)")
-    output.append("# " + "-" * 70)
-    for ip, hostname in sorted(inventory.ip_to_hostname.items(), key=lambda x: ip_sort_key(x[0])):
-        output.append(f"ptr-record=/{hostname}.{domain}/{ip}")
-    output.append("# " + "-" * 70)
-    output.append("")
+    for iface in sorted(host.interfaces, key=lambda i: ip_sort_key(str(i.ipv4))):
+        ip = str(iface.ipv4)
+        hostname = inventory.ip_to_hostname.get(ip)
+        if not hostname:
+            continue
 
-    # IPv6 PTR records
-    output.append("# " + "-" * 70)
-    output.append("# Reverse names for IP addresses (IPv6)")
-    output.append("# " + "-" * 70)
-    for ip, hostname in sorted(inventory.ip_to_hostname.items(), key=lambda x: ip_sort_key(x[0])):
+        # IPv4 PTR
+        output.append(f"ptr-record=/{hostname}.{domain}/{ip}")
+
+        # IPv6 PTR
         for ipv6_str in _ipv6_for_ip(ip, inventory):
             ptr = _ipv6_to_ptr(ipv6_str)
             output.append(f"ptr-record={ptr},{hostname}.{domain}")
-    output.append("# " + "-" * 70)
-    output.append("")
+
     return output
 
 
-def _host_record_config(inventory: NetworkInventory) -> list[str]:
-    """Generate host-record entries for forward DNS.
+def _host_record_config(host: Host, inventory: NetworkInventory) -> list[str]:
+    """Generate host-record entries for forward DNS for a single host.
 
     Uses the precomputed host.dns_names list from the DNS name derivation
     pipeline, which includes:
@@ -105,88 +106,63 @@ def _host_record_config(inventory: NetworkInventory) -> list[str]:
     - ipv4./ipv6. prefix variants for all dual-stack names
     """
     domain = inventory.site.domain
+    if not host.dns_names:
+        return []
+
     output: list[str] = []
-    output.append("")
-    output.append("# " + "-" * 70)
-    output.append("# Forward names")
-    output.append("# " + "-" * 70)
 
-    for host in inventory.hosts_sorted():
-        if not host.dns_names:
+    for dns_name in host.dns_names:
+        # Skip short names except for the bare hostname
+        if not dns_name.is_fqdn and dns_name.name != host.hostname:
             continue
-        output.append("")
-        output.append(f"# {host.hostname}")
 
-        # Emit host-record for each DNS name
-        for dns_name in host.dns_names:
-            # Skip short names except for the bare hostname
-            if not dns_name.is_fqdn and dns_name.name != host.hostname:
-                continue
+        addrs: list[str] = []
+        if dns_name.ipv4:
+            addrs.append(str(dns_name.ipv4))
+        addrs.extend(str(a) for a in dns_name.ipv6_addresses)
 
-            # Build the address list
-            addrs: list[str] = []
-            if dns_name.ipv4:
-                addrs.append(str(dns_name.ipv4))
-            addrs.extend(str(a) for a in dns_name.ipv6_addresses)
+        if not addrs:
+            continue
 
-            if not addrs:
-                continue
+        output.append(f"host-record={dns_name.name},{','.join(addrs)}")
 
-            output.append(f"host-record={dns_name.name},{','.join(addrs)}")
+    # CAA record for Let's Encrypt (on the primary FQDN)
+    output.append(
+        f"dns-rr={host.hostname}.{domain},"
+        f"257,000569737375656C657473656E63727970742E6F7267"
+    )
 
-        # CAA record for Let's Encrypt (on the primary FQDN)
-        output.append(
-            f"dns-rr={host.hostname}.{domain},"
-            f"257,000569737375656C657473656E63727970742E6F7267"
-        )
-
-    output.append("# " + "-" * 70)
-    output.append("")
     return output
 
 
-def _sshfp_records(inventory: NetworkInventory) -> list[str]:
-    """Generate SSHFP DNS records (RR type 44)."""
+def _host_sshfp_records(host: Host, inventory: NetworkInventory) -> list[str]:
+    """Generate SSHFP DNS records (RR type 44) for a single host."""
+    if not host.sshfp_records:
+        return []
+
     domain = inventory.site.domain
     output: list[str] = []
-    output.append("")
-    output.append("# " + "=" * 70)
-    output.append("# SSHFP Records")
-    output.append("# " + "=" * 70)
 
-    for host in inventory.hosts_sorted():
-        if not host.sshfp_records:
-            continue
+    def _records(dnsname: str) -> None:
+        output.append(f"# sshfp for {dnsname}")
+        for line in host.sshfp_records:
+            if line.startswith(";"):
+                continue
+            parts = line.split()
+            if len(parts) >= 6:
+                _, a, b, c, d, e = parts[:6]
+                output.append(f"dns-rr={dnsname},44,{c}:{d}:{e}")
 
-        ips = host.all_ipv4
+    _records(f"{host.hostname}.{domain}")
 
-        def _records(dnsname: str) -> None:
-            output.append("")
-            output.append(f"# sshfp for {dnsname}")
-            for line in host.sshfp_records:
-                if line.startswith(";"):
-                    continue
-                parts = line.split()
-                if len(parts) >= 6:
-                    _, a, b, c, d, e = parts[:6]
-                    output.append(f"dns-rr={dnsname},44,{c}:{d}:{e}")
+    for iface in host.interfaces:
+        if iface.name:
+            _records(f"{iface.name}.{host.hostname}.{domain}")
 
-        output.append("")
-        output.append("# " + "-" * 70)
-        output.append(f"# {host.hostname}")
-        output.append("# " + "-" * 70)
-        _records(f"{host.hostname}.{domain}")
-
-        for iface in host.interfaces:
-            if iface.name:
-                _records(f"{iface.name}.{host.hostname}.{domain}")
-
-        for iface in host.interfaces:
-            ip_str = str(iface.ipv4)
-            ptr = ".".join(ip_str.split(".")[::-1]) + ".in-addr.arpa"
-            _records(ptr)
-
-        output.append("# " + "-" * 70)
+    for iface in host.interfaces:
+        ip_str = str(iface.ipv4)
+        ptr = ".".join(ip_str.split(".")[::-1]) + ".in-addr.arpa"
+        _records(ptr)
 
     return output
 
