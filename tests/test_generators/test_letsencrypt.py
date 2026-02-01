@@ -109,6 +109,15 @@ class TestCertScripts:
         script = files["certs-available/desktop.welland.mithis.com"]
         assert "--manual-cleanup-hook" not in script
 
+    def test_cert_script_exports_dnsmasq_env(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+
+        script = files["certs-available/desktop.welland.mithis.com"]
+        assert 'export DNSMASQ_CONF_DIR="/etc/dnsmasq.d/external"' in script
+        assert 'export DNSMASQ_CONF="/etc/dnsmasq.d/dnsmasq.external.conf"' in script
+        assert 'export DNSMASQ_SERVICE="dnsmasq@external"' in script
+
     def test_custom_auth_hook(self):
         host = _make_host()
         files = generate_letsencrypt(
@@ -118,6 +127,20 @@ class TestCertScripts:
 
         script = files["certs-available/desktop.welland.mithis.com"]
         assert "--manual-auth-hook /usr/local/bin/my-dns-hook.sh" in script
+
+    def test_custom_dnsmasq_params(self):
+        host = _make_host()
+        files = generate_letsencrypt(
+            _make_inventory(host),
+            dnsmasq_conf_dir="/opt/dnsmasq/ext",
+            dnsmasq_conf="/opt/dnsmasq/ext.conf",
+            dnsmasq_service="dnsmasq@custom",
+        )
+
+        script = files["certs-available/desktop.welland.mithis.com"]
+        assert 'DNSMASQ_CONF_DIR="/opt/dnsmasq/ext"' in script
+        assert 'DNSMASQ_CONF="/opt/dnsmasq/ext.conf"' in script
+        assert 'DNSMASQ_SERVICE="dnsmasq@custom"' in script
 
     def test_cert_name_is_primary_fqdn(self):
         host = _make_host()
@@ -247,6 +270,22 @@ class TestPathValidation:
             generate_letsencrypt(
                 _make_inventory(host),
                 auth_hook="/opt/hooks; rm -rf /",
+            )
+
+    def test_rejects_malicious_dnsmasq_conf_dir(self):
+        host = _make_host()
+        with pytest.raises(ValueError, match="Unsafe dnsmasq_conf_dir"):
+            generate_letsencrypt(
+                _make_inventory(host),
+                dnsmasq_conf_dir="/etc; rm -rf /",
+            )
+
+    def test_rejects_malicious_dnsmasq_service(self):
+        host = _make_host()
+        with pytest.raises(ValueError, match="Unsafe dnsmasq_service"):
+            generate_letsencrypt(
+                _make_inventory(host),
+                dnsmasq_service="dnsmasq; curl evil.com",
             )
 
     def test_accepts_valid_auth_hook(self):

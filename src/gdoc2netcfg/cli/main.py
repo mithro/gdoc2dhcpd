@@ -267,8 +267,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
         elif name == "dnsmasq_external":
             kwargs["public_ipv4"] = config.site.public_ipv4
         elif name == "letsencrypt" and gen_config:
-            if gen_config.params.get("auth_hook"):
-                kwargs["auth_hook"] = gen_config.params["auth_hook"]
+            for key in ("auth_hook", "dnsmasq_conf_dir", "dnsmasq_conf", "dnsmasq_service"):
+                if gen_config.params.get(key):
+                    kwargs[key] = gen_config.params[key]
         elif name == "nginx" and gen_config:
             if gen_config.params.get("acme_webroot"):
                 kwargs["acme_webroot"] = gen_config.params["acme_webroot"]

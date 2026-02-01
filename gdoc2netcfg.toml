@@ -42,6 +42,9 @@ htpasswd_file = "/etc/nginx/.htpasswd"
 
 [generators.letsencrypt]
 auth_hook = "/opt/certbot/hooks/certbot-hook-dnsmasq/dnsmasq-hook.sh"
+dnsmasq_conf_dir = "/etc/dnsmasq.d/external"
+dnsmasq_conf = "/etc/dnsmasq.d/dnsmasq.external.conf"
+dnsmasq_service = "dnsmasq@external"
 
 [generators.nagios]
 output = "nagios-switches.cfg"

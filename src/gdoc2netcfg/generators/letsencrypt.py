@@ -22,7 +22,7 @@ from gdoc2netcfg.derivations.hardware import (
     HARDWARE_SUPERMICRO_BMC,
 )
 from gdoc2netcfg.models.host import NetworkInventory
-from gdoc2netcfg.utils.dns import is_safe_dns_name, is_safe_path
+from gdoc2netcfg.utils.dns import is_safe_dns_name, is_safe_path, is_safe_systemd_unit
 
 # Deploy hook scripts, looked up by hardware type
 _DEPLOY_HOOKS: dict[str, str] = {
@@ -31,11 +31,17 @@ _DEPLOY_HOOKS: dict[str, str] = {
 }
 
 _DEFAULT_AUTH_HOOK = "/opt/certbot/hooks/certbot-hook-dnsmasq/dnsmasq-hook.sh"
+_DEFAULT_DNSMASQ_CONF_DIR = "/etc/dnsmasq.d/external"
+_DEFAULT_DNSMASQ_CONF = "/etc/dnsmasq.d/dnsmasq.external.conf"
+_DEFAULT_DNSMASQ_SERVICE = "dnsmasq@external"
 
 
 def generate_letsencrypt(
     inventory: NetworkInventory,
     auth_hook: str = _DEFAULT_AUTH_HOOK,
+    dnsmasq_conf_dir: str = _DEFAULT_DNSMASQ_CONF_DIR,
+    dnsmasq_conf: str = _DEFAULT_DNSMASQ_CONF,
+    dnsmasq_service: str = _DEFAULT_DNSMASQ_SERVICE,
 ) -> dict[str, str]:
     """Generate certbot provisioning scripts for each host.
 
@@ -44,10 +50,17 @@ def generate_letsencrypt(
       - renew-enabled.sh                 (orchestrator)
 
     Raises:
-        ValueError: If auth_hook contains unsafe characters.
+        ValueError: If any path parameter contains unsafe characters.
     """
-    if not is_safe_path(auth_hook):
-        raise ValueError(f"Unsafe auth_hook path: {auth_hook!r}")
+    for name, value in [
+        ("auth_hook", auth_hook),
+        ("dnsmasq_conf_dir", dnsmasq_conf_dir),
+        ("dnsmasq_conf", dnsmasq_conf),
+    ]:
+        if not is_safe_path(value):
+            raise ValueError(f"Unsafe {name}: {value!r}")
+    if not is_safe_systemd_unit(dnsmasq_service):
+        raise ValueError(f"Unsafe dnsmasq_service: {dnsmasq_service!r}")
 
     files: dict[str, str] = {}
 
@@ -65,7 +78,12 @@ def generate_letsencrypt(
         cert_name = fqdns[0]
 
         # Build certbot command
-        lines = ["#!/bin/sh"]
+        lines = [
+            "#!/bin/sh",
+            f'export DNSMASQ_CONF_DIR="{dnsmasq_conf_dir}"',
+            f'export DNSMASQ_CONF="{dnsmasq_conf}"',
+            f'export DNSMASQ_SERVICE="{dnsmasq_service}"',
+        ]
         cmd_parts = [
             "certbot certonly --manual",
             "  --preferred-challenges dns",
