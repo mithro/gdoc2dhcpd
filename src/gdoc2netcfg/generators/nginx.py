@@ -78,15 +78,15 @@ def _partition_dns_names(
     return root_names, iface_names
 
 
-def _upstream_block(upstream_name: str, ips: list[str]) -> str:
+def _upstream_block(upstream_name: str, ips: list[str], port: int = 80) -> str:
     """Generate an nginx upstream block for failover.
 
     Lists all IPs as equal-weight servers for round-robin with
-    automatic failure detection.
+    automatic failure detection. Port specifies the backend port.
     """
     lines = [f"upstream {upstream_name} {{"]
     for ip in ips:
-        lines.append(f"    server {ip};")
+        lines.append(f"    server {ip}:{port};")
     lines.append("}")
     lines.append("")
     return "\n".join(lines)
@@ -160,7 +160,6 @@ def generate_nginx(
                 if _is_nginx_name(dn)
             ]
 
-            upstream_name = f"{primary_fqdn}-backend"
             all_ips = [
                 str(iface.ipv4) for iface in host.interfaces
             ]
@@ -181,8 +180,7 @@ def generate_nginx(
 
             _emit_combined_four_files(
                 files, primary_fqdn, root_names,
-                upstream_name, all_ips,
-                iface_configs,
+                all_ips, iface_configs,
                 has_valid_cert, htpasswd_file,
             )
 
@@ -218,7 +216,6 @@ def _emit_combined_four_files(
     files: dict[str, str],
     primary_fqdn: str,
     root_names: list[str],
-    upstream_name: str,
     all_ips: list[str],
     iface_configs: list[tuple[list[str], str]],
     has_valid_cert: bool,
@@ -226,13 +223,16 @@ def _emit_combined_four_files(
 ) -> None:
     """Emit four config files for a multi-interface host.
 
-    Each file contains the upstream block, the root server block
-    (using upstream failover), and one server block per named
-    interface (using direct proxy_pass) — all in the same file.
-    """
-    upstream_text = _upstream_block(upstream_name, all_ips)
+    Each file contains its own upstream block (with a variant-specific
+    name to avoid conflicts when multiple variants are enabled), the
+    root server block (using upstream failover), and one server block
+    per named interface (using direct proxy_pass).
 
-    for suffix, builder in _VARIANT_BUILDERS:
+    HTTP variants use port 80 backends, HTTPS variants use port 443.
+    """
+    for suffix, builder, port in _VARIANT_BUILDERS:
+        upstream_name = f"{primary_fqdn}-{suffix}-backend"
+        upstream_text = _upstream_block(upstream_name, all_ips, port=port)
         parts = [upstream_text]
 
         # Root server block (upstream failover)
@@ -308,10 +308,10 @@ def _build_https_private(
 
 
 _VARIANT_BUILDERS = [
-    ("http-public", _build_http_public),
-    ("http-private", _build_http_private),
-    ("https-public", _build_https_public),
-    ("https-private", _build_https_private),
+    ("http-public", _build_http_public, 80),
+    ("http-private", _build_http_private, 80),
+    ("https-public", _build_https_public, 443),
+    ("https-private", _build_https_private, 443),
 ]
 
 

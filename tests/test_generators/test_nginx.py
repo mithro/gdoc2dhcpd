@@ -387,9 +387,9 @@ class TestMultiInterfaceHost:
         files = generate_nginx(_make_inventory(host))
 
         conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
-        assert "upstream rpi-sdr-kraken.welland.mithis.com-backend {" in conf
-        assert "server 10.1.90.149;" in conf
-        assert "server 10.1.90.150;" in conf
+        assert "upstream rpi-sdr-kraken.welland.mithis.com-http-public-backend {" in conf
+        assert "server 10.1.90.149:80;" in conf
+        assert "server 10.1.90.150:80;" in conf
 
     def test_file_contains_three_server_blocks(self):
         """Each file has root + eth0 + wlan0 server blocks."""
@@ -407,7 +407,8 @@ class TestMultiInterfaceHost:
         conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
         blocks = _extract_server_blocks(conf)
         root_block = blocks[0]
-        assert "proxy_pass http://rpi-sdr-kraken.welland.mithis.com-backend;" in root_block
+        expected = "proxy_pass http://rpi-sdr-kraken.welland.mithis.com-http-public-backend;"
+        assert expected in root_block
         assert "proxy_next_upstream error timeout http_502;" in root_block
 
     def test_root_server_block_has_only_root_names(self):
@@ -463,11 +464,14 @@ class TestMultiInterfaceHost:
         files = generate_nginx(_make_inventory(host))
 
         conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-https-public"]
-        assert "upstream rpi-sdr-kraken.welland.mithis.com-backend {" in conf
+        assert "upstream rpi-sdr-kraken.welland.mithis.com-https-public-backend {" in conf
+        assert "server 10.1.90.149:443;" in conf
+        assert "server 10.1.90.150:443;" in conf
         blocks = _extract_server_blocks(conf)
         assert len(blocks) == 3
         # Root uses upstream
-        assert "proxy_pass https://rpi-sdr-kraken.welland.mithis.com-backend;" in blocks[0]
+        expected = "proxy_pass https://rpi-sdr-kraken.welland.mithis.com-https-public-backend;"
+        assert expected in blocks[0]
         assert "proxy_next_upstream error timeout http_502;" in blocks[0]
         # Interfaces use direct IP
         assert "proxy_pass https://10.1.90.149;" in blocks[1]
