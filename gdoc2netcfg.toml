@@ -40,5 +40,9 @@ output_dir = "external"
 acme_webroot = "/var/www/acme"
 htpasswd_file = "/etc/nginx/.htpasswd"
 
+[generators.letsencrypt]
+dnsmasq_conf_dir = "/etc/dnsmasq.d/external"
+dnsmasq_service = "dnsmasq@external"
+
 [generators.nagios]
 output = "nagios-switches.cfg"

