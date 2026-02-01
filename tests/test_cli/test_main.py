@@ -254,4 +254,6 @@ class TestDnsmasqExternalGenerator:
         result = main(["-c", str(config), "generate", "--stdout", "dnsmasq_external"])
         assert result == 0
         captured = capsys.readouterr()
-        assert "No public_ipv4 configured" in captured.out
+        # With no public_ipv4, the external generator returns an empty dict,
+        # so the CLI writes 0 files and produces no stdout output
+        assert "No public_ipv4 configured" not in captured.out

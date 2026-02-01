@@ -40,7 +40,7 @@ class TestLoadConfig:
 
         # Generators
         assert "dnsmasq_internal" in config.generators
-        assert config.generators["dnsmasq_internal"].output == "internal/dnsmasq.internal.conf"
+        assert config.generators["dnsmasq_internal"].output_dir == "internal"
 
     def test_load_minimal_config(self, tmp_path: Path):
         """Load a minimal TOML config."""

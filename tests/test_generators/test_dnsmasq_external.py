@@ -1,7 +1,7 @@
 """Tests for the dnsmasq external (split-horizon) generator."""
 
 from gdoc2netcfg.generators.dnsmasq_external import generate_dnsmasq_external
-from gdoc2netcfg.models.addressing import IPv4Address, IPv6Address, MACAddress
+from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface, NetworkInventory
 from gdoc2netcfg.models.network import IPv6Prefix, Site
 
@@ -150,7 +150,10 @@ class TestDnsmasqExternalGenerator:
         result = generate_dnsmasq_external(inv)
         output = result["server.conf"]
 
-        lines = [l for l in output.split("\n") if l.startswith("dns-rr=") and ",44," in l]
+        lines = [
+            line for line in output.split("\n")
+            if line.startswith("dns-rr=") and ",44," in line
+        ]
         assert len(lines) == 0
 
     def test_multiple_hosts_produce_separate_files(self):

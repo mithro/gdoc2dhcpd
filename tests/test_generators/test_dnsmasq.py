@@ -147,7 +147,10 @@ class TestDnsmasqGenerator:
         result = generate_dnsmasq_internal(inv)
         output = result["desktop.conf"]
 
-        lines = [l for l in output.split("\n") if l.startswith("dns-rr=") and ",44," in l]
+        lines = [
+            line for line in output.split("\n")
+            if line.startswith("dns-rr=") and ",44," in line
+        ]
         assert len(lines) == 0
 
     def test_multiple_hosts_produce_separate_files(self):
