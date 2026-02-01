@@ -48,15 +48,28 @@ def _host_with_iface(hostname, mac, ip, interface_name=None, dhcp_name="test"):
 
 
 class TestDnsmasqExternalGenerator:
-    def test_returns_message_when_no_public_ipv4(self):
+    def test_returns_empty_dict_when_no_public_ipv4(self):
         inv = _make_inventory(site=SITE_NO_PUBLIC)
-        output = generate_dnsmasq_external(inv)
-        assert "No public_ipv4 configured" in output
+        result = generate_dnsmasq_external(inv)
+        assert result == {}
+
+    def test_returns_dict(self):
+        host = _host_with_iface("server", "aa:bb:cc:dd:ee:ff", "10.1.10.1")
+        inv = _make_inventory(hosts=[host])
+        result = generate_dnsmasq_external(inv)
+        assert isinstance(result, dict)
+
+    def test_returns_dict_with_hostname_keys(self):
+        host = _host_with_iface("server", "aa:bb:cc:dd:ee:ff", "10.1.10.1")
+        inv = _make_inventory(hosts=[host])
+        result = generate_dnsmasq_external(inv)
+        assert "server.conf" in result
 
     def test_generates_host_records_with_public_ip(self):
         host = _host_with_iface("server", "aa:bb:cc:dd:ee:ff", "10.1.10.1")
         inv = _make_inventory(hosts=[host])
-        output = generate_dnsmasq_external(inv)
+        result = generate_dnsmasq_external(inv)
+        output = result["server.conf"]
 
         # Should use public IP, not the RFC 1918 internal IP
         assert "host-record=server.welland.mithis.com,203.0.113.1" in output
@@ -65,7 +78,8 @@ class TestDnsmasqExternalGenerator:
     def test_preserves_non_rfc1918_ips(self):
         host = _host_with_iface("external", "aa:bb:cc:dd:ee:ff", "198.51.100.10")
         inv = _make_inventory(hosts=[host])
-        output = generate_dnsmasq_external(inv)
+        result = generate_dnsmasq_external(inv)
+        output = result["external.conf"]
 
         # Non-RFC1918 IPs should be preserved as-is
         assert "host-record=external.welland.mithis.com,198.51.100.10" in output
@@ -73,7 +87,8 @@ class TestDnsmasqExternalGenerator:
     def test_uses_arg_public_ipv4_over_site(self):
         host = _host_with_iface("server", "aa:bb:cc:dd:ee:ff", "10.1.10.1")
         inv = _make_inventory(hosts=[host])
-        output = generate_dnsmasq_external(inv, public_ipv4="192.0.2.99")
+        result = generate_dnsmasq_external(inv, public_ipv4="192.0.2.99")
+        output = result["server.conf"]
 
         # Should use the argument public IP, not the site's
         assert "host-record=server.welland.mithis.com,192.0.2.99" in output
@@ -83,9 +98,9 @@ class TestDnsmasqExternalGenerator:
         host = _host_with_iface("server", "aa:bb:cc:dd:ee:ff", "10.1.10.1")
         host.sshfp_records = ["server IN SSHFP 1 2 abc123"]
         inv = _make_inventory(hosts=[host])
-        output = generate_dnsmasq_external(inv)
+        result = generate_dnsmasq_external(inv)
+        output = result["server.conf"]
 
-        assert "# SSHFP Records" in output
         assert "dns-rr=server.welland.mithis.com,44,1:2:abc123" in output
 
     def test_sshfp_includes_interface_fqdns(self):
@@ -111,7 +126,8 @@ class TestDnsmasqExternalGenerator:
         )
         host.sshfp_records = ["server IN SSHFP 1 2 abc123"]
         inv = _make_inventory(hosts=[host])
-        output = generate_dnsmasq_external(inv)
+        result = generate_dnsmasq_external(inv)
+        output = result["server.conf"]
 
         # Should have SSHFP for both hostname and interface name
         assert "dns-rr=server.welland.mithis.com,44,1:2:abc123" in output
@@ -122,7 +138,8 @@ class TestDnsmasqExternalGenerator:
         host = _host_with_iface("server", "aa:bb:cc:dd:ee:ff", "10.1.10.1")
         host.sshfp_records = ["server IN SSHFP 1 2 abc123"]
         inv = _make_inventory(hosts=[host])
-        output = generate_dnsmasq_external(inv)
+        result = generate_dnsmasq_external(inv)
+        output = result["server.conf"]
 
         # Should NOT have in-addr.arpa SSHFP records
         assert "in-addr.arpa" not in output
@@ -130,9 +147,16 @@ class TestDnsmasqExternalGenerator:
     def test_sshfp_skipped_when_no_records(self):
         host = _host_with_iface("server", "aa:bb:cc:dd:ee:ff", "10.1.10.1")
         inv = _make_inventory(hosts=[host])
-        output = generate_dnsmasq_external(inv)
+        result = generate_dnsmasq_external(inv)
+        output = result["server.conf"]
 
-        # SSHFP section header exists but no dns-rr type 44 entries
-        assert "# SSHFP Records" in output
         lines = [l for l in output.split("\n") if l.startswith("dns-rr=") and ",44," in l]
         assert len(lines) == 0
+
+    def test_multiple_hosts_produce_separate_files(self):
+        host1 = _host_with_iface("alpha", "aa:bb:cc:dd:ee:01", "10.1.10.1")
+        host2 = _host_with_iface("bravo", "aa:bb:cc:dd:ee:02", "10.1.10.2")
+        inv = _make_inventory(hosts=[host1, host2])
+        result = generate_dnsmasq_external(inv)
+        assert "alpha.conf" in result
+        assert "bravo.conf" in result
