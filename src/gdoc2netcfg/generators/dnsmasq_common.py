@@ -13,9 +13,11 @@ This is a generator parameter (who is asking), not a derivation
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Callable
 
 from gdoc2netcfg.models.host import Host, NetworkInventory
+from gdoc2netcfg.utils.ip import ip_sort_key
 
 Ipv4Transform = Callable[[str], str]
 
@@ -109,15 +111,63 @@ def host_sshfp_records(
     return output
 
 
+def host_ptr_config(host: Host, inventory: NetworkInventory) -> list[str]:
+    """Generate ptr-record entries (IPv4 and IPv6) for a single host.
+
+    Uses original (non-transformed) IPs for both internal and external:
+    IPv4 PTR records use RFC 1918 addresses (the in-addr.arpa name is
+    derived from the actual IP), and IPv6 addresses are already public.
+    """
+    domain = inventory.site.domain
+    output: list[str] = []
+
+    for iface in sorted(host.interfaces, key=lambda i: ip_sort_key(str(i.ipv4))):
+        ip = str(iface.ipv4)
+        hostname = inventory.ip_to_hostname.get(ip)
+        if not hostname:
+            continue
+
+        # IPv4 PTR
+        output.append(f"ptr-record=/{hostname}.{domain}/{ip}")
+
+        # IPv6 PTR
+        for ipv6_str in _ipv6_for_ip(ip, inventory):
+            ptr = _ipv6_to_ptr(ipv6_str)
+            output.append(f"ptr-record={ptr},{hostname}.{domain}")
+
+    return output
+
+
+def _ipv6_for_ip(ip: str, inventory: NetworkInventory) -> list[str]:
+    """Get IPv6 address strings for an IPv4 address."""
+    from gdoc2netcfg.derivations.ipv6 import ipv4_to_ipv6_list
+    from gdoc2netcfg.models.addressing import IPv4Address
+
+    try:
+        ipv4 = IPv4Address(ip)
+    except ValueError:
+        return []
+    addrs = ipv4_to_ipv6_list(ipv4, inventory.site.active_ipv6_prefixes)
+    return [str(a) for a in addrs]
+
+
+def _ipv6_to_ptr(ipv6_str: str) -> str:
+    """Convert IPv6 address string to PTR format."""
+    addr = ipaddress.IPv6Address(ipv6_str)
+    full_hex = addr.exploded.replace(":", "")
+    return ".".join(reversed(full_hex)) + ".ip6.arpa"
+
+
 def shared_dns_sections(
     host: Host, inventory: NetworkInventory, ipv4_transform: Ipv4Transform,
 ) -> list[list[str]]:
     """Return the DNS record sections common to all dnsmasq generators.
 
-    Returns [host_records, caa, sshfp] — a list of sections where each
+    Returns [ptr, host_records, caa, sshfp] — a list of sections where each
     section is a list of config lines.
     """
     return [
+        host_ptr_config(host, inventory),
         host_record_config(host, inventory, ipv4_transform),
         host_caa_config(host, inventory),
         host_sshfp_records(host, inventory, ipv4_transform),
