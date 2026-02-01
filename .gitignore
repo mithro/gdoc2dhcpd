@@ -19,3 +19,4 @@ build/
 .cache/
 .claude/
 .pytest_cache/
+.worktrees/
