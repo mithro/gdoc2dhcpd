@@ -177,7 +177,10 @@ def _get_generator(name: str):
     """Get a generator function by name."""
     generators = {
         "dnsmasq_internal": ("gdoc2netcfg.generators.dnsmasq", "generate_dnsmasq_internal"),
-        "dnsmasq_external": ("gdoc2netcfg.generators.dnsmasq_external", "generate_dnsmasq_external"),
+        "dnsmasq_external": (
+            "gdoc2netcfg.generators.dnsmasq_external",
+            "generate_dnsmasq_external",
+        ),
         "nagios": ("gdoc2netcfg.generators.nagios", "generate_nagios"),
         "letsencrypt": ("gdoc2netcfg.generators.letsencrypt", "generate_letsencrypt"),
         "nginx": ("gdoc2netcfg.generators.nginx", "generate_nginx"),
@@ -361,7 +364,7 @@ def cmd_sshfp(args: argparse.Namespace) -> int:
     """Scan hosts for SSH fingerprints."""
     config = _load_config(args)
 
-    from gdoc2netcfg.derivations.host_builder import build_hosts, build_inventory
+    from gdoc2netcfg.derivations.host_builder import build_hosts
     from gdoc2netcfg.sources.parser import parse_csv
     from gdoc2netcfg.supplements.sshfp import (
         enrich_hosts_with_sshfp,

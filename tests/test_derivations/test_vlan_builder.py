@@ -10,16 +10,46 @@ from gdoc2netcfg.sources.vlan_parser import VLANDefinition
 def _welland_definitions() -> list[VLANDefinition]:
     """Sample VLANDefinitions matching the Welland VLAN Allocations sheet."""
     return [
-        VLANDefinition(id=1, name="tmp", ip_range="10.1.1.X", netmask="255.255.255.0", cidr="/24"),
-        VLANDefinition(id=5, name="net", ip_range="10.1.5.X", netmask="255.255.255.0", cidr="/24"),
-        VLANDefinition(id=6, name="pwr", ip_range="10.1.6.X", netmask="255.255.255.0", cidr="/24"),
-        VLANDefinition(id=7, name="store", ip_range="10.1.7.X", netmask="255.255.255.0", cidr="/24"),
-        VLANDefinition(id=10, name="int", ip_range="10.1.10.X", netmask="255.255.248.0", cidr="/21"),
-        VLANDefinition(id=20, name="roam", ip_range="10.1.20.X", netmask="255.255.255.0", cidr="/24"),
-        VLANDefinition(id=31, name="fpgas", ip_range="10.31.X.X", netmask="255.255.0.0", cidr="/16"),
-        VLANDefinition(id=41, name="sm", ip_range="10.41.X.X", netmask="255.255.0.0", cidr="/16"),
-        VLANDefinition(id=90, name="iot", ip_range="10.1.90.X", netmask="255.255.255.0", cidr="/24"),
-        VLANDefinition(id=99, name="guest", ip_range="10.1.99.X", netmask="255.255.255.0", cidr="/24"),
+        VLANDefinition(
+            id=1, name="tmp", ip_range="10.1.1.X",
+            netmask="255.255.255.0", cidr="/24",
+        ),
+        VLANDefinition(
+            id=5, name="net", ip_range="10.1.5.X",
+            netmask="255.255.255.0", cidr="/24",
+        ),
+        VLANDefinition(
+            id=6, name="pwr", ip_range="10.1.6.X",
+            netmask="255.255.255.0", cidr="/24",
+        ),
+        VLANDefinition(
+            id=7, name="store", ip_range="10.1.7.X",
+            netmask="255.255.255.0", cidr="/24",
+        ),
+        VLANDefinition(
+            id=10, name="int", ip_range="10.1.10.X",
+            netmask="255.255.248.0", cidr="/21",
+        ),
+        VLANDefinition(
+            id=20, name="roam", ip_range="10.1.20.X",
+            netmask="255.255.255.0", cidr="/24",
+        ),
+        VLANDefinition(
+            id=31, name="fpgas", ip_range="10.31.X.X",
+            netmask="255.255.0.0", cidr="/16",
+        ),
+        VLANDefinition(
+            id=41, name="sm", ip_range="10.41.X.X",
+            netmask="255.255.0.0", cidr="/16",
+        ),
+        VLANDefinition(
+            id=90, name="iot", ip_range="10.1.90.X",
+            netmask="255.255.255.0", cidr="/24",
+        ),
+        VLANDefinition(
+            id=99, name="guest", ip_range="10.1.99.X",
+            netmask="255.255.255.0", cidr="/24",
+        ),
     ]
 
 
@@ -85,8 +115,14 @@ class TestBuildVlansFromDefinitions:
     def test_monarto_site_octet(self):
         """With site_octet=2, 10.2.X.X VLANs would be site-local."""
         monarto_defs = [
-            VLANDefinition(id=5, name="net", ip_range="10.2.5.X", netmask="255.255.255.0", cidr="/24"),
-            VLANDefinition(id=31, name="fpgas", ip_range="10.31.X.X", netmask="255.255.0.0", cidr="/16"),
+            VLANDefinition(
+                id=5, name="net", ip_range="10.2.5.X",
+                netmask="255.255.255.0", cidr="/24",
+            ),
+            VLANDefinition(
+                id=31, name="fpgas", ip_range="10.31.X.X",
+                netmask="255.255.0.0", cidr="/16",
+            ),
         ]
         vlans = build_vlans_from_definitions(monarto_defs, site_octet=2)
         assert vlans[5].is_global is False

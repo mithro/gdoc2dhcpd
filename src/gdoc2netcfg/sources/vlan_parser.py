@@ -92,8 +92,16 @@ def parse_vlan_allocations(csv_text: str) -> list[VLANDefinition]:
         except ValueError:
             continue
 
-        ip_range = row[ip_range_col].strip() if ip_range_col is not None and ip_range_col < len(row) else ""
-        netmask = row[netmask_col].strip() if netmask_col is not None and netmask_col < len(row) else ""
+        ip_range = (
+            row[ip_range_col].strip()
+            if ip_range_col is not None and ip_range_col < len(row)
+            else ""
+        )
+        netmask = (
+            row[netmask_col].strip()
+            if netmask_col is not None and netmask_col < len(row)
+            else ""
+        )
         cidr = row[cidr_col].strip() if cidr_col is not None and cidr_col < len(row) else ""
         color = row[color_col].strip() if color_col is not None and color_col < len(row) else ""
         description = row[for_col].strip() if for_col is not None and for_col < len(row) else ""

@@ -8,9 +8,18 @@ SITE = Site(
     name="welland",
     domain="welland.mithis.com",
     site_octet=1,
-    vlans={10: VLAN(id=10, name="int", subdomain="int", third_octets=(8, 9, 10, 11, 12, 13, 14, 15))},
+    vlans={
+        10: VLAN(
+            id=10, name="int", subdomain="int",
+            third_octets=(8, 9, 10, 11, 12, 13, 14, 15),
+        ),
+    },
     ipv6_prefixes=[IPv6Prefix(prefix="2404:e80:a137:", name="Launtel")],
-    network_subdomains={8: "int", 9: "int", 10: "int", 11: "int", 12: "int", 13: "int", 14: "int", 15: "int", 90: "iot"},
+    network_subdomains={
+        8: "int", 9: "int", 10: "int", 11: "int",
+        12: "int", 13: "int", 14: "int", 15: "int",
+        90: "iot",
+    },
 )
 
 
@@ -48,8 +57,14 @@ class TestBuildHosts:
 
     def test_multi_interface_host(self):
         records = [
-            _make_record(machine="desktop", mac="aa:bb:cc:dd:ee:01", ip="10.1.10.100", interface="eth0"),
-            _make_record(machine="desktop", mac="aa:bb:cc:dd:ee:02", ip="10.1.10.101", interface="eth1"),
+            _make_record(
+                machine="desktop", mac="aa:bb:cc:dd:ee:01",
+                ip="10.1.10.100", interface="eth0",
+            ),
+            _make_record(
+                machine="desktop", mac="aa:bb:cc:dd:ee:02",
+                ip="10.1.10.101", interface="eth1",
+            ),
         ]
         hosts = build_hosts(records, SITE)
 
@@ -131,8 +146,14 @@ class TestBuildInventory:
     def test_multi_interface_ip_hostname(self):
         """Common suffix is used for IP→hostname when multiple interfaces."""
         records = [
-            _make_record(machine="desktop", mac="aa:bb:cc:dd:ee:01", ip="10.1.10.100", interface="eth0"),
-            _make_record(machine="desktop", mac="aa:bb:cc:dd:ee:02", ip="10.1.10.101", interface="eth1"),
+            _make_record(
+                machine="desktop", mac="aa:bb:cc:dd:ee:01",
+                ip="10.1.10.100", interface="eth0",
+            ),
+            _make_record(
+                machine="desktop", mac="aa:bb:cc:dd:ee:02",
+                ip="10.1.10.101", interface="eth1",
+            ),
         ]
         hosts = build_hosts(records, SITE)
         inv = build_inventory(hosts, SITE)
