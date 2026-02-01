@@ -41,13 +41,15 @@ def _generate_host_external(
     host: Host, inventory: NetworkInventory, public_ip: str
 ) -> str:
     """Generate external dnsmasq config for a single host."""
-    output: list[str] = []
-    output.extend(_host_record_external(host, inventory, public_ip))
-    output.extend(_host_sshfp_records(host, inventory))
-    if not output:
+    sections = [
+        _host_record_external(host, inventory, public_ip),
+        _host_sshfp_records(host, inventory),
+    ]
+    # Filter out empty sections, join with blank line separators
+    non_empty = [s for s in sections if s]
+    if not non_empty:
         return ""
-    output.append("")
-    return "\n".join(output)
+    return "\n\n".join("\n".join(s) for s in non_empty) + "\n"
 
 
 def _host_record_external(

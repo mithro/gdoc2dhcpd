@@ -34,15 +34,17 @@ def generate_dnsmasq_internal(inventory: NetworkInventory) -> dict[str, str]:
 
 def _generate_host_internal(host: Host, inventory: NetworkInventory) -> str:
     """Generate all dnsmasq config sections for a single host."""
-    output: list[str] = []
-    output.extend(_host_dhcp_config(host, inventory))
-    output.extend(_host_ptr_config(host, inventory))
-    output.extend(_host_record_config(host, inventory))
-    output.extend(_host_sshfp_records(host, inventory))
-    if not output:
+    sections = [
+        _host_dhcp_config(host, inventory),
+        _host_ptr_config(host, inventory),
+        _host_record_config(host, inventory),
+        _host_sshfp_records(host, inventory),
+    ]
+    # Filter out empty sections, join with blank line separators
+    non_empty = [s for s in sections if s]
+    if not non_empty:
         return ""
-    output.append("")
-    return "\n".join(output)
+    return "\n\n".join("\n".join(s) for s in non_empty) + "\n"
 
 
 def _host_dhcp_config(host: Host, inventory: NetworkInventory) -> list[str]:
