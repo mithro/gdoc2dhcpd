@@ -230,6 +230,15 @@ class TestHTTPBlock:
         assert "proxy_set_header X-Forwarded-For" in block
         assert "proxy_set_header X-Forwarded-Proto" in block
 
+    def test_http_has_websocket_headers(self):
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "proxy_http_version 1.1;" in block
+        assert "proxy_set_header Upgrade $http_upgrade;" in block
+        assert 'proxy_set_header Connection "upgrade";' in block
+
 
 class TestHTTPSBlock:
     def test_https_has_listen_443(self):
@@ -277,6 +286,15 @@ class TestHTTPSBlock:
 
         block = files["sites-available/desktop.welland.mithis.com-https-public"]
         assert "include snippets/acme-challenge.conf;" in block
+
+    def test_https_has_websocket_headers(self):
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
+        assert "proxy_http_version 1.1;" in block
+        assert "proxy_set_header Upgrade $http_upgrade;" in block
+        assert 'proxy_set_header Connection "upgrade";' in block
 
     def test_custom_htpasswd_file(self):
         host = _make_host()
