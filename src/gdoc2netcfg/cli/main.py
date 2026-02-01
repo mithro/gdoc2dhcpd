@@ -58,6 +58,37 @@ def _fetch_or_load_csvs(config, use_cache: bool = False):
     return results
 
 
+def _enrich_site_from_vlan_sheet(config, csv_data: list[tuple[str, str]]) -> None:
+    """Parse the VLAN Allocations sheet and populate site VLANs/subdomains.
+
+    Finds the 'vlan_allocations' CSV in csv_data, parses it, builds
+    VLAN objects and network_subdomains, and updates config.site in place.
+    """
+    from gdoc2netcfg.derivations.vlan import build_network_subdomains, build_vlans_from_definitions
+    from gdoc2netcfg.sources.vlan_parser import parse_vlan_allocations
+
+    vlan_csv = None
+    for name, text in csv_data:
+        if name == "vlan_allocations":
+            vlan_csv = text
+            break
+
+    if vlan_csv is None:
+        print("Warning: no vlan_allocations sheet found, VLANs not configured", file=sys.stderr)
+        return
+
+    definitions = parse_vlan_allocations(vlan_csv)
+    if not definitions:
+        print("Warning: vlan_allocations sheet is empty", file=sys.stderr)
+        return
+
+    vlans = build_vlans_from_definitions(definitions, config.site.site_octet)
+    subdomains = build_network_subdomains(vlans)
+
+    config.site.vlans = vlans
+    config.site.network_subdomains = subdomains
+
+
 def _build_pipeline(config):
     """Run the full build pipeline: parse → derive → validate → enrich.
 
@@ -72,9 +103,14 @@ def _build_pipeline(config):
     # Fetch or load CSVs
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
 
-    # Parse into records
+    # Enrich site config from VLAN Allocations sheet
+    _enrich_site_from_vlan_sheet(config, csv_data)
+
+    # Parse device records (exclude vlan_allocations — not a device sheet)
     all_records = []
     for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
         records = parse_csv(csv_text, name)
         all_records.extend(records)
 
@@ -284,7 +320,11 @@ def cmd_info(args: argparse.Namespace) -> int:
     """Show pipeline configuration info."""
     config = _load_config(args)
 
-    print(f"Site:   {config.site.name}")
+    # Load VLANs from sheet if available
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+
+    print(f"Site:   {config.site.name} (site_octet={config.site.site_octet})")
     print(f"Domain: {config.site.domain}")
     print()
 
@@ -330,8 +370,11 @@ def cmd_sshfp(args: argparse.Namespace) -> int:
 
     # We need a minimal pipeline to get hosts with IPs
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
     all_records = []
     for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
         records = parse_csv(csv_text, name)
         all_records.extend(records)
 
@@ -376,8 +419,11 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
 
     # Minimal pipeline to get hosts with IPs
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
     all_records = []
     for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
         records = parse_csv(csv_text, name)
         all_records.extend(records)
 

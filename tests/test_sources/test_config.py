@@ -15,28 +15,23 @@ class TestLoadConfig:
         # Site
         assert config.site.name == "welland"
         assert config.site.domain == "welland.mithis.com"
+        assert config.site.site_octet == 1
 
-        # VLANs
-        assert 10 in config.site.vlans
-        assert config.site.vlans[10].name == "int"
-        assert config.site.vlans[10].subdomain == "int"
-        assert 90 in config.site.vlans
-        assert config.site.vlans[90].name == "iot"
+        # VLANs and network_subdomains are empty at config load time —
+        # they are populated from the VLAN Allocations sheet in the pipeline.
+        assert config.site.vlans == {}
+        assert config.site.network_subdomains == {}
 
         # IPv6 prefixes
         assert len(config.site.ipv6_prefixes) >= 1
         assert config.site.ipv6_prefixes[0].prefix == "2404:e80:a137:"
 
-        # Network subdomains
-        assert config.site.network_subdomains[10] == "int"
-        assert config.site.network_subdomains[11] == "int"
-        assert config.site.network_subdomains[90] == "iot"
-
-        # Sheets
-        assert len(config.sheets) >= 2
+        # Sheets (now includes vlan_allocations)
+        assert len(config.sheets) >= 3
         sheet_names = [s.name for s in config.sheets]
         assert "network" in sheet_names
         assert "iot" in sheet_names
+        assert "vlan_allocations" in sheet_names
 
         # Generators
         assert "dnsmasq_internal" in config.generators
@@ -46,11 +41,21 @@ class TestLoadConfig:
         """Load a minimal TOML config."""
         config_file = tmp_path / "test.toml"
         config_file.write_text(
-            '[site]\nname = "test"\ndomain = "test.example.com"\n'
+            '[site]\nname = "test"\ndomain = "test.example.com"\nsite_octet = 1\n'
         )
         config = load_config(config_file)
 
         assert config.site.name == "test"
         assert config.site.domain == "test.example.com"
+        assert config.site.site_octet == 1
         assert config.site.vlans == {}
         assert config.sheets == []
+
+    def test_site_octet_default(self, tmp_path: Path):
+        """site_octet defaults to 0 if not specified."""
+        config_file = tmp_path / "test.toml"
+        config_file.write_text(
+            '[site]\nname = "test"\ndomain = "test.example.com"\n'
+        )
+        config = load_config(config_file)
+        assert config.site.site_octet == 0

@@ -6,7 +6,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gdoc2netcfg.models.network import VLAN, IPv6Prefix, Site
+from gdoc2netcfg.models.network import IPv6Prefix, Site
 
 
 @dataclass
@@ -55,18 +55,13 @@ class PipelineConfig:
 
 
 def _build_site(data: dict) -> Site:
-    """Build a Site from parsed TOML data."""
-    site_data = data.get("site", {})
+    """Build a Site from parsed TOML data.
 
-    # Build VLANs from [vlans] section
-    vlans: dict[int, VLAN] = {}
-    for vlan_id_str, vlan_info in data.get("vlans", {}).items():
-        vlan_id = int(vlan_id_str)
-        vlans[vlan_id] = VLAN(
-            id=vlan_id,
-            name=vlan_info["name"],
-            subdomain=vlan_info["subdomain"],
-        )
+    VLANs and network_subdomains are left empty here — they are
+    populated later from the VLAN Allocations spreadsheet sheet
+    by the pipeline in cli/main.py.
+    """
+    site_data = data.get("site", {})
 
     # Build IPv6 prefixes from [ipv6] section
     ipv6_data = data.get("ipv6", {})
@@ -78,17 +73,11 @@ def _build_site(data: dict) -> Site:
         for p in ipv6_data.get("disabled_prefixes", [])
     )
 
-    # Build network subdomains mapping
-    network_subdomains: dict[int, str] = {}
-    for octet_str, subdomain in data.get("network_subdomains", {}).items():
-        network_subdomains[int(octet_str)] = subdomain
-
     return Site(
         name=site_data.get("name", ""),
         domain=site_data.get("domain", ""),
-        vlans=vlans,
+        site_octet=site_data.get("site_octet", 0),
         ipv6_prefixes=ipv6_prefixes,
-        network_subdomains=network_subdomains,
         public_ipv4=site_data.get("public_ipv4"),
     )
 
