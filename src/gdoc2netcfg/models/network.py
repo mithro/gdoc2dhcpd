@@ -13,11 +13,31 @@ class VLAN:
         id: VLAN numeric identifier (e.g. 10)
         name: Human-readable name (e.g. 'int')
         subdomain: DNS subdomain for hosts on this VLAN (e.g. 'int')
+        third_octets: Which third-octet values this VLAN covers in
+            10.{site_octet}.X.Y addresses, computed from the CIDR.
+            For example, VLAN 10 (int) with /21 covers octets 8-15.
+        is_global: True for VLANs that use the second octet instead
+            of third (e.g. 10.31.X.X for VLAN 31), typically /16 ranges.
     """
 
     id: int
     name: str
     subdomain: str
+    third_octets: tuple[int, ...] = ()
+    is_global: bool = False
+
+    @property
+    def covered_third_octets(self) -> tuple[int, ...]:
+        """Return the third-octet values covered by this VLAN.
+
+        For global VLANs (is_global=True), returns empty tuple since
+        they match on the second octet instead.
+        For site VLANs, returns third_octets if set, otherwise falls
+        back to (self.id,) as the default single-octet mapping.
+        """
+        if self.is_global:
+            return ()
+        return self.third_octets if self.third_octets else (self.id,)
 
     def __str__(self) -> str:
         return f"VLAN {self.id} ({self.name})"
@@ -52,14 +72,17 @@ class Site:
     Attributes:
         name: Site identifier (e.g. 'welland')
         domain: Fully qualified domain (e.g. 'welland.mithis.com')
+        site_octet: Second octet identifying the site (1=Welland, 2=Monarto).
+            Used to match 10.{site_octet}.X.Y addresses to this site.
         vlans: VLAN definitions keyed by ID
         ipv6_prefixes: Active IPv6 prefixes for address generation
-        network_subdomains: Third-octet to subdomain mapping for 10.1.X.Y
+        network_subdomains: Third-octet to subdomain mapping for 10.{site_octet}.X.Y
         public_ipv4: Optional public IPv4 for split-horizon DNS
     """
 
     name: str
     domain: str
+    site_octet: int = 0
     vlans: dict[int, VLAN] = field(default_factory=dict)
     ipv6_prefixes: list[IPv6Prefix] = field(default_factory=list)
     network_subdomains: dict[int, str] = field(default_factory=dict)
@@ -69,3 +92,24 @@ class Site:
     def active_ipv6_prefixes(self) -> list[IPv6Prefix]:
         """Return only enabled IPv6 prefixes."""
         return [p for p in self.ipv6_prefixes if p.enabled]
+
+    def vlan_by_name(self, name: str) -> VLAN | None:
+        """Look up a VLAN by its name (e.g. 'net', 'roam')."""
+        for vlan in self.vlans.values():
+            if vlan.name == name:
+                return vlan
+        return None
+
+    def ip_prefix_for_vlan(self, vlan_name: str) -> str | None:
+        """Return the IP prefix string for a site VLAN (e.g. '10.1.5.').
+
+        Only works for site-local VLANs (not global). Returns None if
+        the VLAN is not found, is global, or has no covered octets.
+        """
+        vlan = self.vlan_by_name(vlan_name)
+        if vlan is None or vlan.is_global:
+            return None
+        octets = vlan.covered_third_octets
+        if not octets:
+            return None
+        return f"10.{self.site_octet}.{octets[0]}."
