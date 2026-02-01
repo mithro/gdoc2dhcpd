@@ -5,13 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build and Test Commands
 
 ```bash
-uv run pytest                           # Run all tests (423 tests)
+uv run pytest                           # Run all tests (493 tests)
 uv run pytest tests/test_models/        # Run tests for a specific module
 uv run pytest tests/test_models/test_addressing.py::test_mac_parse  # Run single test
 uv run pytest -x                        # Stop on first failure
 uv run ruff check src/ tests/           # Lint
 uv run gdoc2netcfg fetch                # Download CSVs from Google Sheets
-uv run gdoc2netcfg generate dnsmasq     # Generate dnsmasq config
+uv run gdoc2netcfg generate dnsmasq_internal  # Generate internal dnsmasq config
+uv run gdoc2netcfg generate dnsmasq_external  # Generate external dnsmasq config
+uv run gdoc2netcfg generate letsencrypt       # Generate certbot cert scripts
 uv run gdoc2netcfg sshfp --force        # Scan SSH fingerprints
 uv run gdoc2netcfg validate             # Run constraint validation
 ```
@@ -35,7 +37,7 @@ Supplements (supplements/)  External enrichment: SSHFP scanning via ssh-keyscan,
     │
 Constraints (constraints/)  Validation: field presence, BMC placement, MAC uniqueness, IPv6 consistency
     │
-Generators (generators/)    Output: dnsmasq_internal, dnsmasq_external, nagios, nginx
+Generators (generators/)    Output: dnsmasq_internal, dnsmasq_external, nagios, nginx, letsencrypt
     │
 Config files               Per-host .conf files in output directories
 ```
@@ -60,7 +62,11 @@ Dual-stack addressing uses the scheme: `10.AA.BB.CCC` → `{prefix}AABB::CCC` wh
 
 ### Split-Horizon DNS
 
-The dnsmasq generator has internal and external variants. External (`dnsmasq_external.py`) replaces RFC 1918 IPs with the site's public IPv4 address for external-facing DNS.
+The dnsmasq generator has internal and external variants. Both produce per-host `.conf` files and share PTR, host-record, CAA, and SSHFP generation via `dnsmasq_common.py`. The internal generator additionally produces DHCP host bindings. External (`dnsmasq_external.py`) replaces RFC 1918 IPs with the site's public IPv4 address in host-record entries for external-facing DNS. PTR records use the original IPs in both variants (IPv4 PTRs use RFC 1918 addresses; IPv6 PTRs use globally routable addresses).
+
+### Let's Encrypt Certificates
+
+The letsencrypt generator (`letsencrypt.py`) produces per-host certbot scripts in `certs-available/{primary_fqdn}` and a `renew-enabled.sh` orchestrator. Uses DNS-01 challenge validation via an external auth hook (`certbot-hook-dnsmasq`) that manages `_acme-challenge` TXT records in the external dnsmasq instance. Each cert script exports `DNSMASQ_CONF_DIR`, `DNSMASQ_CONF`, and `DNSMASQ_SERVICE` environment variables so the hook targets the correct split dnsmasq instance. Deploy hooks are added based on `hardware_type` (e.g. supermicro-bmc, netgear-switch). Only public FQDNs (`is_fqdn=True`) are included as `-d` domains.
 
 ### Nginx Reverse Proxy
 
@@ -84,4 +90,35 @@ Root-level scripts (`dnsmasq.py`, `sshfp.py`, `nagios.py`) are thin wrappers tha
 
 ## Production Deployment
 
-This runs on `ten64.welland.mithis.com` at `/opt/gdoc2netcfg/`. Generated dnsmasq configs are symlinked into `/etc/dnsmasq.d/internal/` and `/etc/dnsmasq.d/external/`. Generated nginx configs are written to `/etc/nginx/sites-available/` and activated via symlinks in `/etc/nginx/sites-enabled/`. The SSHFP cache lives at `.cache/sshfp.json`.
+This runs on `ten64.welland.mithis.com` at `/opt/gdoc2netcfg/`.
+
+### dnsmasq
+
+Two split dnsmasq instances run via systemd template units (`dnsmasq@internal`, `dnsmasq@external`). Each instance has a top-level config (`/etc/dnsmasq.d/dnsmasq.{instance}.conf`) with `conf-dir=/etc/dnsmasq.d/{instance}` directives. Generated per-host `.conf` files are written directly into the `conf-dir` directories:
+
+```bash
+sudo uv run gdoc2netcfg generate --output-dir /etc/dnsmasq.d dnsmasq_internal
+sudo uv run gdoc2netcfg generate --output-dir /etc/dnsmasq.d dnsmasq_external
+sudo systemctl restart dnsmasq@internal dnsmasq@external
+```
+
+The `--output-dir /etc/dnsmasq.d` flag is required because each generator's `output_dir` config (`"internal"` or `"external"`) is resolved relative to it. Manual config files (`00-listen.conf`, `03-auth-dns.conf`, etc.) coexist in the same directories.
+
+### nginx
+
+Generated nginx configs are written to `/etc/nginx/sites-available/` and activated via symlinks in `/etc/nginx/sites-enabled/`.
+
+### Let's Encrypt
+
+Certbot scripts are generated to `/opt/gdoc2netcfg/letsencrypt/`:
+
+```bash
+sudo uv run gdoc2netcfg generate --output-dir /opt/gdoc2netcfg letsencrypt
+sudo sh /opt/gdoc2netcfg/letsencrypt/certs-available/{fqdn}  # Provision a cert
+```
+
+The auth hook lives at `/opt/certbot/hooks/certbot-hook-dnsmasq/` (separate repo: `mithro/certbot-hook-dnsmasq`). It creates TXT records in the external dnsmasq, verifies local resolution, sends NOTIFY to secondaries, and polls until they sync.
+
+### Other
+
+The SSHFP cache lives at `.cache/sshfp.json`.
