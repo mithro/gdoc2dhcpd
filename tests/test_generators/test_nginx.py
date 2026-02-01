@@ -178,6 +178,14 @@ class TestHTTPBlock:
         assert "desktop.int.welland.mithis.com" in block
         assert "server_name" in block
 
+    def test_ipv6_only_names_excluded(self):
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "ipv4.desktop.welland.mithis.com" in block
+        assert "ipv6.desktop.welland.mithis.com" not in block
+
     def test_http_public_has_proxy_pass(self):
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
@@ -295,6 +303,175 @@ class TestMultipleHosts:
 
         server_http = files["sites-available/server.welland.mithis.com-http-public"]
         assert "proxy_pass http://10.1.10.200;" in server_http
+
+
+def _make_multi_iface_host(
+    hostname="rpi-sdr-kraken",
+    iface_ips=None,
+    ssl_cert_info=None,
+    subdomain="iot",
+):
+    """Create a host with multiple named interfaces.
+
+    iface_ips is a dict of {interface_name: ip_string}.
+    The first interface's IP becomes default_ipv4.
+    """
+    if iface_ips is None:
+        iface_ips = {"eth0": "10.1.90.149", "wlan0": "10.1.90.150"}
+
+    interfaces = []
+    default_ipv4 = None
+    for i, (iface_name, ip) in enumerate(iface_ips.items()):
+        ipv4 = IPv4Address(ip)
+        parts = ip.split(".")
+        aa = parts[1]
+        bb = parts[2].zfill(2)
+        ccc = parts[3]
+        ipv6 = IPv6Address(f"2404:e80:a137:{aa}{bb}::{ccc}", "2404:e80:a137:")
+
+        if i == 0:
+            default_ipv4 = ipv4
+
+        interfaces.append(
+            NetworkInterface(
+                name=iface_name,
+                mac=MACAddress.parse(f"aa:bb:cc:dd:ee:{i:02x}"),
+                ipv4=ipv4,
+                ipv6_addresses=[ipv6],
+                dhcp_name=f"{iface_name}-{hostname}",
+            ),
+        )
+
+    host = Host(
+        machine_name=hostname,
+        hostname=hostname,
+        interfaces=interfaces,
+        default_ipv4=default_ipv4,
+        subdomain=subdomain,
+        ssl_cert_info=ssl_cert_info,
+    )
+    derive_all_dns_names(host, SITE)
+    return host
+
+
+def _extract_server_blocks(config_text: str) -> list[str]:
+    """Extract individual server { ... } blocks from a config file."""
+    blocks = []
+    depth = 0
+    current: list[str] = []
+    for line in config_text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("server {"):
+            depth = 1
+            current = [line]
+        elif depth > 0:
+            current.append(line)
+            depth += stripped.count("{") - stripped.count("}")
+            if depth == 0:
+                blocks.append("\n".join(current))
+                current = []
+    return blocks
+
+
+class TestMultiInterfaceHost:
+    def test_produces_four_files_not_twelve(self):
+        """Multi-interface hosts still produce 4 files (one per variant)."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        site_files = [k for k in files if k.startswith("sites-available/")]
+        assert len(site_files) == 4
+
+    def test_file_contains_upstream_block(self):
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        assert "upstream rpi-sdr-kraken.welland.mithis.com-backend {" in conf
+        assert "server 10.1.90.149;" in conf
+        assert "server 10.1.90.150;" in conf
+
+    def test_file_contains_three_server_blocks(self):
+        """Each file has root + eth0 + wlan0 server blocks."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        blocks = _extract_server_blocks(conf)
+        assert len(blocks) == 3
+
+    def test_root_server_block_uses_upstream(self):
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        blocks = _extract_server_blocks(conf)
+        root_block = blocks[0]
+        assert "proxy_pass http://rpi-sdr-kraken.welland.mithis.com-backend;" in root_block
+        assert "proxy_next_upstream error timeout http_502;" in root_block
+
+    def test_root_server_block_has_only_root_names(self):
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        blocks = _extract_server_blocks(conf)
+        root_block = blocks[0]
+        assert "rpi-sdr-kraken.welland.mithis.com" in root_block
+        assert "eth0.rpi-sdr-kraken" not in root_block
+        assert "wlan0.rpi-sdr-kraken" not in root_block
+
+    def test_interface_server_blocks_use_direct_proxy_pass(self):
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        blocks = _extract_server_blocks(conf)
+        eth0_block = blocks[1]
+        wlan0_block = blocks[2]
+
+        assert "proxy_pass http://10.1.90.149;" in eth0_block
+        assert "proxy_pass http://10.1.90.150;" in wlan0_block
+        # No upstream in interface blocks
+        assert "proxy_next_upstream" not in eth0_block
+        assert "proxy_next_upstream" not in wlan0_block
+
+    def test_interface_server_blocks_have_interface_names(self):
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        blocks = _extract_server_blocks(conf)
+        eth0_block = blocks[1]
+        wlan0_block = blocks[2]
+
+        assert "eth0.rpi-sdr-kraken.welland.mithis.com" in eth0_block
+        assert "wlan0.rpi-sdr-kraken.welland.mithis.com" in wlan0_block
+
+    def test_single_interface_host_unchanged(self):
+        """Single-interface hosts should not produce upstream blocks."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "upstream" not in block
+        assert "proxy_next_upstream" not in block
+        assert "proxy_pass http://10.1.10.100;" in block
+
+    def test_https_file_contains_upstream_and_all_blocks(self):
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-https-public"]
+        assert "upstream rpi-sdr-kraken.welland.mithis.com-backend {" in conf
+        blocks = _extract_server_blocks(conf)
+        assert len(blocks) == 3
+        # Root uses upstream
+        assert "proxy_pass https://rpi-sdr-kraken.welland.mithis.com-backend;" in blocks[0]
+        assert "proxy_next_upstream error timeout http_502;" in blocks[0]
+        # Interfaces use direct IP
+        assert "proxy_pass https://10.1.90.149;" in blocks[1]
+        assert "proxy_pass https://10.1.90.150;" in blocks[2]
 
 
 class TestPathValidation:

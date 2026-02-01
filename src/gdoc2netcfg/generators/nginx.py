@@ -1,12 +1,23 @@
 """nginx reverse proxy configuration generator.
 
 Produces per-host nginx server blocks under sites-available/ and a
-shared ACME challenge snippet. Each host gets four config files:
+shared ACME challenge snippet. Each host gets four config file variants:
 
   - {fqdn}-http-public       HTTP, no auth
   - {fqdn}-http-private      HTTP, auth_basic
   - {fqdn}-https-public      HTTPS, no auth
   - {fqdn}-https-private     HTTPS, auth_basic
+
+Multi-interface hosts get a combined config file (per variant) containing:
+
+  - An upstream block listing all interface IPs for round-robin failover
+  - A root server block using the upstream with proxy_next_upstream
+    on error/timeout/502, with hostname-level DNS names
+  - A server block per named interface using direct proxy_pass to
+    that interface's IP, with interface-specific DNS names
+
+Single-interface hosts produce one set of four files with direct
+proxy_pass (no upstream block).
 
 The proxy_ssl_verify setting inside HTTPS configs is set based on the
 host's SSL cert status: "on" if there's a valid Let's Encrypt cert,
@@ -17,8 +28,68 @@ Admins activate configs via symlinks in sites-enabled/.
 
 from __future__ import annotations
 
-from gdoc2netcfg.models.host import NetworkInventory
+from gdoc2netcfg.models.host import DNSName, Host, NetworkInventory
 from gdoc2netcfg.utils.dns import is_safe_dns_name, is_safe_path
+
+
+def _is_nginx_name(dn: DNSName) -> bool:
+    """Check if a DNS name should appear in nginx configs.
+
+    Excludes IPv6-only names (ipv4 is None) since nginx proxies to
+    IPv4 backends, and names with unsafe characters.
+    """
+    return dn.ipv4 is not None and is_safe_dns_name(dn.name)
+
+
+def _partition_dns_names(
+    host: Host,
+) -> tuple[list[DNSName], dict[str, list[DNSName]]]:
+    """Partition a host's DNS names into root and per-interface groups.
+
+    Returns (root_names, iface_names) where:
+      - root_names: DNS names not specific to any named interface
+      - iface_names: dict mapping interface name → list of DNS names
+
+    A DNS name belongs to an interface group if it contains
+    "{iface_name}.{hostname}" — this matches Pass 2 names and their
+    Pass 3/4 derivatives.
+    """
+    named_ifaces = [iface for iface in host.interfaces if iface.name]
+
+    if not named_ifaces:
+        return list(host.dns_names), {}
+
+    iface_names: dict[str, list[DNSName]] = {
+        iface.name: [] for iface in named_ifaces
+    }
+    root_names: list[DNSName] = []
+
+    for dn in host.dns_names:
+        matched = False
+        for iface in named_ifaces:
+            marker = f"{iface.name}.{host.hostname}"
+            if marker in dn.name:
+                iface_names[iface.name].append(dn)
+                matched = True
+                break
+        if not matched:
+            root_names.append(dn)
+
+    return root_names, iface_names
+
+
+def _upstream_block(upstream_name: str, ips: list[str]) -> str:
+    """Generate an nginx upstream block for failover.
+
+    Lists all IPs as equal-weight servers for round-robin with
+    automatic failure detection.
+    """
+    lines = [f"upstream {upstream_name} {{"]
+    for ip in ips:
+        lines.append(f"    server {ip};")
+    lines.append("}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def generate_nginx(
@@ -46,17 +117,10 @@ def generate_nginx(
     for host in inventory.hosts_sorted():
         fqdns = [
             dn.name for dn in host.dns_names
-            if dn.is_fqdn and is_safe_dns_name(dn.name)
+            if dn.is_fqdn and _is_nginx_name(dn)
         ]
         if not fqdns:
             continue
-
-        primary_fqdn = fqdns[0]
-        all_names = [
-            dn.name for dn in host.dns_names
-            if is_safe_dns_name(dn.name)
-        ]
-        target_ip = str(host.default_ipv4)
 
         # Determine proxy_ssl_verify setting for HTTPS
         has_valid_cert = (
@@ -65,31 +129,190 @@ def generate_nginx(
             and not host.ssl_cert_info.self_signed
         )
 
-        # HTTP public
-        files[f"sites-available/{primary_fqdn}-http-public"] = _http_block(
-            all_names, target_ip, private=False,
-        )
+        if not host.is_multi_interface():
+            # Single-interface host: unchanged behaviour
+            primary_fqdn = fqdns[0]
+            all_names = [
+                dn.name for dn in host.dns_names
+                if _is_nginx_name(dn)
+            ]
+            target_ip = str(host.default_ipv4)
 
-        # HTTP private
-        files[f"sites-available/{primary_fqdn}-http-private"] = _http_block(
-            all_names, target_ip, private=True,
-            htpasswd_file=htpasswd_file,
-        )
+            _emit_four_files(
+                files, primary_fqdn, all_names, target_ip,
+                has_valid_cert, htpasswd_file,
+            )
+        else:
+            # Multi-interface host: single file per variant containing
+            # upstream block + root server block + per-interface server blocks
+            root_dns, iface_dns = _partition_dns_names(host)
 
-        # HTTPS public
-        files[f"sites-available/{primary_fqdn}-https-public"] = _https_block(
-            all_names, target_ip, primary_fqdn,
-            verify=has_valid_cert, private=False,
-        )
+            root_fqdns = [
+                dn.name for dn in root_dns
+                if dn.is_fqdn and _is_nginx_name(dn)
+            ]
+            if not root_fqdns:
+                continue
 
-        # HTTPS private
-        files[f"sites-available/{primary_fqdn}-https-private"] = _https_block(
-            all_names, target_ip, primary_fqdn,
-            verify=has_valid_cert, private=True,
-            htpasswd_file=htpasswd_file,
-        )
+            primary_fqdn = root_fqdns[0]
+            root_names = [
+                dn.name for dn in root_dns
+                if _is_nginx_name(dn)
+            ]
+
+            upstream_name = f"{primary_fqdn}-backend"
+            all_ips = [
+                str(iface.ipv4) for iface in host.interfaces
+            ]
+
+            # Collect per-interface (name_list, ip) pairs
+            iface_configs: list[tuple[list[str], str]] = []
+            for iface in host.interfaces:
+                if iface.name is None:
+                    continue
+                dns_for_iface = iface_dns.get(iface.name, [])
+                iface_names = [
+                    dn.name for dn in dns_for_iface
+                    if _is_nginx_name(dn)
+                ]
+                if not iface_names:
+                    continue
+                iface_configs.append((iface_names, str(iface.ipv4)))
+
+            _emit_combined_four_files(
+                files, primary_fqdn, root_names,
+                upstream_name, all_ips,
+                iface_configs,
+                has_valid_cert, htpasswd_file,
+            )
 
     return files
+
+
+def _emit_four_files(
+    files: dict[str, str],
+    primary_fqdn: str,
+    all_names: list[str],
+    target_ip: str,
+    has_valid_cert: bool,
+    htpasswd_file: str,
+) -> None:
+    """Emit the four config file variants for a single-interface host."""
+    files[f"sites-available/{primary_fqdn}-http-public"] = _http_block(
+        all_names, target_ip, private=False,
+    )
+    files[f"sites-available/{primary_fqdn}-http-private"] = _http_block(
+        all_names, target_ip, private=True, htpasswd_file=htpasswd_file,
+    )
+    files[f"sites-available/{primary_fqdn}-https-public"] = _https_block(
+        all_names, target_ip, primary_fqdn,
+        verify=has_valid_cert, private=False,
+    )
+    files[f"sites-available/{primary_fqdn}-https-private"] = _https_block(
+        all_names, target_ip, primary_fqdn,
+        verify=has_valid_cert, private=True, htpasswd_file=htpasswd_file,
+    )
+
+
+def _emit_combined_four_files(
+    files: dict[str, str],
+    primary_fqdn: str,
+    root_names: list[str],
+    upstream_name: str,
+    all_ips: list[str],
+    iface_configs: list[tuple[list[str], str]],
+    has_valid_cert: bool,
+    htpasswd_file: str,
+) -> None:
+    """Emit four config files for a multi-interface host.
+
+    Each file contains the upstream block, the root server block
+    (using upstream failover), and one server block per named
+    interface (using direct proxy_pass) — all in the same file.
+    """
+    upstream_text = _upstream_block(upstream_name, all_ips)
+
+    for suffix, builder in _VARIANT_BUILDERS:
+        parts = [upstream_text]
+
+        # Root server block (upstream failover)
+        parts.append(builder(
+            root_names, primary_fqdn,
+            has_valid_cert, htpasswd_file,
+            upstream_name=upstream_name,
+        ))
+
+        # Per-interface server blocks (direct proxy_pass)
+        for iface_names, iface_ip in iface_configs:
+            parts.append(builder(
+                iface_names, primary_fqdn,
+                has_valid_cert, htpasswd_file,
+                target_ip=iface_ip,
+            ))
+
+        files[f"sites-available/{primary_fqdn}-{suffix}"] = "\n".join(parts)
+
+
+def _build_http_public(
+    names: list[str],
+    primary_fqdn: str,
+    has_valid_cert: bool,
+    htpasswd_file: str,
+    upstream_name: str = "",
+    target_ip: str = "",
+) -> str:
+    return _http_block(names, target_ip, private=False, upstream_name=upstream_name)
+
+
+def _build_http_private(
+    names: list[str],
+    primary_fqdn: str,
+    has_valid_cert: bool,
+    htpasswd_file: str,
+    upstream_name: str = "",
+    target_ip: str = "",
+) -> str:
+    return _http_block(
+        names, target_ip, private=True,
+        htpasswd_file=htpasswd_file, upstream_name=upstream_name,
+    )
+
+
+def _build_https_public(
+    names: list[str],
+    primary_fqdn: str,
+    has_valid_cert: bool,
+    htpasswd_file: str,
+    upstream_name: str = "",
+    target_ip: str = "",
+) -> str:
+    return _https_block(
+        names, target_ip, primary_fqdn,
+        verify=has_valid_cert, private=False, upstream_name=upstream_name,
+    )
+
+
+def _build_https_private(
+    names: list[str],
+    primary_fqdn: str,
+    has_valid_cert: bool,
+    htpasswd_file: str,
+    upstream_name: str = "",
+    target_ip: str = "",
+) -> str:
+    return _https_block(
+        names, target_ip, primary_fqdn,
+        verify=has_valid_cert, private=True,
+        htpasswd_file=htpasswd_file, upstream_name=upstream_name,
+    )
+
+
+_VARIANT_BUILDERS = [
+    ("http-public", _build_http_public),
+    ("http-private", _build_http_private),
+    ("https-public", _build_https_public),
+    ("https-private", _build_https_private),
+]
 
 
 def _acme_challenge_snippet(acme_webroot: str) -> str:
@@ -113,8 +336,13 @@ def _http_block(
     target_ip: str,
     private: bool,
     htpasswd_file: str = "",
+    upstream_name: str = "",
 ) -> str:
-    """Generate an HTTP (port 80) server block."""
+    """Generate an HTTP (port 80) server block.
+
+    When upstream_name is set, proxy_pass targets the upstream and
+    proxy_next_upstream is added for failover.
+    """
     lines = [
         "server {",
         "    listen 80;",
@@ -130,8 +358,13 @@ def _http_block(
         lines.append('        auth_basic "Restricted";')
         lines.append(f"        auth_basic_user_file {htpasswd_file};")
 
+    if upstream_name:
+        lines.append(f"        proxy_pass http://{upstream_name};")
+        lines.append("        proxy_next_upstream error timeout http_502;")
+    else:
+        lines.append(f"        proxy_pass http://{target_ip};")
+
     lines.extend([
-        f"        proxy_pass http://{target_ip};",
         "        proxy_set_header Host $host;",
         "        proxy_set_header X-Real-IP $remote_addr;",
         "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
@@ -150,8 +383,13 @@ def _https_block(
     verify: bool,
     private: bool,
     htpasswd_file: str = "",
+    upstream_name: str = "",
 ) -> str:
-    """Generate an HTTPS (port 443) server block."""
+    """Generate an HTTPS (port 443) server block.
+
+    When upstream_name is set, proxy_pass targets the upstream and
+    proxy_next_upstream is added for failover.
+    """
     verify_str = "on" if verify else "off"
 
     lines = [
@@ -172,8 +410,13 @@ def _https_block(
         lines.append('        auth_basic "Restricted";')
         lines.append(f"        auth_basic_user_file {htpasswd_file};")
 
+    if upstream_name:
+        lines.append(f"        proxy_pass https://{upstream_name};")
+        lines.append("        proxy_next_upstream error timeout http_502;")
+    else:
+        lines.append(f"        proxy_pass https://{target_ip};")
+
     lines.extend([
-        f"        proxy_pass https://{target_ip};",
         f"        proxy_ssl_verify {verify_str};",
         "        proxy_set_header Host $host;",
         "        proxy_set_header X-Real-IP $remote_addr;",
