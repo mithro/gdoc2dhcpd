@@ -6,6 +6,7 @@ Subcommands:
     validate   Run constraint checks on the data.
     info       Show pipeline configuration.
     sshfp      Scan hosts for SSH fingerprints.
+    snmp       Scan hosts for SNMP data.
 """
 
 from __future__ import annotations
@@ -97,6 +98,7 @@ def _build_pipeline(config):
     from gdoc2netcfg.constraints.validators import validate_all
     from gdoc2netcfg.derivations.host_builder import build_hosts, build_inventory
     from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.snmp import enrich_hosts_with_snmp, load_snmp_cache
     from gdoc2netcfg.supplements.sshfp import enrich_hosts_with_sshfp, load_sshfp_cache
     from gdoc2netcfg.supplements.ssl_certs import enrich_hosts_with_ssl_certs, load_ssl_cert_cache
 
@@ -133,6 +135,11 @@ def _build_pipeline(config):
     ssl_cache = Path(config.cache.directory) / "ssl_certs.json"
     ssl_data = load_ssl_cert_cache(ssl_cache)
     enrich_hosts_with_ssl_certs(hosts, ssl_data)
+
+    # Load SNMP cache and enrich (don't scan — that's a separate subcommand)
+    snmp_cache = Path(config.cache.directory) / "snmp.json"
+    snmp_data = load_snmp_cache(snmp_cache)
+    enrich_hosts_with_snmp(hosts, snmp_data)
 
     # Validate
     result = validate_all(all_records, hosts, inventory)
@@ -462,6 +469,67 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: snmp
+# ---------------------------------------------------------------------------
+
+def cmd_snmp(args: argparse.Namespace) -> int:
+    """Scan hosts for SNMP data."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.constraints.snmp_validation import validate_snmp_availability
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
+    from gdoc2netcfg.supplements.snmp import (
+        enrich_hosts_with_snmp,
+        scan_snmp,
+    )
+
+    # Minimal pipeline to get hosts with IPs
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    # Run shared reachability pass
+    print("Checking host reachability...", file=sys.stderr)
+    reachability = check_all_hosts_reachability(hosts, verbose=True)
+
+    cache_path = Path(config.cache.directory) / "snmp.json"
+    print("\nScanning SNMP...", file=sys.stderr)
+    snmp_data = scan_snmp(
+        hosts,
+        cache_path=cache_path,
+        force=args.force,
+        verbose=True,
+        reachability=reachability,
+    )
+
+    enrich_hosts_with_snmp(hosts, snmp_data)
+
+    # Run validation
+    validation_result = validate_snmp_availability(hosts, reachability)
+
+    # Report
+    hosts_with_snmp = sum(1 for h in hosts if h.snmp_data is not None)
+    hosts_up = sum(1 for r in reachability.values() if r.is_up)
+    print(f"\nSNMP data for {hosts_with_snmp}/{len(hosts)} hosts "
+          f"({hosts_up} reachable).")
+
+    if validation_result.violations:
+        print()
+        print(validation_result.report())
+
+    return 1 if validation_result.has_errors else 0
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -520,6 +588,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Force re-scan even if cache is fresh",
     )
 
+    # snmp
+    snmp_parser = subparsers.add_parser("snmp", help="Scan hosts for SNMP data")
+    snmp_parser.add_argument(
+        "--force", action="store_true",
+        help="Force re-scan even if cache is fresh",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -533,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
         "info": cmd_info,
         "sshfp": cmd_sshfp,
         "ssl-certs": cmd_ssl_certs,
+        "snmp": cmd_snmp,
     }
 
     return commands[args.command](args)
