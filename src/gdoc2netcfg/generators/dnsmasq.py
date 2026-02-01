@@ -7,7 +7,9 @@ Produces per-host dnsmasq config files, each containing:
 - SSHFP records (dns-rr type 44)
 - CAA records (dns-rr type 257)
 
-Extracted from dnsmasq.py.
+The DNS record sections (host-record, CAA, SSHFP) use the shared code
+path in dnsmasq_common with an identity IPv4 transform. DHCP and PTR
+are internal-only sections.
 """
 
 from __future__ import annotations
@@ -15,6 +17,11 @@ from __future__ import annotations
 from collections import defaultdict
 
 from gdoc2netcfg.derivations.dns_names import common_suffix
+from gdoc2netcfg.generators.dnsmasq_common import (
+    identity_ipv4,
+    sections_to_text,
+    shared_dns_sections,
+)
 from gdoc2netcfg.models.host import Host, NetworkInventory
 from gdoc2netcfg.utils.ip import ip_sort_key
 
@@ -37,15 +44,8 @@ def _generate_host_internal(host: Host, inventory: NetworkInventory) -> str:
     sections = [
         _host_dhcp_config(host, inventory),
         _host_ptr_config(host, inventory),
-        _host_record_config(host, inventory),
-        _host_caa_config(host, inventory),
-        _host_sshfp_records(host, inventory),
-    ]
-    # Filter out empty sections, join with blank line separators
-    non_empty = [s for s in sections if s]
-    if not non_empty:
-        return ""
-    return "\n\n".join("\n".join(s) for s in non_empty) + "\n"
+    ] + shared_dns_sections(host, inventory, identity_ipv4)
+    return sections_to_text(sections)
 
 
 def _host_dhcp_config(host: Host, inventory: NetworkInventory) -> list[str]:
@@ -95,80 +95,6 @@ def _host_ptr_config(host: Host, inventory: NetworkInventory) -> list[str]:
         for ipv6_str in _ipv6_for_ip(ip, inventory):
             ptr = _ipv6_to_ptr(ipv6_str)
             output.append(f"ptr-record={ptr},{hostname}.{domain}")
-
-    return output
-
-
-def _host_record_config(host: Host, inventory: NetworkInventory) -> list[str]:
-    """Generate host-record entries for forward DNS for a single host.
-
-    Uses the precomputed host.dns_names list from the DNS name derivation
-    pipeline, which includes:
-    - Hostname and interface FQDNs
-    - Subdomain variants
-    - ipv4./ipv6. prefix variants for all dual-stack names
-    """
-    domain = inventory.site.domain
-    if not host.dns_names:
-        return []
-
-    output: list[str] = []
-
-    for dns_name in host.dns_names:
-        # Skip short names except for the bare hostname
-        if not dns_name.is_fqdn and dns_name.name != host.hostname:
-            continue
-
-        addrs: list[str] = []
-        if dns_name.ipv4:
-            addrs.append(str(dns_name.ipv4))
-        addrs.extend(str(a) for a in dns_name.ipv6_addresses)
-
-        if not addrs:
-            continue
-
-        output.append(f"host-record={dns_name.name},{','.join(addrs)}")
-
-    return output
-
-
-def _host_caa_config(host: Host, inventory: NetworkInventory) -> list[str]:
-    """Generate CAA record for Let's Encrypt on the primary FQDN."""
-    domain = inventory.site.domain
-    return [
-        f"dns-rr={host.hostname}.{domain},"
-        f"257,000569737375656C657473656E63727970742E6F7267"
-    ]
-
-
-def _host_sshfp_records(host: Host, inventory: NetworkInventory) -> list[str]:
-    """Generate SSHFP DNS records (RR type 44) for a single host."""
-    if not host.sshfp_records:
-        return []
-
-    domain = inventory.site.domain
-    output: list[str] = []
-
-    def _records(dnsname: str) -> None:
-        output.append(f"# sshfp for {dnsname}")
-        for line in host.sshfp_records:
-            if line.startswith(";"):
-                continue
-            parts = line.split()
-            if len(parts) >= 6:
-                _, a, b, c, d, e = parts[:6]
-                output.append(f"dns-rr={dnsname},44,{c}:{d}:{e}")
-
-    _records(f"{host.hostname}.{domain}")
-
-    for iface in host.interfaces:
-        if iface.name:
-            _records(f"{iface.name}.{host.hostname}.{domain}")
-
-    for iface in host.interfaces:
-        ip_str = str(iface.ipv4)
-        ptr = ".".join(ip_str.split(".")[::-1]) + ".in-addr.arpa"
-        _records(ptr)
 
     return output
 
