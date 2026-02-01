@@ -59,6 +59,27 @@ class SSLCertInfo:
     sans: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class SNMPData:
+    """SNMP data collected from a host.
+
+    Populated by the snmp supplement after querying SNMP agents.
+
+    Attributes:
+        snmp_version: Protocol version used ("v1", "v2c", or "v3").
+        system_info: System group values (sysDescr, sysName, sysUpTime, etc.).
+        interfaces: ifTable rows as list of dicts.
+        ip_addresses: ipAddrTable rows as list of dicts.
+        raw: All collected OID→value pairs for extensibility.
+    """
+
+    snmp_version: str
+    system_info: dict[str, str] = field(default_factory=dict)
+    interfaces: tuple[dict[str, str], ...] = ()
+    ip_addresses: tuple[dict[str, str], ...] = ()
+    raw: dict[str, str] = field(default_factory=dict)
+
+
 @dataclass
 class Host:
     """A logical host with one or more network interfaces.
@@ -87,6 +108,7 @@ class Host:
     dns_names: list[DNSName] = field(default_factory=list)
     hardware_type: str | None = None
     ssl_cert_info: SSLCertInfo | None = None
+    snmp_data: SNMPData | None = None
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:
