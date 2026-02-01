@@ -15,6 +15,7 @@ from gdoc2netcfg.constraints.errors import (
     ValidationResult,
 )
 from gdoc2netcfg.derivations.ipv6 import ipv4_to_ipv6_list
+from gdoc2netcfg.derivations.vlan import ip_to_vlan_id
 from gdoc2netcfg.models.addressing import IPv4Address
 from gdoc2netcfg.models.host import Host, NetworkInventory
 from gdoc2netcfg.models.network import Site
@@ -169,16 +170,19 @@ def validate_ipv6_consistency(
 # Record Constraints (on Hosts after derivations)
 # ---------------------------------------------------------------------------
 
-def validate_record_constraints(hosts: list[Host]) -> ValidationResult:
+def validate_record_constraints(hosts: list[Host], site: Site) -> ValidationResult:
     """Validate record-level constraints on derived Host objects.
 
     Checks:
     - DHCP names must match [a-z0-9.\\-_]+ pattern
-    - BMC hosts must be on Network Management network (10.1.5.X)
-      unless they are test-hardware (10.41.X.X)
-    - Test-hardware BMCs (10.41.X.X) must be on 10.X.1.X subnet
+    - BMC hosts must be on Network Management network (e.g. 10.1.5.X)
+      unless they are on a global VLAN (e.g. 10.41.X.X)
+    - Global-VLAN BMCs must be on the 10.X.1.X subnet
     """
     result = ValidationResult()
+
+    # Derive the management network prefix from the site config
+    net_prefix = site.ip_prefix_for_vlan("net")
 
     for host in hosts:
         for iface in host.interfaces:
@@ -198,29 +202,35 @@ def validate_record_constraints(hosts: list[Host]) -> ValidationResult:
             # BMC placement validation
             if iface.name and "bmc" in iface.name.lower():
                 ip_str = str(iface.ipv4)
+                a, b, c, d = iface.ipv4.octets
 
-                if ip_str.startswith("10.41."):
-                    # Test-hardware BMC: must be on 10.X.1.X subnet
-                    third_octet = iface.ipv4.octets[2]
-                    if third_octet != 1:
+                # Check if BMC is on a global VLAN (second octet != site_octet)
+                is_on_global_vlan = a == 10 and any(
+                    v.is_global and b == v.id
+                    for v in site.vlans.values()
+                )
+
+                if is_on_global_vlan:
+                    # Global-VLAN BMC: must be on 10.X.1.X subnet
+                    if c != 1:
                         result.add(ConstraintViolation(
                             severity=Severity.ERROR,
                             code="bmc_wrong_subnet",
                             message=(
                                 f"Test-hardware BMC must be on 10.X.1.X subnet! "
-                                f"{iface.dhcp_name} has IP {ip_str}, expected 10.41.1.X"
+                                f"{iface.dhcp_name} has IP {ip_str}, expected 10.{b}.1.X"
                             ),
                             record_id=host.hostname,
                             field="ip",
                         ))
-                elif not ip_str.startswith("10.1.5."):
-                    # Regular BMC: must be on Network Management (10.1.5.X)
+                elif net_prefix and not ip_str.startswith(net_prefix):
+                    # Regular BMC: must be on Network Management
                     result.add(ConstraintViolation(
                         severity=Severity.ERROR,
                         code="bmc_not_management",
                         message=(
                             f"BMC not on Network Management network! "
-                            f"{iface.dhcp_name} has IP {ip_str}, expected 10.1.5.X"
+                            f"{iface.dhcp_name} has IP {ip_str}, expected {net_prefix}X"
                         ),
                         record_id=host.hostname,
                         field="ip",
@@ -241,6 +251,9 @@ def validate_cross_record_constraints(inventory: NetworkInventory) -> Validation
     - IP address uniqueness (multiple MACs on same IP only in roaming range)
     """
     result = ValidationResult()
+
+    # Derive roaming prefix from site config
+    roam_prefix = inventory.site.ip_prefix_for_vlan("roam")
 
     # MAC → IP uniqueness
     mac_to_ips: dict[str, list[tuple[str, str]]] = {}  # mac → [(ip, dhcp_name)]
@@ -264,9 +277,10 @@ def validate_cross_record_constraints(inventory: NetworkInventory) -> Validation
                 field="mac_address",
             ))
 
-    # Multiple MACs per IP: only allowed in roaming range (10.1.20.X)
+    # Multiple MACs per IP: only allowed in roaming range
     for ip_str, macs in inventory.ip_to_macs.items():
-        if len(macs) > 1 and not ip_str.startswith("10.1.20."):
+        is_roaming = roam_prefix and ip_str.startswith(roam_prefix)
+        if len(macs) > 1 and not is_roaming:
             mac_list = ", ".join(f"{mac} ({name})" for mac, name in macs)
             result.add(ConstraintViolation(
                 severity=Severity.ERROR,
@@ -276,6 +290,55 @@ def validate_cross_record_constraints(inventory: NetworkInventory) -> Validation
                 ),
                 record_id=ip_str,
                 field="ip",
+            ))
+
+    return result
+
+
+def validate_vlan_consistency(
+    records: list[DeviceRecord], site: Site
+) -> ValidationResult:
+    """Validate that the spreadsheet VLAN column matches the IP-derived VLAN.
+
+    For each record with a 'VLAN' extra column, derives the expected VLAN
+    from the IP address and checks for mismatches. Skips non-numeric VLAN
+    values (e.g. 'N/A', 'Q', empty).
+    """
+    result = ValidationResult()
+
+    for record in records:
+        if not record.ip:
+            continue
+
+        vlan_str = record.extra.get("VLAN", "").strip()
+        if not vlan_str:
+            continue
+
+        # Skip non-numeric VLAN values
+        try:
+            sheet_vlan = int(vlan_str)
+        except ValueError:
+            continue
+
+        record_id = f"{record.sheet_name}:{record.row_number}"
+
+        try:
+            ipv4 = IPv4Address(record.ip)
+        except ValueError:
+            continue
+
+        derived_vlan = ip_to_vlan_id(ipv4, site)
+        if derived_vlan is not None and derived_vlan != sheet_vlan:
+            result.add(ConstraintViolation(
+                severity=Severity.ERROR,
+                code="vlan_mismatch",
+                message=(
+                    f"VLAN mismatch: spreadsheet says VLAN {sheet_vlan}, "
+                    f"IP {record.ip} maps to VLAN {derived_vlan} "
+                    f"(machine={record.machine!r}, iface={record.interface!r})"
+                ),
+                record_id=record_id,
+                field="VLAN",
             ))
 
     return result
@@ -295,7 +358,8 @@ def validate_all(
     for result in [
         validate_field_constraints(records),
         validate_ipv6_consistency(records, inventory.site),
-        validate_record_constraints(hosts),
+        validate_vlan_consistency(records, inventory.site),
+        validate_record_constraints(hosts, inventory.site),
         validate_cross_record_constraints(inventory),
     ]:
         for violation in result.violations:

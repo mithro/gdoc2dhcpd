@@ -4,23 +4,24 @@ Extracted from the assertions in dnsmasq.py:get_data(), get_mac_info(),
 and dhcp_host_config().
 """
 
-from gdoc2netcfg.constraints.errors import Severity
 from gdoc2netcfg.constraints.validators import (
     validate_cross_record_constraints,
     validate_field_constraints,
     validate_ipv6_consistency,
     validate_record_constraints,
+    validate_vlan_consistency,
 )
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface, NetworkInventory
-from gdoc2netcfg.models.network import IPv6Prefix, Site
+from gdoc2netcfg.models.network import VLAN, IPv6Prefix, Site
 from gdoc2netcfg.sources.parser import DeviceRecord
 
 
-def _record(machine="desktop", mac="aa:bb:cc:dd:ee:ff", ip="10.1.10.1"):
+def _record(machine="desktop", mac="aa:bb:cc:dd:ee:ff", ip="10.1.10.1", extra=None):
     return DeviceRecord(
         sheet_name="Network", row_number=2,
         machine=machine, mac_address=mac, ip=ip,
+        extra=extra or {},
     )
 
 
@@ -41,7 +42,18 @@ def _iface(name=None, mac="aa:bb:cc:dd:ee:ff", ip="10.1.10.1", dhcp_name="test")
     )
 
 
-SITE = Site(name="welland", domain="welland.mithis.com")
+# Site with VLANs configured for validator tests
+SITE = Site(
+    name="welland",
+    domain="welland.mithis.com",
+    site_octet=1,
+    vlans={
+        5: VLAN(id=5, name="net", subdomain="net", third_octets=(5,)),
+        10: VLAN(id=10, name="int", subdomain="int", third_octets=(8, 9, 10, 11, 12, 13, 14, 15)),
+        20: VLAN(id=20, name="roam", subdomain="roam", third_octets=(20,)),
+        41: VLAN(id=41, name="sm", subdomain="sm", is_global=True),
+    },
+)
 
 
 class TestFieldConstraints:
@@ -77,23 +89,23 @@ class TestFieldConstraints:
 class TestRecordConstraints:
     def test_valid_host(self):
         host = _host("server", [_iface(name="eth0", dhcp_name="eth0-server")])
-        result = validate_record_constraints([host])
+        result = validate_record_constraints([host], SITE)
         assert result.is_valid
 
     def test_invalid_dhcp_name(self):
         host = _host("server", [_iface(dhcp_name="bad name!")])
-        result = validate_record_constraints([host])
+        result = validate_record_constraints([host], SITE)
         assert result.has_errors
         assert result.errors[0].code == "invalid_dhcp_name"
 
     def test_valid_dhcp_name_with_dots(self):
         host = _host("cam", [_iface(dhcp_name="camera.iot")])
-        result = validate_record_constraints([host])
+        result = validate_record_constraints([host], SITE)
         assert result.is_valid
 
     def test_valid_dhcp_name_with_dashes_underscores(self):
         host = _host("srv", [_iface(dhcp_name="eth0-my_server")])
-        result = validate_record_constraints([host])
+        result = validate_record_constraints([host], SITE)
         assert result.is_valid
 
     def test_bmc_on_management_network(self):
@@ -101,7 +113,7 @@ class TestRecordConstraints:
         host = _host("server", [
             _iface(name="bmc", ip="10.1.5.200", dhcp_name="bmc-server"),
         ])
-        result = validate_record_constraints([host])
+        result = validate_record_constraints([host], SITE)
         assert result.is_valid
 
     def test_bmc_not_on_management_network(self):
@@ -109,16 +121,16 @@ class TestRecordConstraints:
         host = _host("server", [
             _iface(name="bmc", ip="10.1.10.200", dhcp_name="bmc-server"),
         ])
-        result = validate_record_constraints([host])
+        result = validate_record_constraints([host], SITE)
         assert result.has_errors
         assert result.errors[0].code == "bmc_not_management"
 
     def test_test_hardware_bmc_correct_subnet(self):
-        """Test-hardware BMC on 10.41.1.X is valid."""
+        """Test-hardware BMC on 10.41.1.X is valid (global VLAN)."""
         host = _host("board", [
             _iface(name="bmc", ip="10.41.1.200", dhcp_name="bmc-board"),
         ])
-        result = validate_record_constraints([host])
+        result = validate_record_constraints([host], SITE)
         assert result.is_valid
 
     def test_test_hardware_bmc_wrong_subnet(self):
@@ -126,7 +138,7 @@ class TestRecordConstraints:
         host = _host("board", [
             _iface(name="bmc", ip="10.41.2.200", dhcp_name="bmc-board"),
         ])
-        result = validate_record_constraints([host])
+        result = validate_record_constraints([host], SITE)
         assert result.has_errors
         assert result.errors[0].code == "bmc_wrong_subnet"
 
@@ -135,8 +147,32 @@ class TestRecordConstraints:
         host = _host("server", [
             _iface(name="eth0", ip="10.1.10.200", dhcp_name="eth0-server"),
         ])
-        result = validate_record_constraints([host])
+        result = validate_record_constraints([host], SITE)
         assert result.is_valid
+
+    def test_bmc_monarto_uses_site_prefix(self):
+        """BMC check uses site-derived prefix (10.2.5.X for Monarto)."""
+        monarto = Site(
+            name="monarto",
+            domain="monarto.mithis.com",
+            site_octet=2,
+            vlans={
+                5: VLAN(id=5, name="net", subdomain="net", third_octets=(5,)),
+            },
+        )
+        host = _host("server", [
+            _iface(name="bmc", ip="10.2.5.200", dhcp_name="bmc-server"),
+        ])
+        result = validate_record_constraints([host], monarto)
+        assert result.is_valid
+
+        # 10.1.5.X is NOT valid for Monarto
+        host2 = _host("server2", [
+            _iface(name="bmc", ip="10.1.5.200", dhcp_name="bmc-server2"),
+        ])
+        result2 = validate_record_constraints([host2], monarto)
+        assert result2.has_errors
+        assert result2.errors[0].code == "bmc_not_management"
 
 
 class TestCrossRecordConstraints:
@@ -212,6 +248,7 @@ class TestCrossRecordConstraints:
 IPV6_SITE = Site(
     name="welland",
     domain="welland.mithis.com",
+    site_octet=1,
     ipv6_prefixes=[
         IPv6Prefix(prefix="2404:e80:a137:", enabled=True),
         IPv6Prefix(prefix="2001:470:82b3:", enabled=False),
@@ -287,3 +324,81 @@ class TestIPv6Consistency:
         result = validate_ipv6_consistency([record], IPV6_SITE)
         assert len(result.warnings) == 1
         assert result.warnings[0].code == "ipv6_no_algorithmic"
+
+
+# VLAN consistency site: needs VLANs configured for ip_to_vlan_id
+VLAN_SITE = Site(
+    name="welland",
+    domain="welland.mithis.com",
+    site_octet=1,
+    vlans={
+        5: VLAN(id=5, name="net", subdomain="net", third_octets=(5,)),
+        10: VLAN(id=10, name="int", subdomain="int", third_octets=(8, 9, 10, 11, 12, 13, 14, 15)),
+        20: VLAN(id=20, name="roam", subdomain="roam", third_octets=(20,)),
+    },
+)
+
+
+class TestVlanConsistency:
+    def test_matching_vlan_no_violations(self):
+        """VLAN column matching IP-derived VLAN produces no violations."""
+        record = _record(ip="10.1.10.1", extra={"VLAN": "10"})
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        assert result.is_valid
+
+    def test_mismatched_vlan_is_error(self):
+        """VLAN column differing from IP-derived VLAN is an error."""
+        record = _record(ip="10.1.10.1", extra={"VLAN": "20"})
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        assert result.has_errors
+        assert result.errors[0].code == "vlan_mismatch"
+
+    def test_skips_empty_vlan(self):
+        """Empty VLAN column is not checked."""
+        record = _record(ip="10.1.10.1", extra={"VLAN": ""})
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        assert result.is_valid
+
+    def test_skips_na_vlan(self):
+        """Non-numeric VLAN value 'N/A' is skipped."""
+        record = _record(ip="10.1.10.1", extra={"VLAN": "N/A"})
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        assert result.is_valid
+
+    def test_skips_q_vlan(self):
+        """Non-numeric VLAN value 'Q' is skipped."""
+        record = _record(ip="10.1.10.1", extra={"VLAN": "Q"})
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        assert result.is_valid
+
+    def test_no_vlan_column(self):
+        """Records without a VLAN column produce no violations."""
+        record = _record(ip="10.1.10.1")
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        assert result.is_valid
+
+    def test_no_ip_skipped(self):
+        """Records without an IP are skipped."""
+        record = _record(ip="", extra={"VLAN": "10"})
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        assert result.is_valid
+
+    def test_unknown_ip_no_error(self):
+        """IP that doesn't map to any VLAN does not produce mismatch error."""
+        record = _record(ip="10.1.50.1", extra={"VLAN": "10"})
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        # derived_vlan is None, so no mismatch
+        assert result.is_valid
+
+    def test_net_vlan_match(self):
+        """VLAN 5 on 10.1.5.X is valid."""
+        record = _record(ip="10.1.5.100", extra={"VLAN": "5"})
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        assert result.is_valid
+
+    def test_net_vlan_mismatch(self):
+        """VLAN 10 on 10.1.5.X (actually VLAN 5) is an error."""
+        record = _record(ip="10.1.5.100", extra={"VLAN": "10"})
+        result = validate_vlan_consistency([record], VLAN_SITE)
+        assert result.has_errors
+        assert result.errors[0].code == "vlan_mismatch"
