@@ -53,10 +53,10 @@ disabled_prefixes = [
 enabled = ["dnsmasq_internal", "dnsmasq_external", "nagios"]
 
 [generators.dnsmasq_internal]
-output = "internal/dnsmasq.internal.conf"
+output_dir = "internal"
 
 [generators.dnsmasq_external]
-output = "external/dnsmasq.external.conf"
+output_dir = "external"
 
 [generators.nagios]
 output = "nagios-switches.cfg"
