@@ -16,7 +16,11 @@ import time
 from pathlib import Path
 
 from gdoc2netcfg.models.host import Host
-from gdoc2netcfg.supplements.reachability import check_port_open, check_reachable
+from gdoc2netcfg.supplements.reachability import (
+    HostReachability,
+    check_port_open,
+    check_reachable,
+)
 
 
 def _keyscan(ip: str, hostname: str) -> list[str]:
@@ -59,6 +63,7 @@ def scan_sshfp(
     force: bool = False,
     max_age: float = 300,
     verbose: bool = False,
+    reachability: dict[str, HostReachability] | None = None,
 ) -> dict[str, list[str]]:
     """Scan hosts for SSH fingerprints.
 
@@ -68,6 +73,8 @@ def scan_sshfp(
         force: Force re-scan even if cache is fresh.
         max_age: Maximum cache age in seconds (default 5 minutes).
         verbose: Print progress to stdout.
+        reachability: Pre-computed reachability data. When provided,
+            uses active IPs from this instead of pinging each host.
 
     Returns:
         Mapping of hostname → list of SSHFP record lines.
@@ -88,17 +95,25 @@ def scan_sshfp(
         if verbose:
             print(f"  {host.hostname:>20s} ", end="", flush=True, file=sys.stderr)
 
-        # Ping all IPs to find active ones
-        active_ips = []
-        for iface in host.interfaces:
-            ip_str = str(iface.ipv4)
-            if check_reachable(ip_str):
-                active_ips.append(ip_str)
+        # Use pre-computed reachability if available, otherwise ping
+        if reachability is not None:
+            host_reach = reachability.get(host.hostname)
+            if host_reach is None or not host_reach.is_up:
+                if verbose:
+                    print("down", file=sys.stderr)
+                continue
+            active_ips = list(host_reach.active_ips)
+        else:
+            active_ips = []
+            for iface in host.interfaces:
+                ip_str = str(iface.ipv4)
+                if check_reachable(ip_str):
+                    active_ips.append(ip_str)
 
-        if not active_ips:
-            if verbose:
-                print("down", file=sys.stderr)
-            continue
+            if not active_ips:
+                if verbose:
+                    print("down", file=sys.stderr)
+                continue
 
         if verbose:
             print(f"up({','.join(active_ips)}) ", end="", flush=True, file=sys.stderr)

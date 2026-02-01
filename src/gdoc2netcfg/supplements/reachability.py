@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import socket
 import subprocess
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gdoc2netcfg.models.host import Host
 
 
 def check_reachable(ip: str, packets: int = 5) -> bool:
@@ -48,3 +53,63 @@ def check_port_open(ip: str, port: int, timeout: float = 0.5) -> bool:
         return sock.connect_ex((ip, port)) == 0
     finally:
         sock.close()
+
+
+@dataclass(frozen=True)
+class HostReachability:
+    """Pre-computed reachability state for a single host.
+
+    Stores which IPs responded to ping so multiple supplements can
+    skip redundant per-host ping loops.
+    """
+
+    hostname: str
+    active_ips: tuple[str, ...] = ()
+    is_up: bool = False
+
+
+def check_all_hosts_reachability(
+    hosts: list[Host],
+    verbose: bool = False,
+) -> dict[str, HostReachability]:
+    """Ping all IPs for each host and return reachability state.
+
+    Iterates hosts sorted by reversed hostname (matching existing
+    supplement sort order). For each host, pings every interface IP
+    and records which responded.
+
+    Args:
+        hosts: Host objects with IPs to check.
+        verbose: Print progress to stderr.
+
+    Returns:
+        Mapping of hostname to HostReachability.
+    """
+    import sys
+
+    result: dict[str, HostReachability] = {}
+
+    for host in sorted(hosts, key=lambda h: h.hostname.split(".")[::-1]):
+        if verbose:
+            print(f"  {host.hostname:>20s} ", end="", flush=True, file=sys.stderr)
+
+        active_ips = []
+        for iface in host.interfaces:
+            ip_str = str(iface.ipv4)
+            if check_reachable(ip_str):
+                active_ips.append(ip_str)
+
+        is_up = len(active_ips) > 0
+        result[host.hostname] = HostReachability(
+            hostname=host.hostname,
+            active_ips=tuple(active_ips),
+            is_up=is_up,
+        )
+
+        if verbose:
+            if is_up:
+                print(f"up({','.join(active_ips)})", file=sys.stderr)
+            else:
+                print("down", file=sys.stderr)
+
+    return result

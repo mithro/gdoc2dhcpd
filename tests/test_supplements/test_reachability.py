@@ -2,7 +2,14 @@
 
 from unittest.mock import patch
 
-from gdoc2netcfg.supplements.reachability import check_port_open, check_reachable
+from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
+from gdoc2netcfg.models.host import Host, NetworkInterface
+from gdoc2netcfg.supplements.reachability import (
+    HostReachability,
+    check_all_hosts_reachability,
+    check_port_open,
+    check_reachable,
+)
 
 
 class TestCheckReachable:
@@ -68,3 +75,115 @@ class TestCheckPortOpen:
         except OSError:
             pass
         mock_sock.close.assert_called_once()
+
+
+def _make_host(hostname, ip):
+    return Host(
+        machine_name=hostname,
+        hostname=hostname,
+        interfaces=[
+            NetworkInterface(
+                name=None,
+                mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
+                ipv4=IPv4Address(ip),
+            )
+        ],
+        default_ipv4=IPv4Address(ip),
+    )
+
+
+def _make_multi_iface_host(hostname, ips):
+    ifaces = [
+        NetworkInterface(
+            name=f"eth{i}",
+            mac=MACAddress.parse(f"aa:bb:cc:dd:ee:{i:02x}"),
+            ipv4=IPv4Address(ip),
+        )
+        for i, ip in enumerate(ips)
+    ]
+    return Host(
+        machine_name=hostname,
+        hostname=hostname,
+        interfaces=ifaces,
+        default_ipv4=IPv4Address(ips[0]),
+    )
+
+
+class TestHostReachability:
+    def test_frozen(self):
+        hr = HostReachability(hostname="server", active_ips=("10.1.10.1",), is_up=True)
+        assert hr.hostname == "server"
+        assert hr.active_ips == ("10.1.10.1",)
+        assert hr.is_up is True
+
+    def test_defaults(self):
+        hr = HostReachability(hostname="server")
+        assert hr.active_ips == ()
+        assert hr.is_up is False
+
+    def test_immutable(self):
+        hr = HostReachability(hostname="server", active_ips=("10.1.10.1",), is_up=True)
+        try:
+            hr.hostname = "other"
+            assert False, "Should have raised FrozenInstanceError"
+        except AttributeError:
+            pass
+
+
+class TestCheckAllHostsReachability:
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_all_hosts_up(self, mock_reachable):
+        mock_reachable.return_value = True
+        hosts = [_make_host("server", "10.1.10.1"), _make_host("desktop", "10.1.10.2")]
+
+        result = check_all_hosts_reachability(hosts)
+
+        assert len(result) == 2
+        assert result["server"].is_up is True
+        assert result["server"].active_ips == ("10.1.10.1",)
+        assert result["desktop"].is_up is True
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_host_down(self, mock_reachable):
+        mock_reachable.return_value = False
+        hosts = [_make_host("server", "10.1.10.1")]
+
+        result = check_all_hosts_reachability(hosts)
+
+        assert result["server"].is_up is False
+        assert result["server"].active_ips == ()
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_multi_interface_partial(self, mock_reachable):
+        """Only some IPs respond — active_ips should contain just those."""
+        def side_effect(ip):
+            return ip == "10.1.10.1"
+
+        mock_reachable.side_effect = side_effect
+        hosts = [_make_multi_iface_host("server", ["10.1.10.1", "10.1.10.2"])]
+
+        result = check_all_hosts_reachability(hosts)
+
+        assert result["server"].is_up is True
+        assert result["server"].active_ips == ("10.1.10.1",)
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_empty_hosts(self, mock_reachable):
+        result = check_all_hosts_reachability([])
+        assert result == {}
+        mock_reachable.assert_not_called()
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_sorted_by_reversed_hostname(self, mock_reachable):
+        """Hosts are processed sorted by reversed hostname components."""
+        mock_reachable.return_value = True
+        hosts = [
+            _make_host("zebra.example.com", "10.1.10.3"),
+            _make_host("alpha.example.com", "10.1.10.1"),
+        ]
+
+        result = check_all_hosts_reachability(hosts)
+
+        # Both should be present regardless of order
+        assert "zebra.example.com" in result
+        assert "alpha.example.com" in result

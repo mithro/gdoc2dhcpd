@@ -20,7 +20,11 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.x509.oid import ExtensionOID, NameOID
 
 from gdoc2netcfg.models.host import Host, SSLCertInfo
-from gdoc2netcfg.supplements.reachability import check_port_open, check_reachable
+from gdoc2netcfg.supplements.reachability import (
+    HostReachability,
+    check_port_open,
+    check_reachable,
+)
 
 
 def _fetch_cert(ip: str, timeout: float = 5.0) -> dict | None:
@@ -146,6 +150,7 @@ def scan_ssl_certs(
     force: bool = False,
     max_age: float = 300,
     verbose: bool = False,
+    reachability: dict[str, HostReachability] | None = None,
 ) -> dict[str, dict]:
     """Scan hosts for SSL/TLS certificates on port 443.
 
@@ -155,6 +160,8 @@ def scan_ssl_certs(
         force: Force re-scan even if cache is fresh.
         max_age: Maximum cache age in seconds (default 5 minutes).
         verbose: Print progress to stdout.
+        reachability: Pre-computed reachability data. When provided,
+            uses active IPs from this instead of pinging each host.
 
     Returns:
         Mapping of hostname to certificate info dict.
@@ -175,13 +182,21 @@ def scan_ssl_certs(
         if verbose:
             print(f"  {host.hostname:>20s} ", end="", flush=True, file=sys.stderr)
 
-        # Find an active IP
-        active_ip = None
-        for iface in host.interfaces:
-            ip_str = str(iface.ipv4)
-            if check_reachable(ip_str):
-                active_ip = ip_str
-                break
+        # Use pre-computed reachability if available, otherwise ping
+        if reachability is not None:
+            host_reach = reachability.get(host.hostname)
+            if host_reach is None or not host_reach.is_up:
+                if verbose:
+                    print("down", file=sys.stderr)
+                continue
+            active_ip = host_reach.active_ips[0] if host_reach.active_ips else None
+        else:
+            active_ip = None
+            for iface in host.interfaces:
+                ip_str = str(iface.ipv4)
+                if check_reachable(ip_str):
+                    active_ip = ip_str
+                    break
 
         if active_ip is None:
             if verbose:
