@@ -38,6 +38,7 @@ def _generate_host_internal(host: Host, inventory: NetworkInventory) -> str:
         _host_dhcp_config(host, inventory),
         _host_ptr_config(host, inventory),
         _host_record_config(host, inventory),
+        _host_caa_config(host, inventory),
         _host_sshfp_records(host, inventory),
     ]
     # Filter out empty sections, join with blank line separators
@@ -128,13 +129,16 @@ def _host_record_config(host: Host, inventory: NetworkInventory) -> list[str]:
 
         output.append(f"host-record={dns_name.name},{','.join(addrs)}")
 
-    # CAA record for Let's Encrypt (on the primary FQDN)
-    output.append(
+    return output
+
+
+def _host_caa_config(host: Host, inventory: NetworkInventory) -> list[str]:
+    """Generate CAA record for Let's Encrypt on the primary FQDN."""
+    domain = inventory.site.domain
+    return [
         f"dns-rr={host.hostname}.{domain},"
         f"257,000569737375656C657473656E63727970742E6F7267"
-    )
-
-    return output
+    ]
 
 
 def _host_sshfp_records(host: Host, inventory: NetworkInventory) -> list[str]:
