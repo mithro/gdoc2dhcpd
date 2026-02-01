@@ -19,8 +19,9 @@ DOMAIN = "welland.mithis.com"
 SITE = Site(
     name="welland",
     domain=DOMAIN,
+    site_octet=1,
     ipv6_prefixes=[IPv6Prefix(prefix="2404:e80:a137:", name="Launtel")],
-    network_subdomains={10: "int", 11: "int", 90: "iot"},
+    network_subdomains={8: "int", 9: "int", 10: "int", 11: "int", 12: "int", 13: "int", 14: "int", 15: "int", 90: "iot"},
 )
 
 

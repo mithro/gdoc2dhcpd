@@ -7,9 +7,10 @@ from gdoc2netcfg.sources.parser import DeviceRecord
 SITE = Site(
     name="welland",
     domain="welland.mithis.com",
-    vlans={10: VLAN(id=10, name="int", subdomain="int")},
+    site_octet=1,
+    vlans={10: VLAN(id=10, name="int", subdomain="int", third_octets=(8, 9, 10, 11, 12, 13, 14, 15))},
     ipv6_prefixes=[IPv6Prefix(prefix="2404:e80:a137:", name="Launtel")],
-    network_subdomains={10: "int", 11: "int", 15: "int", 16: "int", 90: "iot"},
+    network_subdomains={8: "int", 9: "int", 10: "int", 11: "int", 12: "int", 13: "int", 14: "int", 15: "int", 90: "iot"},
 )
 
 
