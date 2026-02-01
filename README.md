@@ -14,7 +14,7 @@ uv sync
 uv run gdoc2netcfg fetch
 
 # Generate all config files
-uv run gdoc2netcfg generate --output-dir /etc/gdoc2dhcpd/
+uv run gdoc2netcfg generate --output-dir /etc/gdoc2netcfg/
 
 # Generate to stdout for inspection
 uv run gdoc2netcfg generate --stdout dnsmasq_internal
