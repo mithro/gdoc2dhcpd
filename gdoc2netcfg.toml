@@ -50,13 +50,17 @@ disabled_prefixes = [
 
 [generators]
 # Which generators to enable
-enabled = ["dnsmasq_internal", "dnsmasq_external", "nagios"]
+enabled = ["dnsmasq_internal", "dnsmasq_external", "nagios", "nginx"]
 
 [generators.dnsmasq_internal]
 output_dir = "internal"
 
 [generators.dnsmasq_external]
 output_dir = "external"
+
+[generators.nginx]
+acme_webroot = "/var/www/acme"
+htpasswd_file = "/etc/nginx/.htpasswd"
 
 [generators.nagios]
 output = "nagios-switches.cfg"

@@ -34,6 +34,9 @@ dnsmasq.reload:
 	systemctl restart dnsmasq@internal dnsmasq@external
 	systemctl status dnsmasq@internal dnsmasq@external
 
+nginx:
+	uv run gdoc2netcfg generate $(OUTPUT_DIR_FLAG) nginx
+
 nagios:
 	uv run gdoc2netcfg generate nagios
 
@@ -46,4 +49,4 @@ info:
 test:
 	uv run pytest
 
-.PHONY: all fetch dnsmasq dnsmasq_internal dnsmasq_external sshfp dnsmasq.test dnsmasq.reload nagios validate info test
+.PHONY: all fetch dnsmasq dnsmasq_internal dnsmasq_external sshfp dnsmasq.test dnsmasq.reload nginx nagios validate info test
