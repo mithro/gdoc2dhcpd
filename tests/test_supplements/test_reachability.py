@@ -110,8 +110,8 @@ def _make_multi_iface_host(hostname, ips):
 
 
 class TestHostReachability:
-    def test_frozen(self):
-        hr = HostReachability(hostname="server", active_ips=("10.1.10.1",), is_up=True)
+    def test_with_active_ips(self):
+        hr = HostReachability(hostname="server", active_ips=("10.1.10.1",))
         assert hr.hostname == "server"
         assert hr.active_ips == ("10.1.10.1",)
         assert hr.is_up is True
@@ -121,8 +121,15 @@ class TestHostReachability:
         assert hr.active_ips == ()
         assert hr.is_up is False
 
+    def test_is_up_derived_from_active_ips(self):
+        """is_up is a property derived from active_ips, not an independent field."""
+        up = HostReachability(hostname="a", active_ips=("10.0.0.1",))
+        down = HostReachability(hostname="b", active_ips=())
+        assert up.is_up is True
+        assert down.is_up is False
+
     def test_immutable(self):
-        hr = HostReachability(hostname="server", active_ips=("10.1.10.1",), is_up=True)
+        hr = HostReachability(hostname="server", active_ips=("10.1.10.1",))
         try:
             hr.hostname = "other"
             assert False, "Should have raised FrozenInstanceError"

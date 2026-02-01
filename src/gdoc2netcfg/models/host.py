@@ -64,20 +64,22 @@ class SNMPData:
     """SNMP data collected from a host.
 
     Populated by the snmp supplement after querying SNMP agents.
+    All fields use immutable types (tuples of tuples) to match the
+    frozen dataclass guarantee.
 
     Attributes:
         snmp_version: Protocol version used ("v1", "v2c", or "v3").
-        system_info: System group values (sysDescr, sysName, sysUpTime, etc.).
-        interfaces: ifTable rows as list of dicts.
-        ip_addresses: ipAddrTable rows as list of dicts.
+        system_info: System group key-value pairs (sysDescr, sysName, etc.).
+        interfaces: ifTable rows, each row as key-value pairs.
+        ip_addresses: ipAddrTable rows, each row as key-value pairs.
         raw: All collected OID→value pairs for extensibility.
     """
 
     snmp_version: str
-    system_info: dict[str, str] = field(default_factory=dict)
-    interfaces: tuple[dict[str, str], ...] = ()
-    ip_addresses: tuple[dict[str, str], ...] = ()
-    raw: dict[str, str] = field(default_factory=dict)
+    system_info: tuple[tuple[str, str], ...] = ()
+    interfaces: tuple[tuple[tuple[str, str], ...], ...] = ()
+    ip_addresses: tuple[tuple[tuple[str, str], ...], ...] = ()
+    raw: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass

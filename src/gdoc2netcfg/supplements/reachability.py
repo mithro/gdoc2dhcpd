@@ -65,7 +65,11 @@ class HostReachability:
 
     hostname: str
     active_ips: tuple[str, ...] = ()
-    is_up: bool = False
+
+    @property
+    def is_up(self) -> bool:
+        """True if any IP responded to ping."""
+        return len(self.active_ips) > 0
 
 
 def check_all_hosts_reachability(
@@ -99,15 +103,13 @@ def check_all_hosts_reachability(
             if check_reachable(ip_str):
                 active_ips.append(ip_str)
 
-        is_up = len(active_ips) > 0
         result[host.hostname] = HostReachability(
             hostname=host.hostname,
             active_ips=tuple(active_ips),
-            is_up=is_up,
         )
 
         if verbose:
-            if is_up:
+            if result[host.hostname].is_up:
                 print(f"up({','.join(active_ips)})", file=sys.stderr)
             else:
                 print("down", file=sys.stderr)
