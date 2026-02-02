@@ -96,11 +96,10 @@ def check_all_hosts_reachability(
     import sys
 
     result: dict[str, HostReachability] = {}
+    sorted_hosts = sorted(hosts, key=lambda h: h.hostname.split(".")[::-1])
+    name_width = max((len(h.hostname) for h in sorted_hosts), default=0)
 
-    for host in sorted(hosts, key=lambda h: h.hostname.split(".")[::-1]):
-        if verbose:
-            print(f"  {host.hostname:>20s} ", end="", flush=True, file=sys.stderr)
-
+    for host in sorted_hosts:
         active_ips = []
         for iface in host.interfaces:
             ip_str = str(iface.ipv4)
@@ -114,8 +113,9 @@ def check_all_hosts_reachability(
 
         if verbose:
             if result[host.hostname].is_up:
-                print(f"up({','.join(active_ips)})", file=sys.stderr)
+                status = f"up({','.join(active_ips)})"
             else:
-                print("down", file=sys.stderr)
+                status = "down"
+            print(f"  {host.hostname:>{name_width}s} {status}", file=sys.stderr)
 
     return result

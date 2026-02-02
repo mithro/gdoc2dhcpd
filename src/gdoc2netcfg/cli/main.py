@@ -411,7 +411,7 @@ def cmd_reachability(args: argparse.Namespace) -> int:
 
     hosts_up = sum(1 for r in reachability.values() if r.is_up)
     hosts_down = sum(1 for r in reachability.values() if not r.is_up)
-    print(f"\n{hosts_up} up, {hosts_down} down, {len(hosts)} total.")
+    print(f"\n{hosts_up} up, {hosts_down} down, {len(hosts)} total.", file=sys.stderr)
 
     return 0
 
