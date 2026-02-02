@@ -1,6 +1,7 @@
 /**
  * Converts IPv4 address to IPv6 format.
  * Format: 10.AA.BB.CCC → {prefix}AABB::CCC
+ * AA, BB, CCC can be numeric or letter placeholders (e.g., X for site octet).
  *
  * @param {string} ipv4 The IPv4 address to convert
  * @param {string} prefix The IPv6 prefix (e.g., "2404:e80:a137:")
@@ -34,9 +35,7 @@ function IPv4toIPv6(ipv4, prefix) {
 
   // Process AA
   let aaOut;
-  if (aa.toUpperCase() === 'X') {
-    throw new Error('AA cannot be X');
-  } else if (/^[A-Za-z]+$/.test(aa)) {
+  if (/^[A-Za-z]+$/.test(aa)) {
     aaOut = aa;
   } else {
     const aaNum = parseInt(aa, 10);
@@ -126,11 +125,25 @@ function convertWithFormatting() {
   // Get data range (from header row + 1 to last row with data)
   const lastRow = sheet.getLastRow();
   let processed = 0;
+  let cleared = 0;
   let skipped = 0;
   let errors = [];
 
   for (let row = headerRow + 1; row <= lastRow; row++) {
     const sourceCell = sheet.getRange(row, ipv4Col);
+    const sourceText = String(sourceCell.getValue()).trim();
+
+    // If IPv4 is empty, clear all corresponding IPv6 cells
+    if (!sourceText) {
+      for (const target of ipv6Targets) {
+        const targetCell = sheet.getRange(row, target.col);
+        if (String(targetCell.getValue()).trim()) {
+          targetCell.clearContent();
+          cleared++;
+        }
+      }
+      continue;
+    }
 
     // Process each IPv6 target column
     for (const target of ipv6Targets) {
@@ -158,7 +171,7 @@ function convertWithFormatting() {
     }
   }
 
-  let message = `Converted ${processed} cell(s), skipped ${skipped}.`;
+  let message = `Converted ${processed} cell(s), cleared ${cleared}, skipped ${skipped}.`;
   if (errors.length > 0) {
     message += `\n\nErrors:\n${errors.slice(0, 5).join('\n')}`;
     if (errors.length > 5) message += `\n... and ${errors.length - 5} more`;
@@ -289,10 +302,8 @@ function convertCellWithFormatting(sourceCell, targetCell, prefix, cidr) {
   // Convert values
   let aaOut, bbOut, cccOut;
 
-  // Process AA - never X
-  if (aaValue.toUpperCase() === 'X') {
-    throw new Error('AA cannot be X');
-  } else if (/[A-Za-z]/.test(aaValue)) {
+  // Process AA
+  if (/[A-Za-z]/.test(aaValue)) {
     // Contains letters - pass through as-is (template/placeholder)
     aaOut = aaValue;
   } else {
