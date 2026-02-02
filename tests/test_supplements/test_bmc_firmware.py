@@ -1,0 +1,395 @@
+"""Tests for the BMC firmware supplement."""
+
+import json
+from unittest.mock import patch
+
+from gdoc2netcfg.derivations.hardware import (
+    HARDWARE_SUPERMICRO_BMC,
+    HARDWARE_SUPERMICRO_BMC_LEGACY,
+)
+from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
+from gdoc2netcfg.models.host import Host, NetworkInterface
+from gdoc2netcfg.supplements.bmc_firmware import (
+    _extract_series,
+    _is_snmp_capable,
+    _parse_mc_info,
+    enrich_hosts_with_bmc_firmware,
+    load_bmc_firmware_cache,
+    refine_bmc_hardware_type,
+    save_bmc_firmware_cache,
+    scan_bmc_firmware,
+)
+from gdoc2netcfg.supplements.reachability import HostReachability
+
+
+def _make_host(hostname="bmc.server", ip="10.1.5.10", hardware_type=HARDWARE_SUPERMICRO_BMC):
+    return Host(
+        machine_name=hostname,
+        hostname=hostname,
+        interfaces=[
+            NetworkInterface(
+                name=None,
+                mac=MACAddress.parse("ac:1f:6b:00:11:22"),
+                ipv4=IPv4Address(ip),
+                dhcp_name=hostname,
+            ),
+        ],
+        default_ipv4=IPv4Address(ip),
+        hardware_type=hardware_type,
+    )
+
+
+# Real ipmitool mc info output from an X11 BMC
+X11_MC_INFO = """\
+Device ID                 : 32
+Device Revision           : 1
+Firmware Revision         : 1.74
+IPMI Version              : 2.0
+Manufacturer ID           : 47488
+Manufacturer Name         : Supermicro
+Product ID                : 2404 (0x0964)
+Product Name              : X11SPM-T(P)F
+Device Available          : yes
+Provides Device SDRs      : yes
+Additional Device Support :
+    Sensor Device
+    SDR Repository Device
+    SEL Device
+    FRU Inventory Device
+    IPMB Event Receiver
+    IPMB Event Generator
+    Chassis Device
+Aux Firmware Rev Info     :
+    0x00
+    0x00
+    0x00
+    0x00
+"""
+
+# Real ipmitool mc info output from an X9 BMC
+X9_MC_INFO = """\
+Device ID                 : 32
+Device Revision           : 1
+Firmware Revision         : 3.40
+IPMI Version              : 2.0
+Manufacturer ID           : 47488
+Manufacturer Name         : Supermicro
+Product ID                : 1566 (0x061e)
+Product Name              : X9SCV-LN4F+
+Device Available          : yes
+Provides Device SDRs      : yes
+Additional Device Support :
+    Sensor Device
+    SDR Repository Device
+    SEL Device
+    FRU Inventory Device
+    IPMB Event Receiver
+    IPMB Event Generator
+    Chassis Device
+Aux Firmware Rev Info     :
+    0x00
+    0x00
+    0x00
+    0x00
+"""
+
+
+class TestParseMcInfo:
+    def test_parse_x11_output(self):
+        result = _parse_mc_info(X11_MC_INFO)
+        assert result is not None
+        assert result["Product Name"] == "X11SPM-T(P)F"
+        assert result["Firmware Revision"] == "1.74"
+        assert result["IPMI Version"] == "2.0"
+        assert result["Manufacturer Name"] == "Supermicro"
+
+    def test_parse_x9_output(self):
+        result = _parse_mc_info(X9_MC_INFO)
+        assert result is not None
+        assert result["Product Name"] == "X9SCV-LN4F+"
+        assert result["Firmware Revision"] == "3.40"
+
+    def test_parse_empty_output(self):
+        assert _parse_mc_info("") is None
+
+    def test_parse_garbage_output(self):
+        assert _parse_mc_info("Connection timed out\n") is None
+
+
+class TestExtractSeries:
+    def test_x11(self):
+        assert _extract_series("X11SPM-T(P)F") == 11
+
+    def test_x9(self):
+        assert _extract_series("X9SCV-LN4F+") == 9
+
+    def test_x10(self):
+        assert _extract_series("X10SRi-F") == 10
+
+    def test_x12(self):
+        assert _extract_series("X12SPL-F") == 12
+
+    def test_x13(self):
+        assert _extract_series("X13SEI-TF") == 13
+
+    def test_no_match(self):
+        assert _extract_series("Unknown") is None
+
+    def test_empty_string(self):
+        assert _extract_series("") is None
+
+
+class TestIsSnmpCapable:
+    def test_series_11_capable(self):
+        assert _is_snmp_capable(11) is True
+
+    def test_series_10_capable(self):
+        assert _is_snmp_capable(10) is True
+
+    def test_series_12_capable(self):
+        assert _is_snmp_capable(12) is True
+
+    def test_series_9_not_capable(self):
+        assert _is_snmp_capable(9) is False
+
+    def test_series_8_not_capable(self):
+        assert _is_snmp_capable(8) is False
+
+    def test_none_conservatively_capable(self):
+        assert _is_snmp_capable(None) is True
+
+
+class TestBMCFirmwareCache:
+    def test_load_missing_returns_empty(self, tmp_path):
+        result = load_bmc_firmware_cache(tmp_path / "nonexistent.json")
+        assert result == {}
+
+    def test_save_and_load_roundtrip(self, tmp_path):
+        cache_path = tmp_path / "bmc_firmware.json"
+        data = {
+            "bmc.server": {
+                "product_name": "X11SPM-T(P)F",
+                "firmware_revision": "1.74",
+                "ipmi_version": "2.0",
+                "series": 11,
+                "snmp_capable": True,
+            }
+        }
+        save_bmc_firmware_cache(cache_path, data)
+        loaded = load_bmc_firmware_cache(cache_path)
+        assert loaded == data
+
+    def test_save_creates_parent_directory(self, tmp_path):
+        cache_path = tmp_path / "subdir" / "bmc_firmware.json"
+        save_bmc_firmware_cache(cache_path, {"host": {}})
+        assert cache_path.exists()
+
+
+class TestEnrichHostsWithBMCFirmware:
+    def test_enriches_matching_host(self):
+        hosts = [_make_host("bmc.server")]
+        fw_cache = {
+            "bmc.server": {
+                "product_name": "X11SPM-T(P)F",
+                "firmware_revision": "1.74",
+                "ipmi_version": "2.0",
+                "series": 11,
+                "snmp_capable": True,
+            }
+        }
+        enrich_hosts_with_bmc_firmware(hosts, fw_cache)
+
+        info = hosts[0].bmc_firmware_info
+        assert info is not None
+        assert info.product_name == "X11SPM-T(P)F"
+        assert info.firmware_revision == "1.74"
+        assert info.ipmi_version == "2.0"
+        assert info.series == 11
+        assert info.snmp_capable is True
+
+    def test_no_cache_entry(self):
+        hosts = [_make_host("bmc.other")]
+        enrich_hosts_with_bmc_firmware(hosts, {})
+        assert hosts[0].bmc_firmware_info is None
+
+    def test_enrich_creates_frozen_instance(self):
+        hosts = [_make_host()]
+        fw_cache = {
+            "bmc.server": {
+                "product_name": "X11SPM-T(P)F",
+                "firmware_revision": "1.74",
+                "ipmi_version": "2.0",
+                "series": 11,
+                "snmp_capable": True,
+            }
+        }
+        enrich_hosts_with_bmc_firmware(hosts, fw_cache)
+        info = hosts[0].bmc_firmware_info
+        assert info is not None
+        try:
+            info.product_name = "modified"
+            assert False, "Should have raised FrozenInstanceError"
+        except AttributeError:
+            pass
+
+
+class TestRefineBMCHardwareType:
+    def test_x9_reclassified_as_legacy(self):
+        hosts = [_make_host()]
+        fw_cache = {
+            "bmc.server": {
+                "product_name": "X9SCV-LN4F+",
+                "firmware_revision": "3.40",
+                "ipmi_version": "2.0",
+                "series": 9,
+                "snmp_capable": False,
+            }
+        }
+        enrich_hosts_with_bmc_firmware(hosts, fw_cache)
+        refine_bmc_hardware_type(hosts)
+        assert hosts[0].hardware_type == HARDWARE_SUPERMICRO_BMC_LEGACY
+
+    def test_x11_stays_as_bmc(self):
+        hosts = [_make_host()]
+        fw_cache = {
+            "bmc.server": {
+                "product_name": "X11SPM-T(P)F",
+                "firmware_revision": "1.74",
+                "ipmi_version": "2.0",
+                "series": 11,
+                "snmp_capable": True,
+            }
+        }
+        enrich_hosts_with_bmc_firmware(hosts, fw_cache)
+        refine_bmc_hardware_type(hosts)
+        assert hosts[0].hardware_type == HARDWARE_SUPERMICRO_BMC
+
+    def test_no_firmware_info_stays_as_bmc(self):
+        hosts = [_make_host()]
+        refine_bmc_hardware_type(hosts)
+        assert hosts[0].hardware_type == HARDWARE_SUPERMICRO_BMC
+
+    def test_non_bmc_host_unaffected(self):
+        hosts = [_make_host(hardware_type="netgear-switch")]
+        refine_bmc_hardware_type(hosts)
+        assert hosts[0].hardware_type == "netgear-switch"
+
+
+class TestScanBMCFirmware:
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_scan_finds_firmware(self, mock_run, tmp_path):
+        mock_run.return_value = {
+            "Product Name": "X11SPM-T(P)F",
+            "Firmware Revision": "1.74",
+            "IPMI Version": "2.0",
+        }
+        host = _make_host()
+        cache_path = tmp_path / "bmc_firmware.json"
+        result = scan_bmc_firmware([host], cache_path, force=True)
+
+        assert "bmc.server" in result
+        assert result["bmc.server"]["product_name"] == "X11SPM-T(P)F"
+        assert result["bmc.server"]["series"] == 11
+        assert result["bmc.server"]["snmp_capable"] is True
+        mock_run.assert_called_once()
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_scan_x9_firmware(self, mock_run, tmp_path):
+        mock_run.return_value = {
+            "Product Name": "X9SCV-LN4F+",
+            "Firmware Revision": "3.40",
+            "IPMI Version": "2.0",
+        }
+        host = _make_host()
+        cache_path = tmp_path / "bmc_firmware.json"
+        result = scan_bmc_firmware([host], cache_path, force=True)
+
+        assert result["bmc.server"]["series"] == 9
+        assert result["bmc.server"]["snmp_capable"] is False
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_scan_skips_non_bmc_hosts(self, mock_run, tmp_path):
+        host = _make_host(hardware_type="netgear-switch")
+        cache_path = tmp_path / "bmc_firmware.json"
+        result = scan_bmc_firmware([host], cache_path, force=True)
+
+        assert result == {}
+        mock_run.assert_not_called()
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_scan_skips_unreachable(self, mock_run, tmp_path):
+        reachability = {
+            "bmc.server": HostReachability(hostname="bmc.server", active_ips=()),
+        }
+        host = _make_host()
+        cache_path = tmp_path / "bmc_firmware.json"
+        result = scan_bmc_firmware(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        assert result == {}
+        mock_run.assert_not_called()
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_scan_uses_reachable_ip(self, mock_run, tmp_path):
+        mock_run.return_value = {
+            "Product Name": "X11SPM-T(P)F",
+            "Firmware Revision": "1.74",
+            "IPMI Version": "2.0",
+        }
+        reachability = {
+            "bmc.server": HostReachability(
+                hostname="bmc.server", active_ips=("10.1.5.10",),
+            ),
+        }
+        host = _make_host()
+        cache_path = tmp_path / "bmc_firmware.json"
+        scan_bmc_firmware(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        mock_run.assert_called_once_with("10.1.5.10")
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_scan_uses_cache_when_fresh(self, mock_run, tmp_path):
+        cache_path = tmp_path / "bmc_firmware.json"
+        existing = {
+            "bmc.server": {
+                "product_name": "X11SPM-T(P)F",
+                "firmware_revision": "1.74",
+                "ipmi_version": "2.0",
+                "series": 11,
+                "snmp_capable": True,
+            }
+        }
+        save_bmc_firmware_cache(cache_path, existing)
+
+        host = _make_host()
+        result = scan_bmc_firmware([host], cache_path, force=False, max_age=9999)
+
+        assert result == existing
+        mock_run.assert_not_called()
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_scan_saves_cache(self, mock_run, tmp_path):
+        mock_run.return_value = {
+            "Product Name": "X11SPM-T(P)F",
+            "Firmware Revision": "1.74",
+            "IPMI Version": "2.0",
+        }
+        host = _make_host()
+        cache_path = tmp_path / "bmc_firmware.json"
+        scan_bmc_firmware([host], cache_path, force=True)
+
+        assert cache_path.exists()
+        loaded = json.loads(cache_path.read_text())
+        assert "bmc.server" in loaded
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_scan_no_ipmi_response(self, mock_run, tmp_path):
+        mock_run.return_value = None
+        host = _make_host()
+        cache_path = tmp_path / "bmc_firmware.json"
+        result = scan_bmc_firmware([host], cache_path, force=True)
+
+        assert "bmc.server" not in result
