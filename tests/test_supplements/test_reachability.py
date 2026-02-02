@@ -38,6 +38,14 @@ class TestCheckReachable:
         assert "3" in args
 
     @patch("gdoc2netcfg.supplements.reachability.subprocess.run")
+    def test_partial_response_still_reachable(self, mock_run):
+        mock_run.return_value.stdout = (
+            "PING 10.1.10.1 (10.1.10.1) 56(84) bytes of data.\n"
+            "5 packets transmitted, 2 received, 60% packet loss\n"
+        )
+        assert check_reachable("10.1.10.1") is True
+
+    @patch("gdoc2netcfg.supplements.reachability.subprocess.run")
     def test_ping_not_found(self, mock_run):
         mock_run.side_effect = FileNotFoundError
         assert check_reachable("10.1.10.1") is False

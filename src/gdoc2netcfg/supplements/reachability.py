@@ -6,6 +6,7 @@ Provides ping and port-check utilities used by multiple supplements
 
 from __future__ import annotations
 
+import re
 import socket
 import subprocess
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ def check_reachable(ip: str, packets: int = 5) -> bool:
         packets: Number of ping packets to send.
 
     Returns:
-        True if all packets were received.
+        True if at least one packet was received.
     """
     try:
         result = subprocess.run(
@@ -31,7 +32,10 @@ def check_reachable(ip: str, packets: int = 5) -> bool:
             capture_output=True,
             text=True,
         )
-        return f"{packets} packets transmitted, {packets} received" in result.stdout
+        match = re.search(
+            r"(\d+) packets transmitted, (\d+) received", result.stdout
+        )
+        return match is not None and int(match.group(2)) >= 1
     except FileNotFoundError:
         return False
 
