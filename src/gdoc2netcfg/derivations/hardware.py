@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 HARDWARE_SUPERMICRO_BMC = "supermicro-bmc"
 HARDWARE_NETGEAR_SWITCH = "netgear-switch"
 HARDWARE_NETGEAR_SWITCH_PLUS = "netgear-switch-plus"
+HARDWARE_SUPERMICRO_BMC_LEGACY = "supermicro-bmc-legacy"
 
 # Netgear Plus/unmanaged models that lack SNMP support.
 # Matched case-insensitively against the hostname.

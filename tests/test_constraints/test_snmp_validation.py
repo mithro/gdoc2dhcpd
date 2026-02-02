@@ -6,6 +6,7 @@ from gdoc2netcfg.derivations.hardware import (
     HARDWARE_NETGEAR_SWITCH,
     HARDWARE_NETGEAR_SWITCH_PLUS,
     HARDWARE_SUPERMICRO_BMC,
+    HARDWARE_SUPERMICRO_BMC_LEGACY,
 )
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface, SNMPData
@@ -65,6 +66,17 @@ class TestKnownDeviceUp:
         )
         reachability = {
             "switch": HostReachability(hostname="switch", active_ips=("10.1.10.100",)),
+        }
+        result = validate_snmp_availability([host], reachability)
+        assert len(result.violations) == 0
+
+    def test_legacy_bmc_up_no_snmp_ok(self):
+        """Legacy BMC UP + no SNMP → no error (not SNMP-required)."""
+        host = _make_host("bmc.tweed", hardware_type=HARDWARE_SUPERMICRO_BMC_LEGACY)
+        reachability = {
+            "bmc.tweed": HostReachability(
+                hostname="bmc.tweed", active_ips=("10.1.5.20",)
+            ),
         }
         result = validate_snmp_availability([host], reachability)
         assert len(result.violations) == 0
