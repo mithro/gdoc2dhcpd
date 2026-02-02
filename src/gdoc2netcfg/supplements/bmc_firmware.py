@@ -77,6 +77,35 @@ def _run_ipmitool_mc_info(
         return None
 
 
+def _try_ipmi_credentials(
+    ip: str,
+    host: Host,
+) -> dict[str, str] | None:
+    """Try IPMI credential cascade for a BMC.
+
+    Credential order:
+    1. Default ADMIN/ADMIN (Supermicro factory default)
+    2. host.extra["IPMI Username"] + host.extra["IPMI Password"] if present
+
+    Returns parsed mc info dict, or None if all attempts fail.
+    """
+    # Try 1: Default credentials
+    result = _run_ipmitool_mc_info(ip, "ADMIN", "ADMIN")
+    if result is not None:
+        return result
+
+    # Try 2: Custom credentials from spreadsheet
+    custom_user = host.extra.get("IPMI Username", "").strip()
+    custom_pass = host.extra.get("IPMI Password", "").strip()
+    if custom_user and custom_pass:
+        if custom_user != "ADMIN" or custom_pass != "ADMIN":
+            result = _run_ipmitool_mc_info(ip, custom_user, custom_pass)
+            if result is not None:
+                return result
+
+    return None
+
+
 def _extract_series(product_name: str) -> int | None:
     """Extract Supermicro series number from product name.
 
@@ -85,7 +114,7 @@ def _extract_series(product_name: str) -> int | None:
 
     Returns the series number, or None if not parseable.
     """
-    match = re.search(r"X(\d+)", product_name)
+    match = re.match(r"^X(\d+)", product_name)
     if match:
         return int(match.group(1))
     return None
@@ -185,7 +214,7 @@ def scan_bmc_firmware(
         if verbose:
             print(f"ipmitool({ip}) ", end="", flush=True, file=sys.stderr)
 
-        mc_info = _run_ipmitool_mc_info(ip)
+        mc_info = _try_ipmi_credentials(ip, host)
         if mc_info is not None:
             product_name = mc_info.get("Product Name", "")
             firmware_rev = mc_info.get("Firmware Revision", "")

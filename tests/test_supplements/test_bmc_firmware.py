@@ -13,6 +13,7 @@ from gdoc2netcfg.supplements.bmc_firmware import (
     _extract_series,
     _is_snmp_capable,
     _parse_mc_info,
+    _try_ipmi_credentials,
     enrich_hosts_with_bmc_firmware,
     load_bmc_firmware_cache,
     refine_bmc_hardware_type,
@@ -22,7 +23,7 @@ from gdoc2netcfg.supplements.bmc_firmware import (
 from gdoc2netcfg.supplements.reachability import HostReachability
 
 
-def _make_host(hostname="bmc.server", ip="10.1.5.10", hardware_type=HARDWARE_SUPERMICRO_BMC):
+def _make_host(hostname="bmc.server", ip="10.1.5.10", hardware_type=HARDWARE_SUPERMICRO_BMC, extra=None):
     return Host(
         machine_name=hostname,
         hostname=hostname,
@@ -36,6 +37,7 @@ def _make_host(hostname="bmc.server", ip="10.1.5.10", hardware_type=HARDWARE_SUP
         ],
         default_ipv4=IPv4Address(ip),
         hardware_type=hardware_type,
+        extra=extra or {},
     )
 
 
@@ -275,10 +277,58 @@ class TestRefineBMCHardwareType:
         assert hosts[0].hardware_type == "netgear-switch"
 
 
-class TestScanBMCFirmware:
+class TestTryIPMICredentials:
     @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
-    def test_scan_finds_firmware(self, mock_run, tmp_path):
+    def test_default_credentials_succeed(self, mock_run):
         mock_run.return_value = {
+            "Product Name": "X11SPM-T(P)F",
+            "Firmware Revision": "1.74",
+            "IPMI Version": "2.0",
+        }
+        host = _make_host()
+        result = _try_ipmi_credentials("10.1.5.10", host)
+
+        assert result is not None
+        assert result["Product Name"] == "X11SPM-T(P)F"
+        mock_run.assert_called_once_with("10.1.5.10", "ADMIN", "ADMIN")
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_fallback_to_custom_credentials(self, mock_run):
+        # Default ADMIN/ADMIN fails, custom succeeds
+        mock_run.side_effect = [
+            None,
+            {"Product Name": "X11SPM-T(P)F", "Firmware Revision": "1.74", "IPMI Version": "2.0"},
+        ]
+        host = _make_host(extra={"IPMI Username": "root", "IPMI Password": "secret"})
+        result = _try_ipmi_credentials("10.1.5.10", host)
+
+        assert result is not None
+        assert mock_run.call_count == 2
+        mock_run.assert_any_call("10.1.5.10", "ADMIN", "ADMIN")
+        mock_run.assert_any_call("10.1.5.10", "root", "secret")
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_all_credentials_fail(self, mock_run):
+        mock_run.return_value = None
+        host = _make_host()
+        result = _try_ipmi_credentials("10.1.5.10", host)
+        assert result is None
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
+    def test_skips_duplicate_credentials(self, mock_run):
+        """If custom creds are ADMIN/ADMIN, don't try twice."""
+        mock_run.return_value = None
+        host = _make_host(extra={"IPMI Username": "ADMIN", "IPMI Password": "ADMIN"})
+        result = _try_ipmi_credentials("10.1.5.10", host)
+
+        assert result is None
+        assert mock_run.call_count == 1
+
+
+class TestScanBMCFirmware:
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_scan_finds_firmware(self, mock_try, tmp_path):
+        mock_try.return_value = {
             "Product Name": "X11SPM-T(P)F",
             "Firmware Revision": "1.74",
             "IPMI Version": "2.0",
@@ -291,11 +341,11 @@ class TestScanBMCFirmware:
         assert result["bmc.server"]["product_name"] == "X11SPM-T(P)F"
         assert result["bmc.server"]["series"] == 11
         assert result["bmc.server"]["snmp_capable"] is True
-        mock_run.assert_called_once()
+        mock_try.assert_called_once()
 
-    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
-    def test_scan_x9_firmware(self, mock_run, tmp_path):
-        mock_run.return_value = {
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_scan_x9_firmware(self, mock_try, tmp_path):
+        mock_try.return_value = {
             "Product Name": "X9SCV-LN4F+",
             "Firmware Revision": "3.40",
             "IPMI Version": "2.0",
@@ -307,17 +357,17 @@ class TestScanBMCFirmware:
         assert result["bmc.server"]["series"] == 9
         assert result["bmc.server"]["snmp_capable"] is False
 
-    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
-    def test_scan_skips_non_bmc_hosts(self, mock_run, tmp_path):
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_scan_skips_non_bmc_hosts(self, mock_try, tmp_path):
         host = _make_host(hardware_type="netgear-switch")
         cache_path = tmp_path / "bmc_firmware.json"
         result = scan_bmc_firmware([host], cache_path, force=True)
 
         assert result == {}
-        mock_run.assert_not_called()
+        mock_try.assert_not_called()
 
-    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
-    def test_scan_skips_unreachable(self, mock_run, tmp_path):
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_scan_skips_unreachable(self, mock_try, tmp_path):
         reachability = {
             "bmc.server": HostReachability(hostname="bmc.server", active_ips=()),
         }
@@ -328,11 +378,11 @@ class TestScanBMCFirmware:
         )
 
         assert result == {}
-        mock_run.assert_not_called()
+        mock_try.assert_not_called()
 
-    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
-    def test_scan_uses_reachable_ip(self, mock_run, tmp_path):
-        mock_run.return_value = {
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_scan_uses_reachable_ip(self, mock_try, tmp_path):
+        mock_try.return_value = {
             "Product Name": "X11SPM-T(P)F",
             "Firmware Revision": "1.74",
             "IPMI Version": "2.0",
@@ -348,10 +398,11 @@ class TestScanBMCFirmware:
             [host], cache_path, force=True, reachability=reachability,
         )
 
-        mock_run.assert_called_once_with("10.1.5.10")
+        call_args = mock_try.call_args
+        assert call_args[0][0] == "10.1.5.10"
 
-    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
-    def test_scan_uses_cache_when_fresh(self, mock_run, tmp_path):
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_scan_uses_cache_when_fresh(self, mock_try, tmp_path):
         cache_path = tmp_path / "bmc_firmware.json"
         existing = {
             "bmc.server": {
@@ -368,11 +419,11 @@ class TestScanBMCFirmware:
         result = scan_bmc_firmware([host], cache_path, force=False, max_age=9999)
 
         assert result == existing
-        mock_run.assert_not_called()
+        mock_try.assert_not_called()
 
-    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
-    def test_scan_saves_cache(self, mock_run, tmp_path):
-        mock_run.return_value = {
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_scan_saves_cache(self, mock_try, tmp_path):
+        mock_try.return_value = {
             "Product Name": "X11SPM-T(P)F",
             "Firmware Revision": "1.74",
             "IPMI Version": "2.0",
@@ -385,9 +436,9 @@ class TestScanBMCFirmware:
         loaded = json.loads(cache_path.read_text())
         assert "bmc.server" in loaded
 
-    @patch("gdoc2netcfg.supplements.bmc_firmware._run_ipmitool_mc_info")
-    def test_scan_no_ipmi_response(self, mock_run, tmp_path):
-        mock_run.return_value = None
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_scan_no_ipmi_response(self, mock_try, tmp_path):
+        mock_try.return_value = None
         host = _make_host()
         cache_path = tmp_path / "bmc_firmware.json"
         result = scan_bmc_firmware([host], cache_path, force=True)
