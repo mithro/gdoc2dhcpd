@@ -106,6 +106,38 @@ class BMCFirmwareInfo:
     snmp_capable: bool
 
 
+@dataclass(frozen=True)
+class BridgeData:
+    """Switch bridge/topology data collected via SNMP.
+
+    Populated by the bridge supplement for managed switches.
+    Contains MAC address table, VLAN configuration, LLDP neighbors,
+    and port status. All fields use immutable types.
+
+    Attributes:
+        mac_table: (mac_str, vlan_id, bridge_port, port_name) tuples.
+        vlan_names: (vlan_id, name) tuples from dot1qVlanStaticName.
+        port_pvids: (ifIndex, pvid) tuples from dot1qPvid.
+        port_names: (ifIndex, name) tuples from ifName.
+        port_status: (ifIndex, oper_status, speed_mbps) tuples.
+        lldp_neighbors: (local_ifIndex, remote_sysname, remote_port_id,
+            remote_chassis_mac) tuples.
+        vlan_egress_ports: (vlan_id, port_bitmap_hex) tuples for tagged membership.
+        vlan_untagged_ports: (vlan_id, port_bitmap_hex) tuples for untagged membership.
+        poe_status: (ifIndex, admin_status, detection_status) tuples.
+    """
+
+    mac_table: tuple[tuple[str, int, int, str], ...] = ()
+    vlan_names: tuple[tuple[int, str], ...] = ()
+    port_pvids: tuple[tuple[int, int], ...] = ()
+    port_names: tuple[tuple[int, str], ...] = ()
+    port_status: tuple[tuple[int, int, int], ...] = ()
+    lldp_neighbors: tuple[tuple[int, str, str, str], ...] = ()
+    vlan_egress_ports: tuple[tuple[int, str], ...] = ()
+    vlan_untagged_ports: tuple[tuple[int, str], ...] = ()
+    poe_status: tuple[tuple[int, int, int], ...] = ()
+
+
 @dataclass
 class Host:
     """A logical host with one or more network interfaces.
@@ -136,6 +168,7 @@ class Host:
     ssl_cert_info: SSLCertInfo | None = None
     snmp_data: SNMPData | None = None
     bmc_firmware_info: BMCFirmwareInfo | None = None
+    bridge_data: BridgeData | None = None
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:
