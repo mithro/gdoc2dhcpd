@@ -25,6 +25,7 @@ class DeviceRecord:
     mac_address: str = ""
     ip: str = ""
     interface: str = ""
+    site: str = ""
     extra: dict[str, str] = field(default_factory=dict)
 
 
@@ -62,6 +63,7 @@ _MACHINE_COLUMNS = {"machine"}
 _MAC_COLUMNS = {"mac address", "mac"}
 _IP_COLUMNS = {"ip", "ipv4"}
 _INTERFACE_COLUMNS = {"interface"}
+_SITE_COLUMNS = {"site", "location"}
 
 
 def parse_csv(csv_text: str, sheet_name: str) -> list[DeviceRecord]:
@@ -105,6 +107,7 @@ def parse_csv(csv_text: str, sheet_name: str) -> list[DeviceRecord]:
     mac_col = _find_col(_MAC_COLUMNS)
     ip_col = _find_col(_IP_COLUMNS)
     interface_col = _find_col(_INTERFACE_COLUMNS)
+    site_col = _find_col(_SITE_COLUMNS)
 
     records: list[DeviceRecord] = []
 
@@ -143,8 +146,12 @@ def parse_csv(csv_text: str, sheet_name: str) -> list[DeviceRecord]:
         if interface_col is not None and interface_col < len(row):
             interface = row[interface_col].strip()
 
+        site_value = ""
+        if site_col is not None and site_col < len(row):
+            site_value = row[site_col].strip()
+
         # Collect extra columns (everything except the key fields)
-        key_cols = {machine_col, mac_col, ip_col, interface_col} - {None}
+        key_cols = {machine_col, mac_col, ip_col, interface_col, site_col} - {None}
         extra: dict[str, str] = {}
         for col_idx, (header, value) in enumerate(zip(headers, row)):
             if col_idx not in key_cols and header and value and value.strip():
@@ -158,6 +165,7 @@ def parse_csv(csv_text: str, sheet_name: str) -> list[DeviceRecord]:
                 mac_address=mac,
                 ip=ip_addr,
                 interface=interface,
+                site=site_value,
                 extra=extra,
             )
         )

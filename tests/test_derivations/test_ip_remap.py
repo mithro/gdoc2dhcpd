@@ -1,119 +1,34 @@
-"""Tests for IPv4 site remapping."""
+"""Tests for IPv4 site remapping: X-placeholder resolution and site filtering."""
 
-from gdoc2netcfg.derivations.ip_remap import collect_native_ips, remap_ipv4_to_site
-from gdoc2netcfg.models.addressing import IPv4Address
+from gdoc2netcfg.derivations.ip_remap import (
+    filter_and_resolve_records,
+    is_record_for_site,
+    resolve_site_ip,
+)
 from gdoc2netcfg.models.network import VLAN, Site
 from gdoc2netcfg.sources.parser import DeviceRecord
 
 
-def _site(site_octet: int) -> Site:
-    """Build a minimal Site with typical VLANs for testing."""
+def _site(name: str = "monarto", site_octet: int = 2) -> Site:
+    """Build a minimal Site for testing."""
     return Site(
-        name="test",
-        domain="test.mithis.com",
+        name=name,
+        domain=f"{name}.mithis.com",
         site_octet=site_octet,
         vlans={
-            5: VLAN(id=5, name="net", subdomain="net", third_octets=(5,)),
             10: VLAN(id=10, name="int", subdomain="int",
                      third_octets=(8, 9, 10, 11, 12, 13, 14, 15)),
             90: VLAN(id=90, name="iot", subdomain="iot", third_octets=(90,)),
-            31: VLAN(id=31, name="fpgas", subdomain="fpgas",
-                     third_octets=(), is_global=True),
-            41: VLAN(id=41, name="sm", subdomain="sm",
-                     third_octets=(), is_global=True),
         },
     )
 
 
-class TestRemapIpv4ToSite:
-    """Core remapping behaviour."""
-
-    def test_welland_ip_remapped_to_monarto(self):
-        """10.1.10.124 → 10.2.10.124 when site_octet=2."""
-        site = _site(site_octet=2)
-        result = remap_ipv4_to_site(IPv4Address("10.1.10.124"), site)
-        assert str(result) == "10.2.10.124"
-
-    def test_monarto_ip_unchanged_on_monarto(self):
-        """10.2.10.124 stays 10.2.10.124 when site_octet=2."""
-        site = _site(site_octet=2)
-        result = remap_ipv4_to_site(IPv4Address("10.2.10.124"), site)
-        assert str(result) == "10.2.10.124"
-
-    def test_welland_ip_unchanged_on_welland(self):
-        """10.1.10.124 stays 10.1.10.124 when site_octet=1."""
-        site = _site(site_octet=1)
-        result = remap_ipv4_to_site(IPv4Address("10.1.10.124"), site)
-        assert str(result) == "10.1.10.124"
-
-    def test_monarto_ip_remapped_to_welland(self):
-        """10.2.90.5 → 10.1.90.5 when site_octet=1."""
-        site = _site(site_octet=1)
-        result = remap_ipv4_to_site(IPv4Address("10.2.90.5"), site)
-        assert str(result) == "10.1.90.5"
-
-
-class TestRemapPreservesGlobalVlans:
-    """Global VLAN addresses must not be remapped."""
-
-    def test_fpgas_vlan_untouched(self):
-        """10.31.0.101 stays 10.31.0.101 regardless of site_octet."""
-        site = _site(site_octet=2)
-        result = remap_ipv4_to_site(IPv4Address("10.31.0.101"), site)
-        assert str(result) == "10.31.0.101"
-
-    def test_sm_vlan_untouched(self):
-        """10.41.1.18 stays 10.41.1.18."""
-        site = _site(site_octet=2)
-        result = remap_ipv4_to_site(IPv4Address("10.41.1.18"), site)
-        assert str(result) == "10.41.1.18"
-
-    def test_fpgas_untouched_on_welland(self):
-        site = _site(site_octet=1)
-        result = remap_ipv4_to_site(IPv4Address("10.31.0.101"), site)
-        assert str(result) == "10.31.0.101"
-
-
-class TestRemapNonTenAddresses:
-    """Non-10.X.X.X addresses pass through unchanged."""
-
-    def test_private_172(self):
-        site = _site(site_octet=2)
-        result = remap_ipv4_to_site(IPv4Address("172.16.1.1"), site)
-        assert str(result) == "172.16.1.1"
-
-    def test_public_ip(self):
-        site = _site(site_octet=2)
-        result = remap_ipv4_to_site(IPv4Address("8.8.8.8"), site)
-        assert str(result) == "8.8.8.8"
-
-    def test_loopback(self):
-        site = _site(site_octet=2)
-        result = remap_ipv4_to_site(IPv4Address("127.0.0.1"), site)
-        assert str(result) == "127.0.0.1"
-
-
-class TestRemapPreservesThirdAndFourthOctets:
-    """Remapping only changes the second octet."""
-
-    def test_various_third_octets(self):
-        site = _site(site_octet=2)
-        for third in [1, 5, 6, 7, 10, 20, 90, 99]:
-            result = remap_ipv4_to_site(
-                IPv4Address(f"10.1.{third}.200"), site
-            )
-            assert str(result) == f"10.2.{third}.200"
-
-    def test_fourth_octet_preserved(self):
-        site = _site(site_octet=2)
-        for fourth in [1, 100, 200, 254]:
-            result = remap_ipv4_to_site(
-                IPv4Address(f"10.1.90.{fourth}"), site
-            )
-            assert str(result) == f"10.2.90.{fourth}"
-
-
-def _record(ip: str, mac: str = "00:11:22:33:44:55", machine: str = "dev") -> DeviceRecord:
+def _record(
+    ip: str,
+    site: str = "",
+    mac: str = "00:11:22:33:44:55",
+    machine: str = "dev",
+) -> DeviceRecord:
     """Build a minimal DeviceRecord for testing."""
     return DeviceRecord(
         sheet_name="network",
@@ -121,117 +36,152 @@ def _record(ip: str, mac: str = "00:11:22:33:44:55", machine: str = "dev") -> De
         machine=machine,
         mac_address=mac,
         ip=ip,
+        site=site,
     )
 
 
-class TestCollectNativeIps:
-    """Tests for collect_native_ips — finding IPs already at the site's octet."""
+class TestResolveSiteIp:
+    """Resolve 'X' placeholder in second octet."""
 
-    def test_monarto_ips_native_on_monarto(self):
-        """10.2.X.X IPs are native when site_octet=2."""
-        site = _site(site_octet=2)
+    def test_x_replaced_with_site_octet(self):
+        assert resolve_site_ip("10.X.10.100", 2) == "10.2.10.100"
+
+    def test_lowercase_x_replaced(self):
+        assert resolve_site_ip("10.x.10.100", 2) == "10.2.10.100"
+
+    def test_no_x_unchanged(self):
+        assert resolve_site_ip("10.1.10.100", 2) == "10.1.10.100"
+
+    def test_welland_octet(self):
+        assert resolve_site_ip("10.X.90.5", 1) == "10.1.90.5"
+
+    def test_monarto_octet(self):
+        assert resolve_site_ip("10.X.90.5", 2) == "10.2.90.5"
+
+    def test_non_10_prefix_with_x(self):
+        """X only meaningful in second octet of 10.X.Y.Z pattern."""
+        assert resolve_site_ip("192.X.1.1", 2) == "192.2.1.1"
+
+    def test_x_in_third_octet_unchanged(self):
+        """X in third octet is not replaced (only second octet)."""
+        assert resolve_site_ip("10.1.X.100", 2) == "10.1.X.100"
+
+    def test_already_correct_octet(self):
+        assert resolve_site_ip("10.2.10.100", 2) == "10.2.10.100"
+
+    def test_preserves_third_and_fourth_octets(self):
+        for third in [1, 5, 10, 90, 99]:
+            for fourth in [1, 100, 254]:
+                result = resolve_site_ip(f"10.X.{third}.{fourth}", 2)
+                assert result == f"10.2.{third}.{fourth}"
+
+
+class TestIsRecordForSite:
+    """Site column filtering."""
+
+    def test_empty_site_matches_all(self):
+        """Records with no site column apply to every site."""
+        site = _site("monarto")
+        assert is_record_for_site(_record("10.X.10.1", site=""), site) is True
+
+    def test_matching_site(self):
+        site = _site("monarto")
+        assert is_record_for_site(_record("10.2.10.1", site="monarto"), site) is True
+
+    def test_non_matching_site(self):
+        site = _site("monarto")
+        assert is_record_for_site(_record("10.1.10.1", site="welland"), site) is False
+
+    def test_case_insensitive_match(self):
+        site = _site("monarto")
+        assert is_record_for_site(_record("10.2.10.1", site="Monarto"), site) is True
+
+    def test_welland_site_on_welland(self):
+        site = _site("welland", site_octet=1)
+        assert is_record_for_site(_record("10.1.10.1", site="welland"), site) is True
+
+    def test_monarto_site_on_welland(self):
+        site = _site("welland", site_octet=1)
+        assert is_record_for_site(_record("10.2.10.1", site="monarto"), site) is False
+
+
+class TestFilterAndResolveRecords:
+    """Integration: filter by site and resolve X placeholders."""
+
+    def test_multi_site_record_resolved(self):
+        """Record with X and no site → resolved for monarto."""
+        site = _site("monarto", site_octet=2)
+        records = [_record("10.X.10.100")]
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 1
+        assert result[0].ip == "10.2.10.100"
+
+    def test_site_specific_record_kept(self):
+        """Record with site=monarto → kept as-is."""
+        site = _site("monarto", site_octet=2)
+        records = [_record("10.2.10.11", site="monarto")]
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 1
+        assert result[0].ip == "10.2.10.11"
+
+    def test_other_site_record_dropped(self):
+        """Record with site=welland → dropped on monarto."""
+        site = _site("monarto", site_octet=2)
+        records = [_record("10.1.10.11", site="welland")]
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 0
+
+    def test_mixed_records(self):
+        """Realistic scenario: shared + site-specific records."""
+        site = _site("monarto", site_octet=2)
         records = [
-            _record("10.2.10.11"),
-            _record("10.2.90.5"),
+            _record("10.X.10.100", site="", machine="shared-desktop"),
+            _record("10.2.10.11", site="monarto", machine="ten64"),
+            _record("10.1.10.11", site="welland", machine="ten64"),
+            _record("10.X.90.5", site="", machine="thermostat"),
         ]
-        native = collect_native_ips(records, site)
-        assert native == frozenset({"10.2.10.11", "10.2.90.5"})
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 3
+        assert result[0].ip == "10.2.10.100"
+        assert result[0].machine == "shared-desktop"
+        assert result[1].ip == "10.2.10.11"
+        assert result[1].machine == "ten64"
+        assert result[2].ip == "10.2.90.5"
+        assert result[2].machine == "thermostat"
 
-    def test_welland_ips_not_native_on_monarto(self):
-        """10.1.X.X IPs are not native when site_octet=2."""
-        site = _site(site_octet=2)
-        records = [_record("10.1.10.11"), _record("10.1.90.5")]
-        native = collect_native_ips(records, site)
-        assert native == frozenset()
-
-    def test_mixed_sites(self):
-        """Only IPs matching site_octet are collected."""
-        site = _site(site_octet=2)
+    def test_same_records_for_welland(self):
+        """Same mixed records generate welland output."""
+        site = _site("welland", site_octet=1)
         records = [
-            _record("10.1.10.11"),  # welland — not native
-            _record("10.2.10.11"),  # monarto — native
-            _record("10.31.0.101"),  # global — not native (octet 31 != 2)
-            _record("10.2.90.5"),   # monarto — native
+            _record("10.X.10.100", site="", machine="shared-desktop"),
+            _record("10.2.10.11", site="monarto", machine="ten64"),
+            _record("10.1.10.11", site="welland", machine="ten64"),
+            _record("10.X.90.5", site="", machine="thermostat"),
         ]
-        native = collect_native_ips(records, site)
-        assert native == frozenset({"10.2.10.11", "10.2.90.5"})
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 3
+        assert result[0].ip == "10.1.10.100"
+        assert result[0].machine == "shared-desktop"
+        assert result[1].ip == "10.1.10.11"
+        assert result[1].machine == "ten64"
+        assert result[2].ip == "10.1.90.5"
+        assert result[2].machine == "thermostat"
 
     def test_empty_records(self):
-        site = _site(site_octet=2)
-        assert collect_native_ips([], site) == frozenset()
+        site = _site("monarto")
+        assert filter_and_resolve_records([], site) == []
 
-    def test_records_with_missing_ip(self):
-        """Records with empty IP are skipped."""
-        site = _site(site_octet=2)
-        records = [DeviceRecord(sheet_name="network", row_number=1, ip="")]
-        assert collect_native_ips(records, site) == frozenset()
+    def test_original_record_not_mutated(self):
+        """Records with X get new objects; originals unchanged."""
+        site = _site("monarto", site_octet=2)
+        original = _record("10.X.10.100")
+        result = filter_and_resolve_records([original], site)
+        assert original.ip == "10.X.10.100"  # unchanged
+        assert result[0].ip == "10.2.10.100"
 
-    def test_non_10_ips_ignored(self):
-        """172.X and other non-10.X IPs are never native."""
-        site = _site(site_octet=2)
-        records = [_record("172.16.2.1"), _record("192.168.2.1")]
-        assert collect_native_ips(records, site) == frozenset()
-
-
-class TestRemapCollisionDetection:
-    """Remap returns None when the target IP already exists natively."""
-
-    def test_collision_returns_none(self):
-        """10.1.10.11 → None when 10.2.10.11 is a native IP (site_octet=2)."""
-        site = _site(site_octet=2)
-        native = frozenset({"10.2.10.11"})
-        result = remap_ipv4_to_site(
-            IPv4Address("10.1.10.11"), site, native_ips=native
-        )
-        assert result is None
-
-    def test_no_collision_still_remaps(self):
-        """10.1.10.124 → 10.2.10.124 when 10.2.10.124 is NOT a native IP."""
-        site = _site(site_octet=2)
-        native = frozenset({"10.2.10.11"})  # different IP
-        result = remap_ipv4_to_site(
-            IPv4Address("10.1.10.124"), site, native_ips=native
-        )
-        assert str(result) == "10.2.10.124"
-
-    def test_native_ip_passes_through(self):
-        """10.2.10.11 stays 10.2.10.11 — it IS the native IP, not a collision."""
-        site = _site(site_octet=2)
-        native = frozenset({"10.2.10.11"})
-        result = remap_ipv4_to_site(
-            IPv4Address("10.2.10.11"), site, native_ips=native
-        )
-        assert str(result) == "10.2.10.11"
-
-    def test_global_vlan_never_collides(self):
-        """Global VLANs are not remapped, so collision check doesn't apply."""
-        site = _site(site_octet=2)
-        native = frozenset({"10.2.0.101"})  # irrelevant
-        result = remap_ipv4_to_site(
-            IPv4Address("10.31.0.101"), site, native_ips=native
-        )
-        assert str(result) == "10.31.0.101"
-
-    def test_empty_native_ips_no_collision(self):
-        """Default empty native_ips means no collision detection."""
-        site = _site(site_octet=2)
-        result = remap_ipv4_to_site(IPv4Address("10.1.10.11"), site)
-        assert str(result) == "10.2.10.11"
-
-    def test_multiple_collisions(self):
-        """Multiple native IPs all cause collision returns."""
-        site = _site(site_octet=2)
-        native = frozenset({"10.2.10.11", "10.2.90.5", "10.2.5.1"})
-        for welland_ip, expected_none in [
-            ("10.1.10.11", True),   # collides with 10.2.10.11
-            ("10.1.90.5", True),    # collides with 10.2.90.5
-            ("10.1.5.1", True),     # collides with 10.2.5.1
-            ("10.1.10.124", False), # no collision
-        ]:
-            result = remap_ipv4_to_site(
-                IPv4Address(welland_ip), site, native_ips=native
-            )
-            if expected_none:
-                assert result is None, f"{welland_ip} should collide"
-            else:
-                assert result is not None, f"{welland_ip} should not collide"
+    def test_no_x_record_not_copied(self):
+        """Records without X are reused (not needlessly copied)."""
+        site = _site("monarto", site_octet=2)
+        original = _record("10.2.10.11", site="monarto")
+        result = filter_and_resolve_records([original], site)
+        assert result[0] is original

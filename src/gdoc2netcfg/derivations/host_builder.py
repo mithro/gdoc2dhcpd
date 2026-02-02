@@ -14,7 +14,7 @@ from gdoc2netcfg.derivations.dns_names import (
     derive_all_dns_names,
 )
 from gdoc2netcfg.derivations.hardware import detect_hardware_type
-from gdoc2netcfg.derivations.ip_remap import collect_native_ips, remap_ipv4_to_site
+from gdoc2netcfg.derivations.ip_remap import filter_and_resolve_records
 from gdoc2netcfg.derivations.ipv6 import ipv4_to_ipv6_list
 from gdoc2netcfg.derivations.vlan import ip_to_subdomain, ip_to_vlan_id
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
@@ -23,20 +23,10 @@ from gdoc2netcfg.models.network import Site
 from gdoc2netcfg.sources.parser import DeviceRecord
 
 
-def _build_interface(
-    record: DeviceRecord,
-    site: Site,
-    native_ips: frozenset[str],
-) -> NetworkInterface | None:
-    """Build a NetworkInterface from a single DeviceRecord.
-
-    Returns None if the record's IP belongs to another site and the
-    current site already has a native record at the equivalent IP.
-    """
+def _build_interface(record: DeviceRecord, site: Site) -> NetworkInterface:
+    """Build a NetworkInterface from a single DeviceRecord."""
     mac = MACAddress.parse(record.mac_address)
-    ipv4 = remap_ipv4_to_site(IPv4Address(record.ip), site, native_ips=native_ips)
-    if ipv4 is None:
-        return None
+    ipv4 = IPv4Address(record.ip)
     ipv6_addrs = ipv4_to_ipv6_list(ipv4, site.active_ipv6_prefixes)
     vlan_id = ip_to_vlan_id(ipv4, site)
     interface_name = record.interface if record.interface else None
@@ -82,11 +72,12 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
     independent network entities.
 
     Records missing required fields (machine, mac, ip) are skipped
-    with a warning.  Records from other sites whose IPs would collide
-    with native IPs for this site are also skipped.
+    with a warning.  Records whose site column doesn't match are
+    filtered out, and 'X' placeholders in IPs are resolved to the
+    site's octet.
     """
-    # Pre-compute native IPs for collision detection during remapping
-    native_ips = collect_native_ips(records, site)
+    # Filter for this site and resolve 'X' placeholders in IPs
+    records = filter_and_resolve_records(records, site)
 
     # Group records by hostname to build hosts.
     # BMC interfaces get their own hostname: {interface}.{machine_hostname}
@@ -127,9 +118,7 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
         is_bmc_host = hostname in bmc_hostnames
         interfaces = []
         for r in group:
-            iface = _build_interface(r, site, native_ips)
-            if iface is None:
-                continue  # Skipped: other-site record with native collision
+            iface = _build_interface(r, site)
             if is_bmc_host:
                 # BMC host: strip the interface name so it becomes
                 # the bare/default interface (None)
@@ -142,9 +131,6 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
                     dhcp_name=iface.dhcp_name,
                 )
             interfaces.append(iface)
-
-        if not interfaces:
-            continue  # All interfaces skipped (all from another site)
 
         # Compute default IP
         interface_ips: dict[str | None, IPv4Address] = {}
