@@ -48,3 +48,7 @@ dnsmasq_service = "dnsmasq@external"
 
 [generators.nagios]
 output = "nagios-switches.cfg"
+
+[generators.topology]
+output = "topology.dot"
+show_unknown_macs = "false"

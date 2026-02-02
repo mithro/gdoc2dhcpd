@@ -202,6 +202,7 @@ def _get_generator(name: str):
         "nagios": ("gdoc2netcfg.generators.nagios", "generate_nagios"),
         "letsencrypt": ("gdoc2netcfg.generators.letsencrypt", "generate_letsencrypt"),
         "nginx": ("gdoc2netcfg.generators.nginx", "generate_nginx"),
+        "topology": ("gdoc2netcfg.generators.topology", "generate_topology"),
     }
     if name not in generators:
         return None
@@ -293,6 +294,11 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 kwargs["acme_webroot"] = gen_config.params["acme_webroot"]
             if gen_config.params.get("htpasswd_file"):
                 kwargs["htpasswd_file"] = gen_config.params["htpasswd_file"]
+        elif name == "topology" and gen_config:
+            if gen_config.params.get("show_unknown_macs"):
+                kwargs["show_unknown_macs"] = (
+                    gen_config.params["show_unknown_macs"].lower() == "true"
+                )
 
         output = gen_func(inventory, **kwargs)
 
