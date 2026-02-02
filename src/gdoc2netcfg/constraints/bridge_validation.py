@@ -15,7 +15,7 @@ from gdoc2netcfg.constraints.errors import (
 )
 
 if TYPE_CHECKING:
-    from gdoc2netcfg.models.host import Host
+    from gdoc2netcfg.models.host import Host, NetworkInventory
     from gdoc2netcfg.models.network import Site
 
 
@@ -68,3 +68,70 @@ def validate_vlan_names(
                 ))
 
     return result
+
+
+def _is_locally_administered(mac: str) -> bool:
+    """Check if a MAC address is locally administered (LAA).
+
+    Locally administered MACs have bit 1 of the first octet set.
+    These are used by containers, VMs, and virtual interfaces.
+    """
+    first_octet = int(mac.split(":")[0], 16)
+    return bool(first_octet & 0x02)
+
+
+def validate_mac_connectivity(
+    inventory: NetworkInventory,
+) -> ValidationResult:
+    """Cross-reference switch MAC tables with known spreadsheet MACs.
+
+    Reports unknown MACs seen on switches (not matching any host in
+    the inventory). Skips locally-administered MACs (containers/VMs).
+    """
+    result = ValidationResult()
+
+    # Build set of all known MACs from inventory (upper-cased for comparison)
+    known_macs: set[str] = set()
+    for host in inventory.hosts:
+        for mac in host.all_macs:
+            known_macs.add(str(mac).upper())
+
+    for host in inventory.hosts:
+        if host.bridge_data is None:
+            continue
+
+        for mac_str, vlan_id, _bridge_port, port_name in host.bridge_data.mac_table:
+            mac_upper = mac_str.upper()
+
+            # Skip locally administered MACs (containers, VMs)
+            if _is_locally_administered(mac_upper):
+                continue
+
+            # Skip known MACs
+            if mac_upper in known_macs:
+                continue
+
+            result.add(ConstraintViolation(
+                severity=Severity.WARNING,
+                code="bridge_unknown_mac",
+                message=(
+                    f"Unknown MAC {mac_upper} seen on {host.hostname} "
+                    f"port {port_name} VLAN {vlan_id}"
+                ),
+                record_id=host.hostname,
+                field="bridge_data.mac_table",
+            ))
+
+    return result
+
+
+def validate_lldp_topology(
+    inventory: NetworkInventory,
+) -> ValidationResult:
+    """Validate LLDP neighbor data against known inventory hostnames.
+
+    For each LLDP neighbor, checks if the sysName matches any known
+    hostname in the inventory. Reports unknown neighbors as warnings
+    for topology discovery purposes.
+    """
+    raise NotImplementedError("Task 7: validate_lldp_topology")
