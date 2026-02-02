@@ -78,6 +78,15 @@ class TestIsGlobalVlan:
     def test_invalid_cidr(self):
         assert _is_global_vlan("/abc") is False
 
+    def test_missing_leading_slash(self):
+        assert _is_global_vlan("16") is False
+
+    def test_negative_prefix(self):
+        assert _is_global_vlan("/-1") is False
+
+    def test_prefix_out_of_ipv4_range(self):
+        assert _is_global_vlan("/33") is False
+
 
 class TestBuildVlansFromDefinitions:
     def test_builds_all_vlans(self):

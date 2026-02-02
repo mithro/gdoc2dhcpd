@@ -99,6 +99,9 @@ def _compute_third_octets(ip_range: str, cidr: str, site_octet: int) -> tuple[in
 def _is_global_vlan(cidr: str) -> bool:
     """Determine if a VLAN is global based on its CIDR prefix length.
 
+    Args:
+        cidr: CIDR suffix including leading slash (e.g. '/16', '/24').
+
     Global VLANs use /16 or larger prefixes (e.g. 10.31.0.0/16) and are
     addressed by second octet rather than third octet within a site's
     address space.  Site-local VLANs use narrower prefixes (/17 or
@@ -108,9 +111,11 @@ def _is_global_vlan(cidr: str) -> bool:
     definitions work for any site regardless of which site's IP ranges
     appear in the IP Range column.
     """
-    prefix_len = cidr.lstrip("/")
+    if not cidr.startswith("/"):
+        return False
     try:
-        return int(prefix_len) <= 16
+        prefix = int(cidr[1:])
+        return 0 <= prefix <= 16
     except ValueError:
         return False
 
