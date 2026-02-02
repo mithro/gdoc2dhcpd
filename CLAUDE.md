@@ -90,35 +90,92 @@ Root-level scripts (`dnsmasq.py`, `sshfp.py`, `nagios.py`) are thin wrappers tha
 
 ## Production Deployment
 
-This runs on `ten64.welland.mithis.com` at `/opt/gdoc2netcfg/`.
+Deployed on two sites, both at `/opt/gdoc2netcfg/`:
+
+| Site | Host | IP scheme | IPv6 prefix | Generators |
+|------|------|-----------|-------------|------------|
+| welland | `ten64.welland.mithis.com` (10.1.10.1) | `10.1.X.X` | `2404:e80:a137:1XX::` | internal, external, nagios, nginx |
+| monarto | `ten64.monarto.mithis.com` (10.2.10.1) | `10.2.X.X` | `2404:e80:a137:2XX::` | internal only |
+
+Both sites share the same Google Spreadsheet. The spreadsheet uses `10.X.Y.Z` (literal `X` in the second octet) for devices that exist at multiple sites, and a "Site" column to restrict records to a specific site. The `site_octet` in each site's `gdoc2netcfg.toml` replaces the `X` placeholder.
 
 ### Deploying code changes
 
-Use SSH agent forwarding (`-A`) and `sudo --preserve-env=SSH_AUTH_SOCK` so that `git pull` can authenticate via the forwarded SSH key:
+Use SSH agent forwarding and `sudo -E` so that `git pull` can authenticate via the forwarded SSH key:
 
 ```bash
-ssh -A ten64.welland.mithis.com "cd /opt/gdoc2netcfg && sudo --preserve-env=SSH_AUTH_SOCK git pull"
+# Welland
+ssh -A ten64.welland.mithis.com "cd /opt/gdoc2netcfg && sudo -E git pull"
+
+# Monarto (via WireGuard tunnel)
+ssh -o ControlPath=none -o ForwardAgent=yes tim@10.255.0.2 \
+  "cd /opt/gdoc2netcfg && sudo -E git pull"
 ```
+
+Note: `uv` on monarto is at `~/.local/bin/uv` (not in PATH for non-interactive shells).
 
 ### dnsmasq
 
-Two split dnsmasq instances run via systemd template units (`dnsmasq@internal`, `dnsmasq@external`). Each instance has a top-level config (`/etc/dnsmasq.d/dnsmasq.{instance}.conf`) with `conf-dir=/etc/dnsmasq.d/{instance}` directives. Generated per-host `.conf` files are written directly into the `conf-dir` directories:
+#### Directory layout
 
-```bash
-sudo uv run gdoc2netcfg generate --output-dir /etc/dnsmasq.d dnsmasq_internal
-sudo uv run gdoc2netcfg generate --output-dir /etc/dnsmasq.d dnsmasq_external
-sudo systemctl restart dnsmasq@internal dnsmasq@external
+dnsmasq instances run via systemd template units (`dnsmasq@internal`, `dnsmasq@external`). Each instance has a top-level config at `/etc/dnsmasq.d/dnsmasq.{instance}.conf` with `conf-dir` directives:
+
+```
+/etc/dnsmasq.d/
+  dnsmasq.internal.conf          # conf-dir=shared, internal, internal/generated
+  dnsmasq.external.conf          # conf-dir=shared, external, external/generated (welland only)
+  shared/                        # Shared config (base, upstream, logging, edns)
+  internal/
+    00-listen.conf               # Listen addresses, bind-dynamic
+    02-cross-site.conf           # Cross-site DNS forwarding via WireGuard
+    03-auth-server.conf          # Auth DNS server config
+    04-dhcp-global.conf          # DHCP global settings
+    network-*.conf               # Per-VLAN DHCP ranges and domains
+    override-*.conf              # Manual per-device overrides
+    generated/                   # ← gdoc2netcfg output (wipe-and-replace safe)
+      ten64.conf
+      desktop.conf
+      ...
+  external/                      # Welland only
+    00-listen.conf
+    03-auth-dns.conf
+    dnsmasq.acme.*.conf          # ACME challenge records
+    generated/                   # ← gdoc2netcfg output (wipe-and-replace safe)
+      ...
 ```
 
-The `--output-dir /etc/dnsmasq.d` flag is required because each generator's `output_dir` config (`"internal"` or `"external"`) is resolved relative to it. Manual config files (`00-listen.conf`, `03-auth-dns.conf`, etc.) coexist in the same directories.
+Hand-crafted configs live in `internal/` and `external/`. Generated per-host configs live in `internal/generated/` and `external/generated/`. The `generated/` subdirectories can be wiped and replaced without affecting manual configs.
+
+#### Fetch, generate, and deploy
+
+```bash
+# On each site:
+cd /opt/gdoc2netcfg
+uv run gdoc2netcfg fetch
+uv run gdoc2netcfg generate --force
+
+# Deploy (wipe old generated configs, copy new ones)
+sudo rm -f /etc/dnsmasq.d/internal/generated/*.conf
+sudo cp internal/*.conf /etc/dnsmasq.d/internal/generated/
+sudo systemctl restart dnsmasq@internal
+
+# Welland also has external:
+sudo rm -f /etc/dnsmasq.d/external/generated/*.conf
+sudo cp external/*.conf /etc/dnsmasq.d/external/generated/
+sudo systemctl restart dnsmasq@external
+```
+
+#### Cross-site DNS forwarding
+
+The two sites forward DNS queries to each other via WireGuard tunnel (`10.255.0.1` welland, `10.255.0.2` monarto). Each site's `02-cross-site.conf` contains `server=` directives to forward the other site's domains, reverse IPv4 zones (`X.10.in-addr.arpa`), and reverse IPv6 zones through the tunnel.
 
 ### nginx
 
-Generated nginx configs are written to `/etc/nginx/sites-available/` and activated via symlinks in `/etc/nginx/sites-enabled/`.
+Generated nginx configs are written to `/etc/nginx/sites-available/` and activated via symlinks in `/etc/nginx/sites-enabled/`. Welland only.
 
 ### Let's Encrypt
 
-Certbot scripts are generated to `/opt/gdoc2netcfg/letsencrypt/`:
+Certbot scripts are generated to `/opt/gdoc2netcfg/letsencrypt/`. Welland only.
 
 ```bash
 sudo uv run gdoc2netcfg generate --output-dir /opt/gdoc2netcfg letsencrypt
