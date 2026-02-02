@@ -2,7 +2,11 @@
 
 from gdoc2netcfg.constraints.errors import Severity
 from gdoc2netcfg.constraints.snmp_validation import validate_snmp_availability
-from gdoc2netcfg.derivations.hardware import HARDWARE_NETGEAR_SWITCH, HARDWARE_SUPERMICRO_BMC
+from gdoc2netcfg.derivations.hardware import (
+    HARDWARE_NETGEAR_SWITCH,
+    HARDWARE_NETGEAR_SWITCH_PLUS,
+    HARDWARE_SUPERMICRO_BMC,
+)
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface, SNMPData
 from gdoc2netcfg.supplements.reachability import HostReachability
@@ -61,6 +65,17 @@ class TestKnownDeviceUp:
         )
         reachability = {
             "switch": HostReachability(hostname="switch", active_ips=("10.1.10.100",)),
+        }
+        result = validate_snmp_availability([host], reachability)
+        assert len(result.violations) == 0
+
+    def test_netgear_plus_up_no_snmp_ok(self):
+        """Netgear Plus device UP + no SNMP → no error (not SNMP-required)."""
+        host = _make_host("gs110emx-rack1", hardware_type=HARDWARE_NETGEAR_SWITCH_PLUS)
+        reachability = {
+            "gs110emx-rack1": HostReachability(
+                hostname="gs110emx-rack1", active_ips=("10.1.10.100",)
+            ),
         }
         result = validate_snmp_availability([host], reachability)
         assert len(result.violations) == 0

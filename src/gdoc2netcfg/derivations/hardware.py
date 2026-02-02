@@ -15,6 +15,13 @@ if TYPE_CHECKING:
 # Hardware type constants — use these in generators for matching
 HARDWARE_SUPERMICRO_BMC = "supermicro-bmc"
 HARDWARE_NETGEAR_SWITCH = "netgear-switch"
+HARDWARE_NETGEAR_SWITCH_PLUS = "netgear-switch-plus"
+
+# Netgear Plus/unmanaged models that lack SNMP support.
+# Matched case-insensitively against the hostname.
+NETGEAR_PLUS_MODELS: set[str] = {
+    "gs110emx",
+}
 
 # IEEE OUI prefixes registered to Super Micro Computer, Inc.
 # Source: https://maclookup.app/vendors/super-micro-computer-inc
@@ -60,6 +67,8 @@ def detect_hardware_type(host: "Host") -> str | None:
 
     Returns:
         "supermicro-bmc" if host has a BMC hostname AND a Supermicro OUI.
+        "netgear-switch-plus" if any interface has a Netgear OUI and hostname
+            matches a known Plus/unmanaged model.
         "netgear-switch" if any interface has a Netgear OUI.
         None if no match.
 
@@ -75,7 +84,12 @@ def detect_hardware_type(host: "Host") -> str | None:
         return HARDWARE_SUPERMICRO_BMC
 
     # Netgear switch: any interface with a Netgear OUI
+    # Plus/unmanaged models get a separate type (no SNMP, no cert deploy)
     if ouis & NETGEAR_OUIS:
+        hostname_lower = host.hostname.lower()
+        for model in NETGEAR_PLUS_MODELS:
+            if model in hostname_lower:
+                return HARDWARE_NETGEAR_SWITCH_PLUS
         return HARDWARE_NETGEAR_SWITCH
 
     return None

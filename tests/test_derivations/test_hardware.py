@@ -1,6 +1,7 @@
 """Tests for hardware type detection via MAC OUI."""
 
 from gdoc2netcfg.derivations.hardware import (
+    HARDWARE_NETGEAR_SWITCH_PLUS,
     NETGEAR_OUIS,
     SUPERMICRO_OUIS,
     detect_hardware_type,
@@ -81,6 +82,21 @@ class TestDetectHardwareType:
             default_ipv4=IPv4Address("10.1.10.100"),
         )
         assert detect_hardware_type(host) == "supermicro-bmc"
+
+    def test_netgear_plus_gs110emx(self):
+        """Netgear GS110EMX should be classified as netgear-switch-plus."""
+        host = _make_host("gs110emx-rack1", "28:80:88:ab:cd:ef")
+        assert detect_hardware_type(host) == HARDWARE_NETGEAR_SWITCH_PLUS
+
+    def test_netgear_plus_case_insensitive(self):
+        """Plus model matching should be case-insensitive."""
+        host = _make_host("GS110EMX-Rack1", "28:80:88:ab:cd:ef")
+        assert detect_hardware_type(host) == HARDWARE_NETGEAR_SWITCH_PLUS
+
+    def test_netgear_non_plus_still_netgear_switch(self):
+        """Netgear switch without a Plus model name stays netgear-switch."""
+        host = _make_host("switch-1", "28:80:88:ab:cd:ef")
+        assert detect_hardware_type(host) == "netgear-switch"
 
 
 class TestOUILists:
