@@ -433,10 +433,16 @@ def parse_poe_status(
         except (ValueError, IndexError):
             continue
 
+        if not value:
+            continue
+
         key = (group_index, port_index)
         if key not in ports:
             ports[key] = {}
-        ports[key][column] = int(value)
+        try:
+            ports[key][column] = int(value)
+        except ValueError:
+            continue
 
     result = []
     for (_, port_index), columns in ports.items():
