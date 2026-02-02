@@ -14,6 +14,7 @@ from gdoc2netcfg.derivations.dns_names import (
     derive_all_dns_names,
 )
 from gdoc2netcfg.derivations.hardware import detect_hardware_type
+from gdoc2netcfg.derivations.ip_remap import remap_ipv4_to_site
 from gdoc2netcfg.derivations.ipv6 import ipv4_to_ipv6_list
 from gdoc2netcfg.derivations.vlan import ip_to_subdomain, ip_to_vlan_id
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
@@ -25,7 +26,7 @@ from gdoc2netcfg.sources.parser import DeviceRecord
 def _build_interface(record: DeviceRecord, site: Site) -> NetworkInterface:
     """Build a NetworkInterface from a single DeviceRecord."""
     mac = MACAddress.parse(record.mac_address)
-    ipv4 = IPv4Address(record.ip)
+    ipv4 = remap_ipv4_to_site(IPv4Address(record.ip), site)
     ipv6_addrs = ipv4_to_ipv6_list(ipv4, site.active_ipv6_prefixes)
     vlan_id = ip_to_vlan_id(ipv4, site)
     interface_name = record.interface if record.interface else None
