@@ -5,6 +5,7 @@ Subcommands:
     generate   Run the pipeline and produce output config files.
     validate   Run constraint checks on the data.
     info       Show pipeline configuration.
+    reachability  Ping all hosts and report which are up/down.
     sshfp      Scan hosts for SSH fingerprints.
     snmp       Scan hosts for SNMP data.
 """
@@ -383,6 +384,39 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: reachability
+# ---------------------------------------------------------------------------
+
+def cmd_reachability(args: argparse.Namespace) -> int:
+    """Ping all hosts and report which are up/down."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
+
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    print("Checking host reachability...", file=sys.stderr)
+    reachability = check_all_hosts_reachability(hosts, verbose=True)
+
+    hosts_up = sum(1 for r in reachability.values() if r.is_up)
+    hosts_down = sum(1 for r in reachability.values() if not r.is_up)
+    print(f"\n{hosts_up} up, {hosts_down} down, {len(hosts)} total.")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: sshfp
 # ---------------------------------------------------------------------------
 
@@ -678,6 +712,9 @@ def main(argv: list[str] | None = None) -> int:
     # info
     subparsers.add_parser("info", help="Show pipeline configuration")
 
+    # reachability
+    subparsers.add_parser("reachability", help="Ping all hosts and report up/down")
+
     # sshfp
     sshfp_parser = subparsers.add_parser("sshfp", help="Scan hosts for SSH fingerprints")
     sshfp_parser.add_argument(
@@ -717,6 +754,7 @@ def main(argv: list[str] | None = None) -> int:
         "generate": cmd_generate,
         "validate": cmd_validate,
         "info": cmd_info,
+        "reachability": cmd_reachability,
         "sshfp": cmd_sshfp,
         "ssl-certs": cmd_ssl_certs,
         "snmp": cmd_snmp,
