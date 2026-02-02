@@ -92,6 +92,14 @@ Root-level scripts (`dnsmasq.py`, `sshfp.py`, `nagios.py`) are thin wrappers tha
 
 This runs on `ten64.welland.mithis.com` at `/opt/gdoc2netcfg/`.
 
+### Deploying code changes
+
+Use SSH agent forwarding (`-A`) and `sudo --preserve-env=SSH_AUTH_SOCK` so that `git pull` can authenticate via the forwarded SSH key:
+
+```bash
+ssh -A ten64.welland.mithis.com "cd /opt/gdoc2netcfg && sudo --preserve-env=SSH_AUTH_SOCK git pull"
+```
+
 ### dnsmasq
 
 Two split dnsmasq instances run via systemd template units (`dnsmasq@internal`, `dnsmasq@external`). Each instance has a top-level config (`/etc/dnsmasq.d/dnsmasq.{instance}.conf`) with `conf-dir=/etc/dnsmasq.d/{instance}` directives. Generated per-host `.conf` files are written directly into the `conf-dir` directories:
