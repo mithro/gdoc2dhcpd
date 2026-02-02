@@ -1,6 +1,7 @@
 """Tests for bridge/topology validation constraints."""
 
 from gdoc2netcfg.constraints.bridge_validation import (
+    validate_lldp_topology,
     validate_mac_connectivity,
     validate_vlan_names,
 )
@@ -288,3 +289,168 @@ class TestValidateMacConnectivity:
         warning_macs = {w.message.split()[2] for w in result.warnings}
         assert "00:00:00:00:00:01" in warning_macs
         assert "01:00:00:00:00:01" in warning_macs
+
+
+# --- Task 7: LLDP topology validation ---
+
+
+class TestValidateLldpTopology:
+    def test_known_neighbor_no_violation(self):
+        """LLDP neighbor matching a known hostname produces no warning."""
+        site = _make_site_with_vlans()
+        neighbor_switch = Host(
+            machine_name="sw-cisco-shed",
+            hostname="sw-cisco-shed",
+            interfaces=[
+                NetworkInterface(
+                    name="manage",
+                    mac=MACAddress.parse("c8:00:84:89:71:70"),
+                    ipv4=IPv4Address("10.1.5.35"),
+                ),
+            ],
+            hardware_type="netgear-switch",
+        )
+        switch = _make_switch_with_bridge(
+            "sw-test", [],
+            lldp_neighbors=((50, "sw-cisco-shed", "gi24", "C8:00:84:89:71:70"),),
+        )
+        inventory = _make_inventory_with_switch(switch, [neighbor_switch], site)
+        result = validate_lldp_topology(inventory)
+        assert result.is_valid
+        assert len(result.warnings) == 0
+
+    def test_unknown_lldp_neighbor_produces_warning(self):
+        """An LLDP neighbor not matching any hostname produces a warning."""
+        site = _make_site_with_vlans()
+        switch = _make_switch_with_bridge(
+            "sw-test", [],
+            lldp_neighbors=((50, "unknown-device", "eth0", "AA:BB:CC:DD:EE:FF"),),
+        )
+        inventory = _make_inventory_with_switch(switch, [], site)
+        result = validate_lldp_topology(inventory)
+        assert len(result.warnings) == 1
+        assert "unknown-device" in result.warnings[0].message
+        assert result.warnings[0].code == "bridge_unknown_lldp_neighbor"
+        assert result.warnings[0].severity == Severity.WARNING
+
+    def test_no_lldp_data_no_violations(self):
+        """Host with bridge_data but no LLDP neighbors produces no warnings."""
+        site = _make_site_with_vlans()
+        switch = _make_switch_with_bridge("sw-test", [])
+        inventory = _make_inventory_with_switch(switch, [], site)
+        result = validate_lldp_topology(inventory)
+        assert result.is_valid
+        assert len(result.warnings) == 0
+
+    def test_fqdn_neighbor_matched_with_domain_stripped(self):
+        """LLDP sysName with FQDN should match after stripping domain suffix."""
+        site = _make_site_with_vlans()
+        # The host is known as "tweed" but LLDP reports "tweed.ext.k207.mithis.com"
+        neighbor = Host(
+            machine_name="tweed",
+            hostname="tweed",
+            interfaces=[
+                NetworkInterface(
+                    name=None,
+                    mac=MACAddress.parse("aa:bb:cc:00:11:22"),
+                    ipv4=IPv4Address("10.1.10.50"),
+                ),
+            ],
+        )
+        switch = _make_switch_with_bridge(
+            "sw-test", [],
+            lldp_neighbors=(
+                (3, "tweed.ext.k207.mithis.com", "eth0", "AA:BB:CC:00:11:22"),
+            ),
+        )
+        inventory = _make_inventory_with_switch(switch, [neighbor], site)
+        result = validate_lldp_topology(inventory)
+        assert result.is_valid
+        assert len(result.warnings) == 0
+
+    def test_fqdn_neighbor_matched_as_is(self):
+        """LLDP sysName that exactly matches a hostname is not flagged."""
+        site = _make_site_with_vlans()
+        # The host is known with FQDN hostname
+        neighbor = Host(
+            machine_name="tweed.ext.k207.mithis.com",
+            hostname="tweed.ext.k207.mithis.com",
+            interfaces=[
+                NetworkInterface(
+                    name=None,
+                    mac=MACAddress.parse("aa:bb:cc:00:11:22"),
+                    ipv4=IPv4Address("10.1.10.50"),
+                ),
+            ],
+        )
+        switch = _make_switch_with_bridge(
+            "sw-test", [],
+            lldp_neighbors=(
+                (3, "tweed.ext.k207.mithis.com", "eth0", "AA:BB:CC:00:11:22"),
+            ),
+        )
+        inventory = _make_inventory_with_switch(switch, [neighbor], site)
+        result = validate_lldp_topology(inventory)
+        assert result.is_valid
+        assert len(result.warnings) == 0
+
+    def test_hosts_without_bridge_data_skipped(self):
+        """Hosts without bridge_data are skipped for LLDP checks."""
+        site = _make_site_with_vlans()
+        desktop = Host(
+            machine_name="desktop",
+            hostname="desktop",
+            interfaces=[
+                NetworkInterface(
+                    name=None,
+                    mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
+                    ipv4=IPv4Address("10.1.10.5"),
+                ),
+            ],
+        )
+        inventory = _make_inventory_with_switch(desktop, [], site)
+        result = validate_lldp_topology(inventory)
+        assert result.is_valid
+        assert len(result.warnings) == 0
+
+    def test_multiple_lldp_neighbors_mixed(self):
+        """Multiple LLDP neighbors: known ones pass, unknown produce warnings."""
+        site = _make_site_with_vlans()
+        known_host = Host(
+            machine_name="sw-known",
+            hostname="sw-known",
+            interfaces=[
+                NetworkInterface(
+                    name="manage",
+                    mac=MACAddress.parse("c8:00:84:89:71:70"),
+                    ipv4=IPv4Address("10.1.5.35"),
+                ),
+            ],
+        )
+        switch = _make_switch_with_bridge(
+            "sw-test", [],
+            lldp_neighbors=(
+                (50, "sw-known", "gi24", "C8:00:84:89:71:70"),
+                (51, "mystery-device", "eth1", "DD:EE:FF:00:11:22"),
+                (52, "another-mystery", "eth2", "DD:EE:FF:00:33:44"),
+            ),
+        )
+        inventory = _make_inventory_with_switch(switch, [known_host], site)
+        result = validate_lldp_topology(inventory)
+        assert len(result.warnings) == 2
+        warning_names = {w.message for w in result.warnings}
+        assert any("mystery-device" in msg for msg in warning_names)
+        assert any("another-mystery" in msg for msg in warning_names)
+
+    def test_warning_includes_switch_name_and_port_info(self):
+        """Warning message should include the local switch name for context."""
+        site = _make_site_with_vlans()
+        switch = _make_switch_with_bridge(
+            "sw-main", [],
+            lldp_neighbors=((25, "stranger", "ge-0/0/1", "11:22:33:44:55:66"),),
+        )
+        inventory = _make_inventory_with_switch(switch, [], site)
+        result = validate_lldp_topology(inventory)
+        assert len(result.warnings) == 1
+        assert "sw-main" in result.warnings[0].record_id
+        assert "stranger" in result.warnings[0].message

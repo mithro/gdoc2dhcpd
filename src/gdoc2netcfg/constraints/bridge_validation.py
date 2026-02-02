@@ -131,7 +131,46 @@ def validate_lldp_topology(
     """Validate LLDP neighbor data against known inventory hostnames.
 
     For each LLDP neighbor, checks if the sysName matches any known
-    hostname in the inventory. Reports unknown neighbors as warnings
-    for topology discovery purposes.
+    hostname in the inventory. Also tries matching after stripping the
+    domain suffix (e.g. "tweed.ext.k207.mithis.com" -> "tweed").
+    Reports unknown neighbors as informational warnings for topology
+    discovery purposes.
     """
-    raise NotImplementedError("Task 7: validate_lldp_topology")
+    result = ValidationResult()
+
+    # Build set of all known hostnames from inventory
+    known_hostnames: set[str] = set()
+    for host in inventory.hosts:
+        known_hostnames.add(host.hostname)
+
+    for host in inventory.hosts:
+        if host.bridge_data is None:
+            continue
+
+        for _local_ifindex, remote_sysname, remote_port_id, remote_chassis_mac in (
+            host.bridge_data.lldp_neighbors
+        ):
+            if not remote_sysname:
+                continue
+
+            # Check as-is first
+            if remote_sysname in known_hostnames:
+                continue
+
+            # Try stripping domain suffix (take first label before '.')
+            short_name = remote_sysname.split(".")[0]
+            if short_name in known_hostnames:
+                continue
+
+            result.add(ConstraintViolation(
+                severity=Severity.WARNING,
+                code="bridge_unknown_lldp_neighbor",
+                message=(
+                    f"LLDP neighbor {remote_sysname!r} on port {remote_port_id} "
+                    f"(chassis {remote_chassis_mac}) not found in inventory"
+                ),
+                record_id=host.hostname,
+                field="bridge_data.lldp_neighbors",
+            ))
+
+    return result
