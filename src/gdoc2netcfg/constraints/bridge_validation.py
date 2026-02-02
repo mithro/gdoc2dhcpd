@@ -1,0 +1,70 @@
+"""Bridge/topology validation constraints.
+
+Validates switch bridge data (MAC tables, VLAN config, LLDP neighbors)
+against the spreadsheet inventory.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from gdoc2netcfg.constraints.errors import (
+    ConstraintViolation,
+    Severity,
+    ValidationResult,
+)
+
+if TYPE_CHECKING:
+    from gdoc2netcfg.models.host import Host
+    from gdoc2netcfg.models.network import Site
+
+
+def validate_vlan_names(
+    hosts: list[Host],
+    site: Site,
+) -> ValidationResult:
+    """Validate VLAN names on switches match the VLAN Allocations spreadsheet.
+
+    For each switch with bridge_data, compares dot1qVlanStaticName entries
+    against site.vlans. Reports:
+    - Name mismatches (switch says "foo", spreadsheet says "bar")
+    - Unknown VLANs on switch (not in spreadsheet)
+
+    VLAN 1 named "Default" is always accepted (standard switch default).
+    """
+    result = ValidationResult()
+
+    for host in hosts:
+        if host.bridge_data is None:
+            continue
+
+        for vlan_id, switch_name in host.bridge_data.vlan_names:
+            # VLAN 1 "Default" is standard and always acceptable
+            if vlan_id == 1 and switch_name == "Default":
+                continue
+
+            spreadsheet_vlan = site.vlans.get(vlan_id)
+            if spreadsheet_vlan is None:
+                result.add(ConstraintViolation(
+                    severity=Severity.WARNING,
+                    code="bridge_unknown_vlan",
+                    message=(
+                        f"VLAN {vlan_id} ({switch_name!r}) exists on switch "
+                        f"but is not in VLAN Allocations spreadsheet"
+                    ),
+                    record_id=host.hostname,
+                    field="bridge_data.vlan_names",
+                ))
+            elif spreadsheet_vlan.name != switch_name:
+                result.add(ConstraintViolation(
+                    severity=Severity.WARNING,
+                    code="bridge_vlan_name_mismatch",
+                    message=(
+                        f"VLAN {vlan_id} named {switch_name!r} on switch "
+                        f"but {spreadsheet_vlan.name!r} in spreadsheet"
+                    ),
+                    record_id=host.hostname,
+                    field="bridge_data.vlan_names",
+                ))
+
+    return result
