@@ -581,6 +581,20 @@ def cmd_bridge(args: argparse.Namespace) -> int:
 
     enrich_hosts_with_bridge_data(hosts, bridge_data)
 
+    # Run bridge validations
+    from gdoc2netcfg.constraints.bridge_validation import (
+        validate_lldp_topology,
+        validate_mac_connectivity,
+        validate_vlan_names,
+    )
+    from gdoc2netcfg.derivations.host_builder import build_inventory
+
+    inventory = build_inventory(hosts, config.site)
+
+    vlan_result = validate_vlan_names(hosts, config.site)
+    mac_result = validate_mac_connectivity(inventory)
+    lldp_result = validate_lldp_topology(inventory)
+
     # Report
     switches_with_data = sum(1 for h in hosts if h.bridge_data is not None)
     total_macs = sum(
@@ -589,7 +603,21 @@ def cmd_bridge(args: argparse.Namespace) -> int:
     print(f"\nBridge data for {switches_with_data} switches "
           f"({total_macs} MAC table entries).")
 
-    return 0
+    # Report validation results
+    has_errors = False
+    validations = [
+        ("VLAN names", vlan_result),
+        ("MAC connectivity", mac_result),
+        ("LLDP topology", lldp_result),
+    ]
+    for name, vr in validations:
+        if vr.violations:
+            print(f"\n{name}:")
+            print(vr.report())
+        if vr.has_errors:
+            has_errors = True
+
+    return 1 if has_errors else 0
 
 
 # ---------------------------------------------------------------------------
