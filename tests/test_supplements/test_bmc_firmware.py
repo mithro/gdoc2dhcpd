@@ -23,7 +23,12 @@ from gdoc2netcfg.supplements.bmc_firmware import (
 from gdoc2netcfg.supplements.reachability import HostReachability
 
 
-def _make_host(hostname="bmc.server", ip="10.1.5.10", hardware_type=HARDWARE_SUPERMICRO_BMC, extra=None):
+def _make_host(
+    hostname="bmc.server",
+    ip="10.1.5.10",
+    hardware_type=HARDWARE_SUPERMICRO_BMC,
+    extra=None,
+):
     return Host(
         machine_name=hostname,
         hostname=hostname,

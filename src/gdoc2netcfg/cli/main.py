@@ -98,6 +98,11 @@ def _build_pipeline(config):
     from gdoc2netcfg.constraints.validators import validate_all
     from gdoc2netcfg.derivations.host_builder import build_hosts, build_inventory
     from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.bmc_firmware import (
+        enrich_hosts_with_bmc_firmware,
+        load_bmc_firmware_cache,
+        refine_bmc_hardware_type,
+    )
     from gdoc2netcfg.supplements.snmp import enrich_hosts_with_snmp, load_snmp_cache
     from gdoc2netcfg.supplements.sshfp import enrich_hosts_with_sshfp, load_sshfp_cache
     from gdoc2netcfg.supplements.ssl_certs import enrich_hosts_with_ssl_certs, load_ssl_cert_cache
@@ -135,6 +140,12 @@ def _build_pipeline(config):
     ssl_cache = Path(config.cache.directory) / "ssl_certs.json"
     ssl_data = load_ssl_cert_cache(ssl_cache)
     enrich_hosts_with_ssl_certs(hosts, ssl_data)
+
+    # Load BMC firmware cache and refine hardware types (don't scan — separate subcommand)
+    bmc_fw_cache = Path(config.cache.directory) / "bmc_firmware.json"
+    bmc_fw_data = load_bmc_firmware_cache(bmc_fw_cache)
+    enrich_hosts_with_bmc_firmware(hosts, bmc_fw_data)
+    refine_bmc_hardware_type(hosts)
 
     # Load SNMP cache and enrich (don't scan — that's a separate subcommand)
     snmp_cache = Path(config.cache.directory) / "snmp.json"
@@ -479,6 +490,11 @@ def cmd_snmp(args: argparse.Namespace) -> int:
     from gdoc2netcfg.constraints.snmp_validation import validate_snmp_availability
     from gdoc2netcfg.derivations.host_builder import build_hosts
     from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.bmc_firmware import (
+        enrich_hosts_with_bmc_firmware,
+        refine_bmc_hardware_type,
+        scan_bmc_firmware,
+    )
     from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
     from gdoc2netcfg.supplements.snmp import (
         enrich_hosts_with_snmp,
@@ -500,6 +516,19 @@ def cmd_snmp(args: argparse.Namespace) -> int:
     # Run shared reachability pass
     print("Checking host reachability...", file=sys.stderr)
     reachability = check_all_hosts_reachability(hosts, verbose=True)
+
+    # Scan BMC firmware and reclassify legacy BMCs before SNMP
+    bmc_fw_cache = Path(config.cache.directory) / "bmc_firmware.json"
+    print("\nScanning BMC firmware...", file=sys.stderr)
+    bmc_fw_data = scan_bmc_firmware(
+        hosts,
+        cache_path=bmc_fw_cache,
+        force=args.force,
+        verbose=True,
+        reachability=reachability,
+    )
+    enrich_hosts_with_bmc_firmware(hosts, bmc_fw_data)
+    refine_bmc_hardware_type(hosts)
 
     cache_path = Path(config.cache.directory) / "snmp.json"
     print("\nScanning SNMP...", file=sys.stderr)
@@ -527,6 +556,75 @@ def cmd_snmp(args: argparse.Namespace) -> int:
         print(validation_result.report())
 
     return 1 if validation_result.has_errors else 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: bmc-firmware
+# ---------------------------------------------------------------------------
+
+def cmd_bmc_firmware(args: argparse.Namespace) -> int:
+    """Scan BMCs for firmware information."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.derivations.hardware import (
+        HARDWARE_SUPERMICRO_BMC,
+        HARDWARE_SUPERMICRO_BMC_LEGACY,
+    )
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.bmc_firmware import (
+        enrich_hosts_with_bmc_firmware,
+        refine_bmc_hardware_type,
+        scan_bmc_firmware,
+    )
+    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
+
+    # Minimal pipeline to get hosts with IPs
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    # Check reachability
+    print("Checking host reachability...", file=sys.stderr)
+    reachability = check_all_hosts_reachability(hosts, verbose=True)
+
+    # Scan BMC firmware
+    cache_path = Path(config.cache.directory) / "bmc_firmware.json"
+    print("\nScanning BMC firmware...", file=sys.stderr)
+    fw_data = scan_bmc_firmware(
+        hosts,
+        cache_path=cache_path,
+        force=args.force,
+        verbose=True,
+        reachability=reachability,
+    )
+
+    # Enrich and refine
+    enrich_hosts_with_bmc_firmware(hosts, fw_data)
+    refine_bmc_hardware_type(hosts)
+
+    # Report
+    bmcs_total = sum(
+        1 for h in hosts
+        if h.hardware_type in (HARDWARE_SUPERMICRO_BMC, HARDWARE_SUPERMICRO_BMC_LEGACY)
+    )
+    bmcs_with_info = sum(1 for h in hosts if h.bmc_firmware_info is not None)
+    legacy_count = sum(
+        1 for h in hosts if h.hardware_type == HARDWARE_SUPERMICRO_BMC_LEGACY
+    )
+
+    print(f"\nBMC firmware info for {bmcs_with_info}/{bmcs_total} BMCs.")
+    if legacy_count > 0:
+        print(f"{legacy_count} legacy BMC(s) detected (X9 or earlier, no SNMP).")
+
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +693,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Force re-scan even if cache is fresh",
     )
 
+    # bmc-firmware
+    bmc_parser = subparsers.add_parser("bmc-firmware", help="Scan BMCs for firmware info")
+    bmc_parser.add_argument(
+        "--force", action="store_true",
+        help="Force re-scan even if cache is fresh",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -609,6 +714,7 @@ def main(argv: list[str] | None = None) -> int:
         "sshfp": cmd_sshfp,
         "ssl-certs": cmd_ssl_certs,
         "snmp": cmd_snmp,
+        "bmc-firmware": cmd_bmc_firmware,
     }
 
     return commands[args.command](args)
