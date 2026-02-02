@@ -9,146 +9,45 @@ with additional data from external systems (SNMP agents).
 
 pysnmp v7 is async-only. Individual SNMP operations use async/await,
 wrapped in asyncio.run() from the synchronous scan_snmp().
+
+Low-level SNMP operations (system GET, bulk walk, credential cascade,
+JSON cache I/O) live in snmp_common.py and are shared with bridge.py.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gdoc2netcfg.models.host import SNMPData
+from gdoc2netcfg.supplements.snmp_common import (
+    load_json_cache,
+    save_json_cache,
+    snmp_bulk_walk,
+    snmp_get_system,
+)
 
 if TYPE_CHECKING:
     from gdoc2netcfg.models.host import Host
     from gdoc2netcfg.supplements.reachability import HostReachability
 
-# System group OIDs (SNMPv2-MIB)
-_SYSTEM_OIDS = {
-    "sysDescr": "1.3.6.1.2.1.1.1.0",
-    "sysObjectID": "1.3.6.1.2.1.1.2.0",
-    "sysUpTime": "1.3.6.1.2.1.1.3.0",
-    "sysContact": "1.3.6.1.2.1.1.4.0",
-    "sysName": "1.3.6.1.2.1.1.5.0",
-    "sysLocation": "1.3.6.1.2.1.1.6.0",
-}
+# Re-export cache functions for backward compatibility.
+# Existing code imports load_snmp_cache / save_snmp_cache from this module.
+load_snmp_cache = load_json_cache
+save_snmp_cache = save_json_cache
 
-# Table OIDs for bulk walk
+# Host-level table OIDs for bulk walk
 _IF_TABLE_OID = "1.3.6.1.2.1.2.2"       # ifTable
 _IP_ADDR_TABLE_OID = "1.3.6.1.2.1.4.20"  # ipAddrTable
-
-
-async def _snmp_get_system(
-    ip: str,
-    community: str = "public",
-    timeout: float = 2.0,
-    retries: int = 1,
-) -> dict[str, str] | None:
-    """Query SNMP system group OIDs via SNMPv2c GET.
-
-    Returns dict of name→value for system group, or None on failure.
-    """
-    from pysnmp.hlapi.v3arch.asyncio import (
-        CommunityData,
-        ContextData,
-        ObjectIdentity,
-        ObjectType,
-        SnmpEngine,
-        UdpTransportTarget,
-        get_cmd,
-    )
-
-    engine = SnmpEngine()
-    try:
-        target = await UdpTransportTarget.create(
-            (ip, 161), timeout=timeout, retries=retries
-        )
-        var_binds = [
-            ObjectType(ObjectIdentity(oid)) for oid in _SYSTEM_OIDS.values()
-        ]
-
-        error_indication, error_status, _error_index, result_binds = await get_cmd(
-            engine,
-            CommunityData(community),
-            target,
-            ContextData(),
-            *var_binds,
-        )
-
-        if error_indication or error_status:
-            return None
-
-        oid_to_name = {v: k for k, v in _SYSTEM_OIDS.items()}
-        system_info = {}
-        for var_bind in result_binds:
-            oid_str = str(var_bind[0])
-            value_str = str(var_bind[1])
-            name = oid_to_name.get(oid_str, oid_str)
-            system_info[name] = value_str
-
-        return system_info
-    except Exception:
-        return None
-    finally:
-        engine.close_dispatcher()
-
-
-async def _snmp_bulk_walk(
-    ip: str,
-    base_oid: str,
-    community: str = "public",
-    timeout: float = 2.0,
-    retries: int = 1,
-) -> list[tuple[str, str]]:
-    """Bulk walk an SNMP table and return OID→value pairs.
-
-    Returns list of (oid_string, value_string) tuples, or empty list on failure.
-    """
-    from pysnmp.hlapi.v3arch.asyncio import (
-        CommunityData,
-        ContextData,
-        ObjectIdentity,
-        ObjectType,
-        SnmpEngine,
-        UdpTransportTarget,
-        bulk_walk_cmd,
-    )
-
-    engine = SnmpEngine()
-    try:
-        target = await UdpTransportTarget.create(
-            (ip, 161), timeout=timeout, retries=retries
-        )
-
-        results = []
-        async for error_indication, error_status, _error_index, var_binds in bulk_walk_cmd(
-            engine,
-            CommunityData(community),
-            target,
-            ContextData(),
-            0, 25,  # nonRepeaters=0, maxRepetitions=25
-            ObjectType(ObjectIdentity(base_oid)),
-            lexicographicMode=False,
-        ):
-            if error_indication or error_status:
-                break
-            for var_bind in var_binds:
-                results.append((str(var_bind[0]), str(var_bind[1])))
-
-        return results
-    except Exception:
-        return []
-    finally:
-        engine.close_dispatcher()
 
 
 def _rows_from_walk(walk_results: list[tuple[str, str]]) -> list[dict[str, str]]:
     """Group walk results into per-index rows.
 
     SNMP tables encode the row index as the last OID component(s).
-    Groups results by index suffix into dicts of column→value.
+    Groups results by index suffix into dicts of column->value.
     """
     if not walk_results:
         return []
@@ -182,14 +81,19 @@ async def _collect_snmp_data(
 
     Attempts system group GET, then bulk walks interface and IP tables.
     Returns a dict suitable for JSON serialisation, or None on failure.
+
+    Uses shared infrastructure from snmp_common for the low-level
+    SNMP GET and bulk walk operations.
     """
-    system_info = await _snmp_get_system(ip, community, timeout)
+    from gdoc2netcfg.supplements.snmp_common import SYSTEM_OIDS
+
+    system_info = await snmp_get_system(ip, community, timeout)
     if system_info is None:
         return None
 
-    # System group succeeded — collect tables
-    if_walk = await _snmp_bulk_walk(ip, _IF_TABLE_OID, community, timeout)
-    ip_walk = await _snmp_bulk_walk(ip, _IP_ADDR_TABLE_OID, community, timeout)
+    # System group succeeded -- collect tables
+    if_walk = await snmp_bulk_walk(ip, _IF_TABLE_OID, community, timeout)
+    ip_walk = await snmp_bulk_walk(ip, _IP_ADDR_TABLE_OID, community, timeout)
 
     if_rows = _rows_from_walk(if_walk)
     ip_rows = _rows_from_walk(ip_walk)
@@ -197,7 +101,7 @@ async def _collect_snmp_data(
     # Build raw OID map from all collected data
     raw = dict(
         [(oid, val) for oid, val in
-         [(k, v) for k, v in zip(_SYSTEM_OIDS.values(), system_info.values())]
+         [(k, v) for k, v in zip(SYSTEM_OIDS.values(), system_info.values())]
          + if_walk + ip_walk]
     )
 
@@ -219,9 +123,8 @@ def _try_snmp_credentials(
     Credential order:
     1. SNMPv2c with community "public"
     2. SNMPv2c with host.extra["SNMP Community"] if present
-    3. SNMPv1 with community "public" (legacy fallback)
 
-    SNMPv3 support is deferred — requires additional pysnmp UsmUserData
+    SNMPv3 support is deferred -- requires additional pysnmp UsmUserData
     configuration that depends on auth/priv protocol selection.
 
     Returns collected SNMP data dict, or None if all attempts fail.
@@ -239,21 +142,6 @@ def _try_snmp_credentials(
             return result
 
     return None
-
-
-def load_snmp_cache(cache_path: Path) -> dict[str, dict]:
-    """Load cached SNMP data from disk."""
-    if not cache_path.exists():
-        return {}
-    with open(cache_path) as f:
-        return json.load(f)
-
-
-def save_snmp_cache(cache_path: Path, data: dict[str, dict]) -> None:
-    """Save SNMP data to disk cache."""
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(cache_path, "w") as f:
-        json.dump(data, f, indent="  ", sort_keys=True)
 
 
 def scan_snmp(
