@@ -82,6 +82,30 @@ class SNMPData:
     raw: tuple[tuple[str, str], ...] = ()
 
 
+@dataclass(frozen=True)
+class BMCFirmwareInfo:
+    """BMC firmware information from ipmitool mc info.
+
+    Populated by the bmc_firmware supplement after probing Supermicro BMCs.
+
+    Attributes:
+        product_name: Board model from ipmitool (e.g. "X11SPM-T(P)F").
+        firmware_revision: BMC firmware version (e.g. "1.74").
+        ipmi_version: IPMI protocol version (e.g. "2.0").
+        series: Supermicro series number extracted from product_name
+            (e.g. 11 for X11, 9 for X9), or None if not parseable.
+        snmp_capable: Whether this BMC series supports SNMP.
+            True for X10+ (AST2400/2500/2600), False for X9 and earlier
+            (ATEN WPCM450).
+    """
+
+    product_name: str
+    firmware_revision: str
+    ipmi_version: str
+    series: int | None
+    snmp_capable: bool
+
+
 @dataclass
 class Host:
     """A logical host with one or more network interfaces.
@@ -111,6 +135,7 @@ class Host:
     hardware_type: str | None = None
     ssl_cert_info: SSLCertInfo | None = None
     snmp_data: SNMPData | None = None
+    bmc_firmware_info: BMCFirmwareInfo | None = None
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:
