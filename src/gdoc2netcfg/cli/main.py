@@ -141,6 +141,14 @@ def _build_pipeline(config):
     snmp_data = load_snmp_cache(snmp_cache)
     enrich_hosts_with_snmp(hosts, snmp_data)
 
+    # Load bridge cache and enrich (don't scan — that's a separate subcommand)
+    from gdoc2netcfg.supplements.bridge import enrich_hosts_with_bridge_data
+    from gdoc2netcfg.supplements.snmp_common import load_json_cache
+
+    bridge_cache_path = Path(config.cache.directory) / "bridge.json"
+    bridge_cache = load_json_cache(bridge_cache_path)
+    enrich_hosts_with_bridge_data(hosts, bridge_cache)
+
     # Validate
     result = validate_all(all_records, hosts, inventory)
 
@@ -530,6 +538,61 @@ def cmd_snmp(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: bridge
+# ---------------------------------------------------------------------------
+
+def cmd_bridge(args: argparse.Namespace) -> int:
+    """Scan switches for bridge/topology data."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.bridge import (
+        enrich_hosts_with_bridge_data,
+        scan_bridge,
+    )
+    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
+
+    # Minimal pipeline to get hosts with IPs
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    # Run shared reachability pass
+    print("Checking host reachability...", file=sys.stderr)
+    reachability = check_all_hosts_reachability(hosts, verbose=True)
+
+    cache_path = Path(config.cache.directory) / "bridge.json"
+    print("\nScanning bridge data...", file=sys.stderr)
+    bridge_data = scan_bridge(
+        hosts,
+        cache_path=cache_path,
+        force=args.force,
+        verbose=True,
+        reachability=reachability,
+    )
+
+    enrich_hosts_with_bridge_data(hosts, bridge_data)
+
+    # Report
+    switches_with_data = sum(1 for h in hosts if h.bridge_data is not None)
+    total_macs = sum(
+        len(h.bridge_data.mac_table) for h in hosts if h.bridge_data is not None
+    )
+    print(f"\nBridge data for {switches_with_data} switches "
+          f"({total_macs} MAC table entries).")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -595,6 +658,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Force re-scan even if cache is fresh",
     )
 
+    # bridge
+    bridge_parser = subparsers.add_parser("bridge", help="Scan switches for bridge/topology data")
+    bridge_parser.add_argument(
+        "--force", action="store_true",
+        help="Force re-scan even if cache is fresh",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -609,6 +679,7 @@ def main(argv: list[str] | None = None) -> int:
         "sshfp": cmd_sshfp,
         "ssl-certs": cmd_ssl_certs,
         "snmp": cmd_snmp,
+        "bridge": cmd_bridge,
     }
 
     return commands[args.command](args)
