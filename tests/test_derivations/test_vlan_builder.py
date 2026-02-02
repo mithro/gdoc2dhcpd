@@ -1,6 +1,7 @@
 """Tests for VLAN builder: VLANDefinition → VLAN model objects."""
 
 from gdoc2netcfg.derivations.vlan import (
+    _is_global_vlan,
     build_network_subdomains,
     build_vlans_from_definitions,
 )
@@ -53,6 +54,31 @@ def _welland_definitions() -> list[VLANDefinition]:
     ]
 
 
+class TestIsGlobalVlan:
+    """Unit tests for CIDR-based global VLAN detection."""
+
+    def test_slash_16_is_global(self):
+        assert _is_global_vlan("/16") is True
+
+    def test_slash_8_is_global(self):
+        assert _is_global_vlan("/8") is True
+
+    def test_slash_24_is_site_local(self):
+        assert _is_global_vlan("/24") is False
+
+    def test_slash_21_is_site_local(self):
+        assert _is_global_vlan("/21") is False
+
+    def test_slash_17_is_site_local(self):
+        assert _is_global_vlan("/17") is False
+
+    def test_empty_string(self):
+        assert _is_global_vlan("") is False
+
+    def test_invalid_cidr(self):
+        assert _is_global_vlan("/abc") is False
+
+
 class TestBuildVlansFromDefinitions:
     def test_builds_all_vlans(self):
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
@@ -89,7 +115,7 @@ class TestBuildVlansFromDefinitions:
         assert vlans[10].third_octets == (8, 9, 10, 11, 12, 13, 14, 15)
 
     def test_global_vlans_detected(self):
-        """VLANs 31 and 41 are global (second octet != site_octet)."""
+        """VLANs 31 and 41 are global (/16 prefix)."""
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
         assert vlans[31].is_global is True
         assert vlans[41].is_global is True
@@ -112,22 +138,32 @@ class TestBuildVlansFromDefinitions:
         # Global VLANs return empty
         assert vlans[31].covered_third_octets == ()
 
-    def test_monarto_site_octet(self):
-        """With site_octet=2, 10.2.X.X VLANs would be site-local."""
-        monarto_defs = [
-            VLANDefinition(
-                id=5, name="net", ip_range="10.2.5.X",
-                netmask="255.255.255.0", cidr="/24",
-            ),
-            VLANDefinition(
-                id=31, name="fpgas", ip_range="10.31.X.X",
-                netmask="255.255.0.0", cidr="/16",
-            ),
-        ]
-        vlans = build_vlans_from_definitions(monarto_defs, site_octet=2)
+    def test_monarto_uses_same_definitions(self):
+        """Welland definitions work for monarto (site_octet=2) without changes.
+
+        Global VLANs are detected by /16 CIDR, not by comparing the IP
+        range's second octet to site_octet.  This means the shared VLAN
+        Allocations sheet (which has 10.1.X.X IP ranges) produces correct
+        results for any site.
+        """
+        vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=2)
+
+        # All 10 VLANs built
+        assert len(vlans) == 10
+
+        # Site-local VLANs: same third octets regardless of site_octet
         assert vlans[5].is_global is False
         assert vlans[5].third_octets == (5,)
+        assert vlans[10].is_global is False
+        assert vlans[10].third_octets == (8, 9, 10, 11, 12, 13, 14, 15)
+        assert vlans[90].is_global is False
+        assert vlans[90].third_octets == (90,)
+
+        # Global VLANs: still detected by /16 CIDR
         assert vlans[31].is_global is True
+        assert vlans[31].third_octets == ()
+        assert vlans[41].is_global is True
+        assert vlans[41].third_octets == ()
 
 
 class TestBuildNetworkSubdomains:

@@ -96,20 +96,23 @@ def _compute_third_octets(ip_range: str, cidr: str, site_octet: int) -> tuple[in
     return tuple(range(first_third, last_third + 1))
 
 
-def _is_global_vlan(ip_range: str, site_octet: int) -> bool:
-    """Determine if a VLAN is global (second octet != site_octet).
+def _is_global_vlan(cidr: str) -> bool:
+    """Determine if a VLAN is global based on its CIDR prefix length.
 
-    Global VLANs like 10.31.X.X match on the second octet rather than
-    the third octet within the site's address space.
+    Global VLANs use /16 or larger prefixes (e.g. 10.31.0.0/16) and are
+    addressed by second octet rather than third octet within a site's
+    address space.  Site-local VLANs use narrower prefixes (/17 or
+    smaller, e.g. /21, /24).
+
+    This makes VLAN classification site-agnostic: the same spreadsheet
+    definitions work for any site regardless of which site's IP ranges
+    appear in the IP Range column.
     """
-    parts = ip_range.split(".")
-    if len(parts) < 2:
-        return False
+    prefix_len = cidr.lstrip("/")
     try:
-        second_octet = int(parts[1])
+        return int(prefix_len) <= 16
     except ValueError:
         return False
-    return second_octet != site_octet
 
 
 def build_vlans_from_definitions(
@@ -119,11 +122,11 @@ def build_vlans_from_definitions(
     """Convert VLANDefinition records into VLAN model objects.
 
     Computes third_octets from IP Range + CIDR, and detects global VLANs
-    where the second octet differs from the site_octet.
+    by CIDR prefix length (/16 or larger = global).
     """
     vlans: dict[int, VLAN] = {}
     for defn in definitions:
-        is_global = _is_global_vlan(defn.ip_range, site_octet)
+        is_global = _is_global_vlan(defn.cidr)
 
         if is_global:
             third_octets: tuple[int, ...] = ()
