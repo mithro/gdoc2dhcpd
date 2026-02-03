@@ -20,6 +20,10 @@ uv run gdoc2netcfg validate             # Run constraint validation
 
 Always use `uv run` to execute Python commands. Never use bare `python` or `pip`.
 
+## Development Workflow
+
+Make small, discrete commits as you work. Each logical unit of change (adding a helper function, wiring a parameter through the call chain, adding tests, updating docs) should be its own commit. Don't batch all changes into a single commit at the end.
+
 ## Architecture
 
 `gdoc2netcfg` reads network device data from a Google Spreadsheet and generates configuration files for network infrastructure services (dnsmasq, Nagios, nginx).
