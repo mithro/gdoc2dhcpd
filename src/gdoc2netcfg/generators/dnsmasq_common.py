@@ -43,6 +43,7 @@ def host_record_config(
     if not host.dns_names:
         return []
 
+    domain = inventory.site.domain
     output: list[str] = []
 
     for dns_name in host.dns_names:
@@ -52,6 +53,10 @@ def host_record_config(
 
         # Skip wildcard names (dnsmasq doesn't support wildcard host-records)
         if "*" in dns_name.name:
+            continue
+
+        # Skip FQDNs outside our authoritative zone
+        if dns_name.is_fqdn and not dns_name.name.endswith(f".{domain}"):
             continue
 
         addrs: list[str] = []

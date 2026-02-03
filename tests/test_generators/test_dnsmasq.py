@@ -201,7 +201,20 @@ class TestDnsmasqGenerator:
 
 
 class TestAltNames:
-    def test_alt_name_gets_host_record(self):
+    def test_in_zone_alt_name_gets_host_record(self):
+        host = _host_with_iface("desktop", "aa:bb:cc:dd:ee:ff", "10.1.10.1", dhcp_name="desktop")
+        host.alt_names = ["alias.welland.mithis.com"]
+        derive_all_dns_names(host, SITE)
+        inv = _make_inventory(
+            hosts=[host],
+            ip_to_hostname={"10.1.10.1": "desktop"},
+            ip_to_macs={"10.1.10.1": [(MACAddress.parse("aa:bb:cc:dd:ee:ff"), "desktop")]},
+        )
+        result = generate_dnsmasq_internal(inv)
+        output = result["desktop.conf"]
+        assert "host-record=alias.welland.mithis.com," in output
+
+    def test_out_of_zone_alt_name_excluded(self):
         host = _host_with_iface("desktop", "aa:bb:cc:dd:ee:ff", "10.1.10.1", dhcp_name="desktop")
         host.alt_names = ["alias.example.com"]
         derive_all_dns_names(host, SITE)
@@ -212,11 +225,11 @@ class TestAltNames:
         )
         result = generate_dnsmasq_internal(inv)
         output = result["desktop.conf"]
-        assert "host-record=alias.example.com," in output
+        assert "alias.example.com" not in output
 
     def test_wildcard_alt_name_excluded_from_host_record(self):
         host = _host_with_iface("desktop", "aa:bb:cc:dd:ee:ff", "10.1.10.1", dhcp_name="desktop")
-        host.alt_names = ["*.example.com"]
+        host.alt_names = ["*.welland.mithis.com"]
         derive_all_dns_names(host, SITE)
         inv = _make_inventory(
             hosts=[host],
@@ -225,11 +238,16 @@ class TestAltNames:
         )
         result = generate_dnsmasq_internal(inv)
         output = result["desktop.conf"]
-        assert "*.example.com" not in output
+        assert "*.welland.mithis.com" not in output
 
-    def test_mixed_alt_names_only_non_wildcards_in_host_record(self):
+    def test_mixed_alt_names_filters_correctly(self):
+        """Only non-wildcard, in-zone alt names produce host-records."""
         host = _host_with_iface("desktop", "aa:bb:cc:dd:ee:ff", "10.1.10.1", dhcp_name="desktop")
-        host.alt_names = ["alias.example.com", "*.example.com"]
+        host.alt_names = [
+            "alias.welland.mithis.com",   # in-zone, non-wildcard → included
+            "*.welland.mithis.com",        # in-zone, wildcard → excluded
+            "alias.example.com",           # out-of-zone → excluded
+        ]
         derive_all_dns_names(host, SITE)
         inv = _make_inventory(
             hosts=[host],
@@ -238,5 +256,6 @@ class TestAltNames:
         )
         result = generate_dnsmasq_internal(inv)
         output = result["desktop.conf"]
-        assert "host-record=alias.example.com," in output
-        assert "*.example.com" not in output
+        assert "host-record=alias.welland.mithis.com," in output
+        assert "*.welland.mithis.com" not in output
+        assert "alias.example.com" not in output
