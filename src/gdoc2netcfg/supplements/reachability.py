@@ -106,53 +106,68 @@ class HostReachability:
 def check_all_hosts_reachability(
     hosts: list[Host],
     verbose: bool = False,
+    max_workers: int = 64,
 ) -> dict[str, HostReachability]:
-    """Ping all IPs for each host and return reachability state.
+    """Ping all IPs for every host in parallel and return reachability state.
 
-    Iterates hosts sorted by reversed hostname (matching existing
-    supplement sort order). For each host, pings every interface IP
-    and records which responded.
+    All pings are submitted to a thread pool immediately.  Results are
+    collected per-host in sorted order so verbose output stays ordered
+    even though the actual pings run concurrently.
 
     Args:
         hosts: Host objects with IPs to check.
         verbose: Print progress to stderr.
+        max_workers: Maximum concurrent ping subprocesses.
 
     Returns:
         Mapping of hostname to HostReachability.
     """
     import sys
+    from concurrent.futures import Future, ThreadPoolExecutor
 
     result: dict[str, HostReachability] = {}
     sorted_hosts = sorted(hosts, key=lambda h: h.hostname.split(".")[::-1])
     name_width = max((len(h.hostname) for h in sorted_hosts), default=0)
 
-    for host in sorted_hosts:
-        active_ips = []
-        ip_results: list[tuple[str, PingResult]] = []
-        for iface in host.interfaces:
-            ip_str = str(iface.ipv4)
-            ping = check_reachable(ip_str)
-            ip_results.append((ip_str, ping))
-            if ping:
-                active_ips.append(ip_str)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        # Submit all pings up front.
+        host_futures: list[tuple[Host, list[tuple[str, Future[PingResult]]]]] = []
+        for host in sorted_hosts:
+            ip_futures = []
+            for iface in host.interfaces:
+                ip_str = str(iface.ipv4)
+                future = pool.submit(check_reachable, ip_str)
+                ip_futures.append((ip_str, future))
+            host_futures.append((host, ip_futures))
 
-        result[host.hostname] = HostReachability(
-            hostname=host.hostname,
-            active_ips=tuple(active_ips),
-        )
+        # Collect results in sorted order — blocks on each host's futures
+        # while remaining hosts continue pinging in the background.
+        for host, ip_futures in host_futures:
+            active_ips = []
+            ip_results: list[tuple[str, PingResult]] = []
+            for ip_str, future in ip_futures:
+                ping = future.result()
+                ip_results.append((ip_str, ping))
+                if ping:
+                    active_ips.append(ip_str)
 
-        if verbose:
-            parts = []
-            for ip_str, ping in ip_results:
-                part = f"{ip_str} {ping.received}/{ping.transmitted}"
-                if ping.rtt_avg_ms is not None:
-                    part += f" {ping.rtt_avg_ms:.1f}ms"
-                parts.append(part)
-            detail = ", ".join(parts)
-            label = "up" if result[host.hostname].is_up else "down"
-            print(
-                f"  {host.hostname:>{name_width}s} {label}({detail})",
-                file=sys.stderr,
+            result[host.hostname] = HostReachability(
+                hostname=host.hostname,
+                active_ips=tuple(active_ips),
             )
+
+            if verbose:
+                parts = []
+                for ip_str, ping in ip_results:
+                    part = f"{ip_str} {ping.received}/{ping.transmitted}"
+                    if ping.rtt_avg_ms is not None:
+                        part += f" {ping.rtt_avg_ms:.1f}ms"
+                    parts.append(part)
+                detail = ", ".join(parts)
+                label = "up" if result[host.hostname].is_up else "down"
+                print(
+                    f"  {host.hostname:>{name_width}s} {label}({detail})",
+                    file=sys.stderr,
+                )
 
     return result
