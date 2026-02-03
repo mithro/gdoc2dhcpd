@@ -1,52 +1,27 @@
+VENV := .venv
+VENV_BIN := $(VENV)/bin
 
-OUTPUT_DIR ?=
+# Create venv and install project with dev dependencies.
+# Re-runs when pyproject.toml or uv.lock change.
+$(VENV)/.stamp: pyproject.toml uv.lock
+	uv sync --dev
+	touch $@
 
-ifdef OUTPUT_DIR
-  OUTPUT_DIR_FLAG = --output-dir $(OUTPUT_DIR)
-else
-  OUTPUT_DIR_FLAG =
-endif
+setup: $(VENV)/.stamp
 
-all: fetch dnsmasq
-	true
+test: $(VENV)/.stamp
+	$(VENV_BIN)/pytest
 
-fetch:
-	uv run gdoc2netcfg fetch
+lint: $(VENV)/.stamp
+	$(VENV_BIN)/ruff check src/ tests/
 
-dnsmasq: dnsmasq_internal dnsmasq_external
-	true
+INSTALL_DIR := /opt/gdoc2netcfg
 
-dnsmasq_internal:
-	uv run gdoc2netcfg generate $(OUTPUT_DIR_FLAG) dnsmasq_internal
+install:
+	uv venv $(INSTALL_DIR)
+	uv pip install --python $(INSTALL_DIR)/bin/python .
 
-dnsmasq_external:
-	uv run gdoc2netcfg generate $(OUTPUT_DIR_FLAG) dnsmasq_external
+clean:
+	rm -rf $(VENV)
 
-sshfp:
-	uv run gdoc2netcfg sshfp --force
-	uv run gdoc2netcfg generate $(OUTPUT_DIR_FLAG) dnsmasq_internal
-
-dnsmasq.test:
-	dnsmasq --test -C /etc/dnsmasq.d/dnsmasq.internal.conf
-	dnsmasq --test -C /etc/dnsmasq.d/dnsmasq.external.conf
-
-dnsmasq.reload:
-	systemctl restart dnsmasq@internal dnsmasq@external
-	systemctl status dnsmasq@internal dnsmasq@external
-
-nginx:
-	uv run gdoc2netcfg generate $(OUTPUT_DIR_FLAG) nginx
-
-nagios:
-	uv run gdoc2netcfg generate nagios
-
-validate:
-	uv run gdoc2netcfg validate
-
-info:
-	uv run gdoc2netcfg info
-
-test:
-	uv run pytest
-
-.PHONY: all fetch dnsmasq dnsmasq_internal dnsmasq_external sshfp dnsmasq.test dnsmasq.reload nginx nagios validate info test
+.PHONY: setup test lint install clean
