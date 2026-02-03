@@ -6,10 +6,29 @@ from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface
 from gdoc2netcfg.supplements.reachability import (
     HostReachability,
+    PingResult,
     check_all_hosts_reachability,
     check_port_open,
     check_reachable,
 )
+
+
+class TestPingResult:
+    def test_truthy_when_received(self):
+        assert PingResult(5, 3, 1.2)
+        assert PingResult(5, 1)
+
+    def test_falsy_when_none_received(self):
+        assert not PingResult(5, 0)
+        assert not PingResult(0, 0)
+
+    def test_immutable(self):
+        pr = PingResult(5, 3)
+        try:
+            pr.received = 0
+            assert False, "Should have raised FrozenInstanceError"
+        except AttributeError:
+            pass
 
 
 class TestCheckReachable:
@@ -18,8 +37,13 @@ class TestCheckReachable:
         mock_run.return_value.stdout = (
             "PING 10.1.10.1 (10.1.10.1) 56(84) bytes of data.\n"
             "5 packets transmitted, 5 received, 0% packet loss\n"
+            "rtt min/avg/max/mdev = 0.100/0.250/0.400/0.100 ms\n"
         )
-        assert check_reachable("10.1.10.1") is True
+        result = check_reachable("10.1.10.1")
+        assert result
+        assert result.transmitted == 5
+        assert result.received == 5
+        assert result.rtt_avg_ms == 0.250
 
     @patch("gdoc2netcfg.supplements.reachability.subprocess.run")
     def test_unreachable_host(self, mock_run):
@@ -27,12 +51,19 @@ class TestCheckReachable:
             "PING 10.1.10.99 (10.1.10.99) 56(84) bytes of data.\n"
             "5 packets transmitted, 0 received, 100% packet loss\n"
         )
-        assert check_reachable("10.1.10.99") is False
+        result = check_reachable("10.1.10.99")
+        assert not result
+        assert result.transmitted == 5
+        assert result.received == 0
+        assert result.rtt_avg_ms is None
 
     @patch("gdoc2netcfg.supplements.reachability.subprocess.run")
     def test_custom_packet_count(self, mock_run):
         mock_run.return_value.stdout = "3 packets transmitted, 3 received"
-        assert check_reachable("10.1.10.1", packets=3) is True
+        result = check_reachable("10.1.10.1", packets=3)
+        assert result
+        assert result.transmitted == 3
+        assert result.received == 3
         args = mock_run.call_args[0][0]
         assert "-c" in args
         assert "3" in args
@@ -42,13 +73,21 @@ class TestCheckReachable:
         mock_run.return_value.stdout = (
             "PING 10.1.10.1 (10.1.10.1) 56(84) bytes of data.\n"
             "5 packets transmitted, 2 received, 60% packet loss\n"
+            "rtt min/avg/max/mdev = 0.500/1.200/1.900/0.500 ms\n"
         )
-        assert check_reachable("10.1.10.1") is True
+        result = check_reachable("10.1.10.1")
+        assert result
+        assert result.transmitted == 5
+        assert result.received == 2
+        assert result.rtt_avg_ms == 1.200
 
     @patch("gdoc2netcfg.supplements.reachability.subprocess.run")
     def test_ping_not_found(self, mock_run):
         mock_run.side_effect = FileNotFoundError
-        assert check_reachable("10.1.10.1") is False
+        result = check_reachable("10.1.10.1")
+        assert not result
+        assert result.transmitted == 0
+        assert result.received == 0
 
 
 class TestCheckPortOpen:

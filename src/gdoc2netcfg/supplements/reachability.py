@@ -16,7 +16,23 @@ if TYPE_CHECKING:
     from gdoc2netcfg.models.host import Host
 
 
-def check_reachable(ip: str, packets: int = 5) -> bool:
+@dataclass(frozen=True)
+class PingResult:
+    """Result of pinging a single IP address.
+
+    Truthy when at least one packet was received, so existing
+    ``if check_reachable(ip):`` callers keep working.
+    """
+
+    transmitted: int
+    received: int
+    rtt_avg_ms: float | None = None
+
+    def __bool__(self) -> bool:
+        return self.received >= 1
+
+
+def check_reachable(ip: str, packets: int = 5) -> PingResult:
     """Check if a host responds to ICMP ping.
 
     Args:
@@ -24,7 +40,7 @@ def check_reachable(ip: str, packets: int = 5) -> bool:
         packets: Number of ping packets to send.
 
     Returns:
-        True if at least one packet was received.
+        PingResult with packet counts and latency.
     """
     try:
         result = subprocess.run(
@@ -35,9 +51,20 @@ def check_reachable(ip: str, packets: int = 5) -> bool:
         match = re.search(
             r"(\d+) packets transmitted, (\d+) received", result.stdout
         )
-        return match is not None and int(match.group(2)) >= 1
+        if match is None:
+            return PingResult(packets, 0)
+        transmitted = int(match.group(1))
+        received = int(match.group(2))
+        rtt_avg = None
+        if received > 0:
+            rtt_match = re.search(
+                r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", result.stdout
+            )
+            if rtt_match:
+                rtt_avg = float(rtt_match.group(1))
+        return PingResult(transmitted, received, rtt_avg)
     except FileNotFoundError:
-        return False
+        return PingResult(0, 0)
 
 
 def check_port_open(ip: str, port: int, timeout: float = 0.5) -> bool:
@@ -101,9 +128,12 @@ def check_all_hosts_reachability(
 
     for host in sorted_hosts:
         active_ips = []
+        ip_results: list[tuple[str, PingResult]] = []
         for iface in host.interfaces:
             ip_str = str(iface.ipv4)
-            if check_reachable(ip_str):
+            ping = check_reachable(ip_str)
+            ip_results.append((ip_str, ping))
+            if ping:
                 active_ips.append(ip_str)
 
         result[host.hostname] = HostReachability(
@@ -112,10 +142,17 @@ def check_all_hosts_reachability(
         )
 
         if verbose:
-            if result[host.hostname].is_up:
-                status = f"up({','.join(active_ips)})"
-            else:
-                status = "down"
-            print(f"  {host.hostname:>{name_width}s} {status}", file=sys.stderr)
+            parts = []
+            for ip_str, ping in ip_results:
+                part = f"{ip_str} {ping.received}/{ping.transmitted}"
+                if ping.rtt_avg_ms is not None:
+                    part += f" {ping.rtt_avg_ms:.1f}ms"
+                parts.append(part)
+            detail = ", ".join(parts)
+            label = "up" if result[host.hostname].is_up else "down"
+            print(
+                f"  {host.hostname:>{name_width}s} {label}({detail})",
+                file=sys.stderr,
+            )
 
     return result
