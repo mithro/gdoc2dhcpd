@@ -303,6 +303,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 kwargs["acme_webroot"] = gen_config.params["acme_webroot"]
             if gen_config.params.get("htpasswd_file"):
                 kwargs["htpasswd_file"] = gen_config.params["htpasswd_file"]
+            if gen_config.params.get("https_listen"):
+                kwargs["https_listen"] = gen_config.params["https_listen"]
         elif name == "topology" and gen_config:
             if gen_config.params.get("show_unknown_macs"):
                 kwargs["show_unknown_macs"] = (

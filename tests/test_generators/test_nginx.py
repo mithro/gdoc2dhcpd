@@ -242,12 +242,49 @@ class TestHTTPBlock:
 
 class TestHTTPSBlock:
     def test_https_has_listen_443(self):
+        """Default (no https_listen) emits standard port 443 directives."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         block = files["sites-available/desktop.welland.mithis.com-https-public"]
         assert "listen 443 ssl;" in block
         assert "listen [::]:443 ssl;" in block
+
+    def test_https_listen_addr_port(self):
+        """https_listen='127.0.0.1:8443' binds to loopback on both stacks."""
+        host = _make_host()
+        files = generate_nginx(
+            _make_inventory(host), https_listen="127.0.0.1:8443",
+        )
+
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
+        assert "listen 127.0.0.1:8443 ssl;" in block
+        assert "listen [::1]:8443 ssl;" in block
+        assert "listen 443 ssl;" not in block
+
+    def test_https_listen_port_only(self):
+        """https_listen='8443' (port-only) binds to all interfaces."""
+        host = _make_host()
+        files = generate_nginx(
+            _make_inventory(host), https_listen="8443",
+        )
+
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
+        assert "listen 8443 ssl;" in block
+        assert "listen [::]:8443 ssl;" in block
+        assert "listen 443 ssl;" not in block
+
+    def test_https_listen_does_not_affect_http(self):
+        """HTTP blocks are unaffected by https_listen."""
+        host = _make_host()
+        files = generate_nginx(
+            _make_inventory(host), https_listen="127.0.0.1:8443",
+        )
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "listen 80;" in block
+        assert "listen [::]:80;" in block
+        assert "8443" not in block
 
     def test_https_has_ssl_cert_paths(self):
         host = _make_host()
@@ -499,6 +536,21 @@ class TestMultiInterfaceHost:
         # Interfaces use direct IP
         assert "proxy_pass https://10.1.90.149;" in blocks[1]
         assert "proxy_pass https://10.1.90.150;" in blocks[2]
+
+    def test_multi_iface_https_listen_in_all_server_blocks(self):
+        """https_listen is applied to all server blocks in a multi-interface config."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(
+            _make_inventory(host), https_listen="127.0.0.1:8443",
+        )
+
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-https-public"]
+        blocks = _extract_server_blocks(conf)
+        assert len(blocks) == 3
+        for block in blocks:
+            assert "listen 127.0.0.1:8443 ssl;" in block
+            assert "listen [::1]:8443 ssl;" in block
+            assert "listen 443 ssl;" not in block
 
 
 class TestPathValidation:

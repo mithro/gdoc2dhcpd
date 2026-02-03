@@ -39,6 +39,7 @@ output_dir = "external"
 [generators.nginx]
 acme_webroot = "/var/www/acme"
 htpasswd_file = "/etc/nginx/.htpasswd"
+https_listen = "127.0.0.1:8443"
 
 [generators.letsencrypt]
 auth_hook = "/opt/certbot/hooks/certbot-hook-dnsmasq/dnsmasq-hook.sh"

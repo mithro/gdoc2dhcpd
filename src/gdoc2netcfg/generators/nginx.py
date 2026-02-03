@@ -78,6 +78,27 @@ def _partition_dns_names(
     return root_names, iface_names
 
 
+def _parse_https_listen(value: str) -> tuple[str, str]:
+    """Parse https_listen config into (ipv4_listen, ipv6_listen) directives.
+
+    Returns the text after 'listen ' and before ' ssl;'.
+    """
+    if not value:
+        return ("443", "[::]:443")
+
+    if ":" in value:
+        # addr:port form like "127.0.0.1:8443"
+        host, port = value.rsplit(":", 1)
+        if host == "127.0.0.1":
+            ipv6_host = "[::1]"
+        else:
+            ipv6_host = f"[{host}]" if ":" not in host else host
+        return (f"{host}:{port}", f"{ipv6_host}:{port}")
+    else:
+        # Port-only form like "8443"
+        return (value, f"[::]:{value}")
+
+
 def _upstream_block(upstream_name: str, ips: list[str], port: int = 80) -> str:
     """Generate an nginx upstream block for failover.
 
@@ -96,10 +117,17 @@ def generate_nginx(
     inventory: NetworkInventory,
     acme_webroot: str = "/var/www/acme",
     htpasswd_file: str = "/etc/nginx/.htpasswd",
+    https_listen: str = "",
 ) -> dict[str, str]:
     """Generate nginx reverse proxy configs for each host.
 
     Returns a dict mapping relative paths to file contents.
+
+    Args:
+        https_listen: Override HTTPS listen directives. Examples:
+            "" (default) → listen 443 / [::]:443
+            "8443" → listen 8443 / [::]:8443
+            "127.0.0.1:8443" → listen 127.0.0.1:8443 / [::1]:8443
 
     Raises:
         ValueError: If acme_webroot or htpasswd_file contain unsafe characters.
@@ -108,6 +136,8 @@ def generate_nginx(
         raise ValueError(f"Unsafe acme_webroot path: {acme_webroot!r}")
     if not is_safe_path(htpasswd_file):
         raise ValueError(f"Unsafe htpasswd_file path: {htpasswd_file!r}")
+
+    listen_ipv4, listen_ipv6 = _parse_https_listen(https_listen)
 
     files: dict[str, str] = {}
 
@@ -141,6 +171,7 @@ def generate_nginx(
             _emit_four_files(
                 files, primary_fqdn, all_names, target_ip,
                 has_valid_cert, htpasswd_file,
+                listen_ipv4, listen_ipv6,
             )
         else:
             # Multi-interface host: single file per variant containing
@@ -182,6 +213,7 @@ def generate_nginx(
                 files, primary_fqdn, root_names,
                 all_ips, iface_configs,
                 has_valid_cert, htpasswd_file,
+                listen_ipv4, listen_ipv6,
             )
 
     return files
@@ -194,6 +226,8 @@ def _emit_four_files(
     target_ip: str,
     has_valid_cert: bool,
     htpasswd_file: str,
+    listen_ipv4: str = "443",
+    listen_ipv6: str = "[::]:443",
 ) -> None:
     """Emit the four config file variants for a single-interface host."""
     files[f"sites-available/{primary_fqdn}-http-public"] = _http_block(
@@ -205,10 +239,12 @@ def _emit_four_files(
     files[f"sites-available/{primary_fqdn}-https-public"] = _https_block(
         all_names, target_ip, primary_fqdn,
         verify=has_valid_cert, private=False,
+        listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
     )
     files[f"sites-available/{primary_fqdn}-https-private"] = _https_block(
         all_names, target_ip, primary_fqdn,
         verify=has_valid_cert, private=True, htpasswd_file=htpasswd_file,
+        listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
     )
 
 
@@ -220,6 +256,8 @@ def _emit_combined_four_files(
     iface_configs: list[tuple[list[str], str]],
     has_valid_cert: bool,
     htpasswd_file: str,
+    listen_ipv4: str = "443",
+    listen_ipv6: str = "[::]:443",
 ) -> None:
     """Emit four config files for a multi-interface host.
 
@@ -240,6 +278,7 @@ def _emit_combined_four_files(
             root_names, primary_fqdn,
             has_valid_cert, htpasswd_file,
             upstream_name=upstream_name,
+            listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
         ))
 
         # Per-interface server blocks (direct proxy_pass)
@@ -248,6 +287,7 @@ def _emit_combined_four_files(
                 iface_names, primary_fqdn,
                 has_valid_cert, htpasswd_file,
                 target_ip=iface_ip,
+                listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
             ))
 
         files[f"sites-available/{primary_fqdn}-{suffix}"] = "\n".join(parts)
@@ -260,6 +300,8 @@ def _build_http_public(
     htpasswd_file: str,
     upstream_name: str = "",
     target_ip: str = "",
+    listen_ipv4: str = "443",
+    listen_ipv6: str = "[::]:443",
 ) -> str:
     return _http_block(names, target_ip, private=False, upstream_name=upstream_name)
 
@@ -271,6 +313,8 @@ def _build_http_private(
     htpasswd_file: str,
     upstream_name: str = "",
     target_ip: str = "",
+    listen_ipv4: str = "443",
+    listen_ipv6: str = "[::]:443",
 ) -> str:
     return _http_block(
         names, target_ip, private=True,
@@ -285,10 +329,13 @@ def _build_https_public(
     htpasswd_file: str,
     upstream_name: str = "",
     target_ip: str = "",
+    listen_ipv4: str = "443",
+    listen_ipv6: str = "[::]:443",
 ) -> str:
     return _https_block(
         names, target_ip, primary_fqdn,
         verify=has_valid_cert, private=False, upstream_name=upstream_name,
+        listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
     )
 
 
@@ -299,11 +346,14 @@ def _build_https_private(
     htpasswd_file: str,
     upstream_name: str = "",
     target_ip: str = "",
+    listen_ipv4: str = "443",
+    listen_ipv6: str = "[::]:443",
 ) -> str:
     return _https_block(
         names, target_ip, primary_fqdn,
         verify=has_valid_cert, private=True,
         htpasswd_file=htpasswd_file, upstream_name=upstream_name,
+        listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
     )
 
 
@@ -387,8 +437,10 @@ def _https_block(
     private: bool,
     htpasswd_file: str = "",
     upstream_name: str = "",
+    listen_ipv4: str = "443",
+    listen_ipv6: str = "[::]:443",
 ) -> str:
-    """Generate an HTTPS (port 443) server block.
+    """Generate an HTTPS server block.
 
     When upstream_name is set, proxy_pass targets the upstream and
     proxy_next_upstream is added for failover.
@@ -397,8 +449,8 @@ def _https_block(
 
     lines = [
         "server {",
-        "    listen 443 ssl;",
-        "    listen [::]:443 ssl;",
+        f"    listen {listen_ipv4} ssl;",
+        f"    listen {listen_ipv6} ssl;",
         f"    server_name {_server_names(names)};",
         "",
         f"    ssl_certificate /etc/letsencrypt/live/{primary_fqdn}/fullchain.pem;",
