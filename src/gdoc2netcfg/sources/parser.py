@@ -8,6 +8,7 @@ pipeline stages.
 from __future__ import annotations
 
 import csv
+import io
 from dataclasses import dataclass, field
 
 
@@ -83,8 +84,7 @@ def parse_csv(csv_text: str, sheet_name: str) -> list[DeviceRecord]:
     Returns:
         List of DeviceRecord objects, one per valid row.
     """
-    lines = csv_text.splitlines()
-    reader = csv.reader(lines)
+    reader = csv.reader(io.StringIO(csv_text))
     rows = list(reader)
 
     if not rows:
