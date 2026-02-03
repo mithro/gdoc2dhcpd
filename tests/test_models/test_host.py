@@ -1,7 +1,13 @@
 """Tests for host data models."""
 
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
-from gdoc2netcfg.models.host import Host, NetworkInterface, NetworkInventory, SNMPData
+from gdoc2netcfg.models.host import (
+    Host,
+    NetworkInterface,
+    NetworkInventory,
+    SNMPData,
+    VirtualInterface,
+)
 from gdoc2netcfg.models.network import Site
 
 
@@ -88,8 +94,8 @@ class TestHost:
         assert not host.is_bmc()
 
     def test_is_multi_interface(self):
-        eth0 = _make_interface(name='eth0', mac='aa:bb:cc:dd:ee:01')
-        eth1 = _make_interface(name='eth1', mac='aa:bb:cc:dd:ee:02')
+        eth0 = _make_interface(name='eth0', mac='aa:bb:cc:dd:ee:01', ip='10.1.10.1')
+        eth1 = _make_interface(name='eth1', mac='aa:bb:cc:dd:ee:02', ip='10.1.20.1')
         host = Host(
             machine_name='server',
             hostname='server',
@@ -112,6 +118,95 @@ class TestHost:
             extra={'Driver': 'switch', 'Parent': 'router'},
         )
         assert host.extra['Driver'] == 'switch'
+
+
+class TestVirtualInterface:
+    def test_single_nic_produces_one_vi(self):
+        iface = _make_interface(name=None, mac='aa:bb:cc:dd:ee:01', ip='10.1.10.1')
+        host = Host(
+            machine_name='desktop', hostname='desktop',
+            interfaces=[iface],
+        )
+        vis = host.virtual_interfaces
+        assert len(vis) == 1
+        assert str(vis[0].ipv4) == '10.1.10.1'
+        assert len(vis[0].macs) == 1
+        assert str(vis[0].macs[0]) == 'aa:bb:cc:dd:ee:01'
+
+    def test_shared_ip_groups_macs(self):
+        wired = _make_interface(name='eth0', mac='aa:bb:cc:dd:ee:01', ip='10.1.10.1',
+                                dhcp_name='roku')
+        wifi = _make_interface(name='wlan0', mac='aa:bb:cc:dd:ee:02', ip='10.1.10.1',
+                               dhcp_name='roku')
+        host = Host(
+            machine_name='roku', hostname='roku',
+            interfaces=[wired, wifi],
+        )
+        vis = host.virtual_interfaces
+        assert len(vis) == 1
+        assert len(vis[0].macs) == 2
+        assert str(vis[0].macs[0]) == 'aa:bb:cc:dd:ee:01'
+        assert str(vis[0].macs[1]) == 'aa:bb:cc:dd:ee:02'
+        # Takes name from first NIC
+        assert vis[0].name == 'eth0'
+
+    def test_different_ips_produce_multiple_vis(self):
+        eth0 = _make_interface(name='eth0', mac='aa:bb:cc:dd:ee:01', ip='10.1.10.1')
+        eth1 = _make_interface(name='eth1', mac='aa:bb:cc:dd:ee:02', ip='10.1.20.1')
+        host = Host(
+            machine_name='server', hostname='server',
+            interfaces=[eth0, eth1],
+        )
+        vis = host.virtual_interfaces
+        assert len(vis) == 2
+        assert str(vis[0].ipv4) == '10.1.10.1'
+        assert str(vis[1].ipv4) == '10.1.20.1'
+
+    def test_order_preserved(self):
+        """VirtualInterfaces appear in order of first occurrence in interfaces."""
+        a = _make_interface(name='eth1', mac='aa:bb:cc:dd:ee:02', ip='10.1.20.1')
+        b = _make_interface(name='eth0', mac='aa:bb:cc:dd:ee:01', ip='10.1.10.1')
+        host = Host(
+            machine_name='server', hostname='server',
+            interfaces=[a, b],
+        )
+        vis = host.virtual_interfaces
+        assert str(vis[0].ipv4) == '10.1.20.1'
+        assert str(vis[1].ipv4) == '10.1.10.1'
+
+    def test_shared_ip_not_multi_interface(self):
+        """Two NICs with the same IP should NOT be multi-interface."""
+        wired = _make_interface(name='eth0', mac='aa:bb:cc:dd:ee:01', ip='10.1.10.1')
+        wifi = _make_interface(name='wlan0', mac='aa:bb:cc:dd:ee:02', ip='10.1.10.1')
+        host = Host(
+            machine_name='roku', hostname='roku',
+            interfaces=[wired, wifi],
+        )
+        assert not host.is_multi_interface()
+
+    def test_dhcp_names_collected(self):
+        wired = _make_interface(name='eth0', mac='aa:bb:cc:dd:ee:01', ip='10.1.10.1',
+                                dhcp_name='roku-wired')
+        wifi = _make_interface(name='wlan0', mac='aa:bb:cc:dd:ee:02', ip='10.1.10.1',
+                               dhcp_name='roku-wifi')
+        host = Host(
+            machine_name='roku', hostname='roku',
+            interfaces=[wired, wifi],
+        )
+        vis = host.virtual_interfaces
+        assert vis[0].dhcp_names == ('roku-wired', 'roku-wifi')
+
+    def test_frozen(self):
+        vi = VirtualInterface(
+            name=None,
+            ipv4=IPv4Address('10.1.10.1'),
+            macs=(MACAddress.parse('aa:bb:cc:dd:ee:ff'),),
+        )
+        try:
+            vi.name = 'eth0'
+            assert False, "Should have raised FrozenInstanceError"
+        except AttributeError:
+            pass
 
 
 class TestNetworkInventory:
