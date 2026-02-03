@@ -50,6 +50,10 @@ def host_record_config(
         if not dns_name.is_fqdn and dns_name.name != host.hostname:
             continue
 
+        # Skip wildcard names (dnsmasq doesn't support wildcard host-records)
+        if "*" in dns_name.name:
+            continue
+
         addrs: list[str] = []
         if dns_name.ipv4:
             addrs.append(ipv4_transform(str(dns_name.ipv4)))
