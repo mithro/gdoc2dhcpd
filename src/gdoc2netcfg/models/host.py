@@ -163,6 +163,7 @@ class Host:
     subdomain: str | None = None
     sshfp_records: list[str] = field(default_factory=list)
     extra: dict[str, str] = field(default_factory=dict)
+    alt_names: list[str] = field(default_factory=list)
     dns_names: list[DNSName] = field(default_factory=list)
     hardware_type: str | None = None
     ssl_cert_info: SSLCertInfo | None = None
