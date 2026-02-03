@@ -44,7 +44,7 @@ def check_reachable(ip: str, packets: int = 5) -> PingResult:
     """
     try:
         result = subprocess.run(
-            ["ping", "-n", "-A", "-c", str(packets), "-w", "1", ip],
+            ["ping", "-n", "-A", "-c", str(packets), "-W", "1", ip],
             capture_output=True,
             text=True,
         )
