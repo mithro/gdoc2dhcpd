@@ -78,12 +78,13 @@ def generate_letsencrypt(
         cert_name = fqdns[0]
 
         # Build certbot command
-        auth_hook_cmd = (
-            f"'{auth_hook} auth-hook"
+        dnsmasq_flags = (
             f" --conf-dir {dnsmasq_conf_dir}"
             f" --conf {dnsmasq_conf}"
-            f" --service {dnsmasq_service}'"
+            f" --service {dnsmasq_service}"
         )
+        auth_hook_cmd = f"'{auth_hook} auth-hook{dnsmasq_flags}'"
+        cleanup_hook_cmd = f"'{auth_hook} cleanup-hook{dnsmasq_flags}'"
         lines = [
             "#!/bin/sh",
         ]
@@ -91,6 +92,7 @@ def generate_letsencrypt(
             "certbot certonly --manual",
             "  --preferred-challenges dns",
             f"  --manual-auth-hook {auth_hook_cmd}",
+            f"  --manual-cleanup-hook {cleanup_hook_cmd}",
             f"  --cert-name {cert_name}",
         ]
         for fqdn in fqdns:

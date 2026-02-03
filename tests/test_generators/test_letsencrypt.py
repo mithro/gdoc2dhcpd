@@ -102,12 +102,29 @@ class TestCertScripts:
         assert "--manual-auth-hook" in script
         assert "certbot-hook-dnsmasq auth-hook" in script
 
-    def test_cert_script_no_cleanup_hook(self):
+    def test_cert_script_has_cleanup_hook(self):
         host = _make_host()
         files = generate_letsencrypt(_make_inventory(host))
 
         script = files["certs-available/desktop.welland.mithis.com"]
-        assert "--manual-cleanup-hook" not in script
+        assert "--manual-cleanup-hook" in script
+        assert "certbot-hook-dnsmasq cleanup-hook" in script
+
+    def test_cleanup_hook_has_same_dnsmasq_flags_as_auth_hook(self):
+        host = _make_host()
+        files = generate_letsencrypt(
+            _make_inventory(host),
+            dnsmasq_conf_dir="/opt/dnsmasq/ext",
+            dnsmasq_conf="/opt/dnsmasq/ext.conf",
+            dnsmasq_service="dnsmasq@custom",
+        )
+
+        script = files["certs-available/desktop.welland.mithis.com"]
+        # Both hooks should have the same dnsmasq flags
+        for hook_type in ("auth-hook", "cleanup-hook"):
+            assert f"{hook_type} --conf-dir /opt/dnsmasq/ext" in script
+            assert "--conf /opt/dnsmasq/ext.conf" in script
+            assert "--service dnsmasq@custom" in script
 
     def test_cert_script_passes_dnsmasq_as_cli_flags(self):
         host = _make_host()
