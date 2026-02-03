@@ -198,3 +198,45 @@ class TestDnsmasqGenerator:
         assert "dns-rr=server.welland.mithis.com,257," in output
         # SSHFP
         assert "dns-rr=server.welland.mithis.com,44," in output
+
+
+class TestAltNames:
+    def test_alt_name_gets_host_record(self):
+        host = _host_with_iface("desktop", "aa:bb:cc:dd:ee:ff", "10.1.10.1", dhcp_name="desktop")
+        host.alt_names = ["alias.example.com"]
+        derive_all_dns_names(host, SITE)
+        inv = _make_inventory(
+            hosts=[host],
+            ip_to_hostname={"10.1.10.1": "desktop"},
+            ip_to_macs={"10.1.10.1": [(MACAddress.parse("aa:bb:cc:dd:ee:ff"), "desktop")]},
+        )
+        result = generate_dnsmasq_internal(inv)
+        output = result["desktop.conf"]
+        assert "host-record=alias.example.com," in output
+
+    def test_wildcard_alt_name_excluded_from_host_record(self):
+        host = _host_with_iface("desktop", "aa:bb:cc:dd:ee:ff", "10.1.10.1", dhcp_name="desktop")
+        host.alt_names = ["*.example.com"]
+        derive_all_dns_names(host, SITE)
+        inv = _make_inventory(
+            hosts=[host],
+            ip_to_hostname={"10.1.10.1": "desktop"},
+            ip_to_macs={"10.1.10.1": [(MACAddress.parse("aa:bb:cc:dd:ee:ff"), "desktop")]},
+        )
+        result = generate_dnsmasq_internal(inv)
+        output = result["desktop.conf"]
+        assert "*.example.com" not in output
+
+    def test_mixed_alt_names_only_non_wildcards_in_host_record(self):
+        host = _host_with_iface("desktop", "aa:bb:cc:dd:ee:ff", "10.1.10.1", dhcp_name="desktop")
+        host.alt_names = ["alias.example.com", "*.example.com"]
+        derive_all_dns_names(host, SITE)
+        inv = _make_inventory(
+            hosts=[host],
+            ip_to_hostname={"10.1.10.1": "desktop"},
+            ip_to_macs={"10.1.10.1": [(MACAddress.parse("aa:bb:cc:dd:ee:ff"), "desktop")]},
+        )
+        result = generate_dnsmasq_internal(inv)
+        output = result["desktop.conf"]
+        assert "host-record=alias.example.com," in output
+        assert "*.example.com" not in output

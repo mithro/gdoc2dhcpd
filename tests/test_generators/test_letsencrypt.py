@@ -283,6 +283,46 @@ class TestDeployHooks:
         assert "renew-enabled.sh" in files
 
 
+class TestAltNames:
+    def test_alt_names_as_domains(self):
+        host = _make_host()
+        host.alt_names = ["alias.example.com"]
+        derive_all_dns_names(host, SITE)
+        files = generate_letsencrypt(_make_inventory(host))
+
+        script = files["certs-available/desktop.welland.mithis.com"]
+        assert "-d alias.example.com" in script
+
+    def test_wildcard_alt_names_as_domains(self):
+        host = _make_host()
+        host.alt_names = ["*.example.com"]
+        derive_all_dns_names(host, SITE)
+        files = generate_letsencrypt(_make_inventory(host))
+
+        script = files["certs-available/desktop.welland.mithis.com"]
+        assert "-d *.example.com" in script
+
+    def test_multiple_alt_names_as_domains(self):
+        host = _make_host()
+        host.alt_names = ["a.example.com", "b.example.com", "*.example.com"]
+        derive_all_dns_names(host, SITE)
+        files = generate_letsencrypt(_make_inventory(host))
+
+        script = files["certs-available/desktop.welland.mithis.com"]
+        assert "-d a.example.com" in script
+        assert "-d b.example.com" in script
+        assert "-d *.example.com" in script
+
+    def test_alt_names_do_not_change_cert_name(self):
+        host = _make_host()
+        host.alt_names = ["alias.example.com"]
+        derive_all_dns_names(host, SITE)
+        files = generate_letsencrypt(_make_inventory(host))
+
+        script = files["certs-available/desktop.welland.mithis.com"]
+        assert "--cert-name desktop.welland.mithis.com" in script
+
+
 class TestPathValidation:
     def test_rejects_malicious_auth_hook(self):
         host = _make_host()

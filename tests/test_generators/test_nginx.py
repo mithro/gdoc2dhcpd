@@ -553,6 +553,45 @@ class TestMultiInterfaceHost:
             assert "listen 443 ssl;" not in block
 
 
+class TestAltNames:
+    def test_alt_names_in_server_name(self):
+        host = _make_host()
+        host.alt_names = ["alias.example.com"]
+        derive_all_dns_names(host, SITE)
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "alias.example.com" in block
+
+    def test_wildcard_alt_names_in_server_name(self):
+        host = _make_host()
+        host.alt_names = ["*.example.com"]
+        derive_all_dns_names(host, SITE)
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "*.example.com" in block
+
+    def test_alt_names_in_https_server_name(self):
+        host = _make_host()
+        host.alt_names = ["alias.example.com"]
+        derive_all_dns_names(host, SITE)
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
+        assert "alias.example.com" in block
+
+    def test_multiple_alt_names(self):
+        host = _make_host()
+        host.alt_names = ["a.example.com", "b.example.com"]
+        derive_all_dns_names(host, SITE)
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "a.example.com" in block
+        assert "b.example.com" in block
+
+
 class TestPathValidation:
     def test_rejects_malicious_acme_webroot(self):
         import pytest

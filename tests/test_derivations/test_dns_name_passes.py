@@ -1,11 +1,12 @@
 """Tests for the DNS name derivation passes.
 
-Tests each of the four passes independently, plus the combined
+Tests each of the five passes independently, plus the combined
 derive_all_dns_names orchestrator.
 """
 
 from gdoc2netcfg.derivations.dns_names import (
     derive_all_dns_names,
+    derive_dns_names_alt_names,
     derive_dns_names_hostname,
     derive_dns_names_interface,
     derive_dns_names_ip_prefix,
@@ -335,3 +336,70 @@ class TestDeriveAllDnsNames:
         # Still has hostname and ip-prefix
         assert "desktop.welland.mithis.com" in name_strs
         assert "ipv4.desktop.welland.mithis.com" in name_strs
+
+    def test_alt_names_included(self):
+        host = _make_host()
+        host.alt_names = ["alias.example.com", "other.example.com"]
+        derive_all_dns_names(host, SITE)
+
+        name_strs = [n.name for n in host.dns_names]
+        assert "alias.example.com" in name_strs
+        assert "other.example.com" in name_strs
+
+    def test_wildcard_alt_names_included(self):
+        host = _make_host()
+        host.alt_names = ["*.example.com"]
+        derive_all_dns_names(host, SITE)
+
+        name_strs = [n.name for n in host.dns_names]
+        assert "*.example.com" in name_strs
+
+
+class TestPass5AltNames:
+    def test_adds_alt_names_as_fqdns(self):
+        host = _make_host()
+        host.alt_names = ["alias.example.com"]
+        names = derive_dns_names_alt_names(host)
+
+        assert len(names) == 1
+        assert names[0].name == "alias.example.com"
+        assert names[0].is_fqdn is True
+
+    def test_uses_default_ipv4(self):
+        host = _make_host()
+        host.alt_names = ["alias.example.com"]
+        names = derive_dns_names_alt_names(host)
+
+        assert str(names[0].ipv4) == "10.1.10.100"
+
+    def test_uses_default_ipv6(self):
+        host = _make_host()
+        host.alt_names = ["alias.example.com"]
+        names = derive_dns_names_alt_names(host)
+
+        assert len(names[0].ipv6_addresses) == 1
+        assert str(names[0].ipv6_addresses[0]) == "2404:e80:a137:110::100"
+
+    def test_multiple_alt_names(self):
+        host = _make_host()
+        host.alt_names = ["a.example.com", "b.example.com", "*.example.com"]
+        names = derive_dns_names_alt_names(host)
+
+        assert len(names) == 3
+        name_strs = [n.name for n in names]
+        assert "a.example.com" in name_strs
+        assert "b.example.com" in name_strs
+        assert "*.example.com" in name_strs
+
+    def test_empty_alt_names_returns_empty(self):
+        host = _make_host()
+        host.alt_names = []
+        names = derive_dns_names_alt_names(host)
+        assert names == []
+
+    def test_no_default_ip_returns_empty(self):
+        host = _make_host()
+        host.default_ipv4 = None
+        host.alt_names = ["alias.example.com"]
+        names = derive_dns_names_alt_names(host)
+        assert names == []
