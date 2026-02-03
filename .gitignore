@@ -1,3 +1,4 @@
+out/
 internal/
 external/
 dhcpd.static.conf
