@@ -144,14 +144,17 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
         # Collect extra fields from first record (they should be the same)
         extra = group[0].extra.copy()
 
-        # Parse alt names from "Alt Names" column (newline or comma separated)
+        # Parse alt names from "Alt Names" column (newline or comma separated).
+        # Collect from all records in the group since alt names may appear on
+        # any interface row (e.g. only on eth-uplink, not the first record).
         alt_names: list[str] = []
-        raw_alt = extra.get("Alt Names", "")
-        if raw_alt:
-            for part in raw_alt.replace("\n", ",").split(","):
-                name = part.strip()
-                if name:
-                    alt_names.append(name)
+        for r in group:
+            raw_alt = r.extra.get("Alt Names", "")
+            if raw_alt:
+                for part in raw_alt.replace("\n", ",").split(","):
+                    name = part.strip()
+                    if name and name not in alt_names:
+                        alt_names.append(name)
 
         host = Host(
             machine_name=group[0].machine.lower(),
