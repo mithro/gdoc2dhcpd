@@ -1,10 +1,11 @@
 """DNS name derivations: hostname, DHCP name, common suffix, subdomain variants.
 
-Includes four composable DNS name derivation passes:
+Includes five composable DNS name derivation passes:
   Pass 1 — Hostname: base hostname names ({hostname}.{domain}, {hostname})
   Pass 2 — Interface: per-interface names ({iface}.{hostname}.{domain}, ...)
   Pass 3 — Subdomain: subdomain variants ({hostname}.{subdomain}.{domain}, ...)
   Pass 4 — IPv4/IPv6 prefix: ipv4.{name}, ipv6.{name} for dual-stack names
+  Pass 5 — Alt names: alternative FQDNs from the spreadsheet's Alt Names column
 """
 
 from __future__ import annotations
@@ -259,11 +260,40 @@ def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list[DNSName]:
     return names
 
 
-def derive_all_dns_names(host: "Host", site: "Site") -> None:
-    """Run all four DNS name derivation passes on a host (in-place).
+def derive_dns_names_alt_names(host: "Host") -> list[DNSName]:
+    """Pass 5 — Alt names: add DNS names from the spreadsheet's Alt Names column.
 
-    Order matters: Pass 4 must run last since it scans all names
-    from previous passes.
+    Each alt name is treated as a FQDN pointing to the host's default
+    IPv4 and its associated IPv6 addresses.
+    """
+    if not host.alt_names or host.default_ipv4 is None:
+        return []
+
+    # Find IPv6 addresses for the default IP
+    ipv6_addrs: tuple["IPv6Address", ...] = ()
+    for iface in host.interfaces:
+        if iface.ipv4 == host.default_ipv4:
+            ipv6_addrs = tuple(iface.ipv6_addresses)
+            break
+
+    names: list[DNSName] = []
+    for alt_name in host.alt_names:
+        names.append(
+            _make_dns_name(
+                alt_name,
+                host.default_ipv4,
+                ipv6_addrs,
+                is_fqdn=True,
+            )
+        )
+    return names
+
+
+def derive_all_dns_names(host: "Host", site: "Site") -> None:
+    """Run all five DNS name derivation passes on a host (in-place).
+
+    Order matters: Pass 4 must run after Passes 1-3 since it scans
+    all names from previous passes. Pass 5 runs independently.
     """
     domain = site.domain
 
@@ -278,3 +308,6 @@ def derive_all_dns_names(host: "Host", site: "Site") -> None:
 
     # Pass 4 — IPv4/IPv6 prefix
     host.dns_names.extend(derive_dns_names_ip_prefix(host, domain))
+
+    # Pass 5 — Alt names
+    host.dns_names.extend(derive_dns_names_alt_names(host))
