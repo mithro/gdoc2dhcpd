@@ -32,7 +32,7 @@ class PingResult:
         return self.received >= 1
 
 
-def check_reachable(ip: str, packets: int = 5) -> PingResult:
+def check_reachable(ip: str, packets: int = 10) -> PingResult:
     """Check if a host responds to ICMP ping.
 
     Args:
