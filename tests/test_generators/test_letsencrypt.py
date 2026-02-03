@@ -100,7 +100,7 @@ class TestCertScripts:
 
         script = files["certs-available/desktop.welland.mithis.com"]
         assert "--manual-auth-hook" in script
-        assert "dnsmasq-hook.sh" in script
+        assert "certbot-hook-dnsmasq auth-hook" in script
 
     def test_cert_script_no_cleanup_hook(self):
         host = _make_host()
@@ -109,24 +109,27 @@ class TestCertScripts:
         script = files["certs-available/desktop.welland.mithis.com"]
         assert "--manual-cleanup-hook" not in script
 
-    def test_cert_script_exports_dnsmasq_env(self):
+    def test_cert_script_passes_dnsmasq_as_cli_flags(self):
         host = _make_host()
         files = generate_letsencrypt(_make_inventory(host))
 
         script = files["certs-available/desktop.welland.mithis.com"]
-        assert 'export DNSMASQ_CONF_DIR="/etc/dnsmasq.d/external"' in script
-        assert 'export DNSMASQ_CONF="/etc/dnsmasq.d/dnsmasq.external.conf"' in script
-        assert 'export DNSMASQ_SERVICE="dnsmasq@external"' in script
+        # No env var exports
+        assert "export DNSMASQ_" not in script
+        # Dnsmasq params appear as CLI flags in the auth hook command
+        assert "--conf-dir /etc/dnsmasq.d/external" in script
+        assert "--conf /etc/dnsmasq.d/dnsmasq.external.conf" in script
+        assert "--service dnsmasq@external" in script
 
     def test_custom_auth_hook(self):
         host = _make_host()
         files = generate_letsencrypt(
             _make_inventory(host),
-            auth_hook="/usr/local/bin/my-dns-hook.sh",
+            auth_hook="/usr/local/bin/my-dns-hook",
         )
 
         script = files["certs-available/desktop.welland.mithis.com"]
-        assert "--manual-auth-hook /usr/local/bin/my-dns-hook.sh" in script
+        assert "/usr/local/bin/my-dns-hook auth-hook" in script
 
     def test_custom_dnsmasq_params(self):
         host = _make_host()
@@ -138,9 +141,9 @@ class TestCertScripts:
         )
 
         script = files["certs-available/desktop.welland.mithis.com"]
-        assert 'DNSMASQ_CONF_DIR="/opt/dnsmasq/ext"' in script
-        assert 'DNSMASQ_CONF="/opt/dnsmasq/ext.conf"' in script
-        assert 'DNSMASQ_SERVICE="dnsmasq@custom"' in script
+        assert "--conf-dir /opt/dnsmasq/ext" in script
+        assert "--conf /opt/dnsmasq/ext.conf" in script
+        assert "--service dnsmasq@custom" in script
 
     def test_cert_name_is_primary_fqdn(self):
         host = _make_host()

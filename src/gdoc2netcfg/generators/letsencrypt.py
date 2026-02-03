@@ -30,7 +30,7 @@ _DEPLOY_HOOKS: dict[str, str] = {
     HARDWARE_NETGEAR_SWITCH: "/usr/local/bin/certbot-hook-netgear-switches",
 }
 
-_DEFAULT_AUTH_HOOK = "/opt/certbot/hooks/certbot-hook-dnsmasq/dnsmasq-hook.sh"
+_DEFAULT_AUTH_HOOK = "/opt/certbot/bin/certbot-hook-dnsmasq"
 _DEFAULT_DNSMASQ_CONF_DIR = "/etc/dnsmasq.d/external"
 _DEFAULT_DNSMASQ_CONF = "/etc/dnsmasq.d/dnsmasq.external.conf"
 _DEFAULT_DNSMASQ_SERVICE = "dnsmasq@external"
@@ -78,16 +78,19 @@ def generate_letsencrypt(
         cert_name = fqdns[0]
 
         # Build certbot command
+        auth_hook_cmd = (
+            f"'{auth_hook} auth-hook"
+            f" --conf-dir {dnsmasq_conf_dir}"
+            f" --conf {dnsmasq_conf}"
+            f" --service {dnsmasq_service}'"
+        )
         lines = [
             "#!/bin/sh",
-            f'export DNSMASQ_CONF_DIR="{dnsmasq_conf_dir}"',
-            f'export DNSMASQ_CONF="{dnsmasq_conf}"',
-            f'export DNSMASQ_SERVICE="{dnsmasq_service}"',
         ]
         cmd_parts = [
             "certbot certonly --manual",
             "  --preferred-challenges dns",
-            f"  --manual-auth-hook {auth_hook}",
+            f"  --manual-auth-hook {auth_hook_cmd}",
             f"  --cert-name {cert_name}",
         ]
         for fqdn in fqdns:

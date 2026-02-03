@@ -42,7 +42,7 @@ htpasswd_file = "/etc/nginx/.htpasswd"
 https_listen = "127.0.0.1:8443"
 
 [generators.letsencrypt]
-auth_hook = "/opt/certbot/hooks/certbot-hook-dnsmasq/dnsmasq-hook.sh"
+auth_hook = "/opt/certbot/bin/certbot-hook-dnsmasq"
 dnsmasq_conf_dir = "/etc/dnsmasq.d/external"
 dnsmasq_conf = "/etc/dnsmasq.d/dnsmasq.external.conf"
 dnsmasq_service = "dnsmasq@external"

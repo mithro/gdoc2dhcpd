@@ -70,7 +70,7 @@ The dnsmasq generator has internal and external variants. Both produce per-host 
 
 ### Let's Encrypt Certificates
 
-The letsencrypt generator (`letsencrypt.py`) produces per-host certbot scripts in `certs-available/{primary_fqdn}` and a `renew-enabled.sh` orchestrator. Uses DNS-01 challenge validation via an external auth hook (`certbot-hook-dnsmasq`) that manages `_acme-challenge` TXT records in the external dnsmasq instance. Each cert script exports `DNSMASQ_CONF_DIR`, `DNSMASQ_CONF`, and `DNSMASQ_SERVICE` environment variables so the hook targets the correct split dnsmasq instance. Deploy hooks are added based on `hardware_type` (e.g. supermicro-bmc, netgear-switch). Only public FQDNs (`is_fqdn=True`) are included as `-d` domains.
+The letsencrypt generator (`letsencrypt.py`) produces per-host certbot scripts in `certs-available/{primary_fqdn}` and a `renew-enabled.sh` orchestrator. Uses DNS-01 challenge validation via the `certbot-hook-dnsmasq` Python CLI (`certbot-hook-dnsmasq auth-hook`) that manages `_acme-challenge` TXT records in the external dnsmasq instance. Dnsmasq connection parameters (`--conf-dir`, `--conf`, `--service`) are passed as CLI flags on the auth hook command rather than environment variables. Deploy hooks are added based on `hardware_type` (e.g. supermicro-bmc, netgear-switch). Only public FQDNs (`is_fqdn=True`) are included as `-d` domains.
 
 ### Nginx Reverse Proxy
 
@@ -186,7 +186,7 @@ sudo uv run gdoc2netcfg generate --output-dir /opt/gdoc2netcfg letsencrypt
 sudo sh /opt/gdoc2netcfg/letsencrypt/certs-available/{fqdn}  # Provision a cert
 ```
 
-The auth hook lives at `/opt/certbot/hooks/certbot-hook-dnsmasq/` (separate repo: `mithro/certbot-hook-dnsmasq`). It creates TXT records in the external dnsmasq, verifies local resolution, sends NOTIFY to secondaries, and polls until they sync.
+The auth hook is the `certbot-hook-dnsmasq` Python CLI installed at `/opt/certbot/bin/certbot-hook-dnsmasq` (separate repo: `mithro/certbot-hook-dnsmasq`). It creates TXT records in the external dnsmasq, verifies local resolution, sends NOTIFY to secondaries, and polls until they sync.
 
 ### Other
 
