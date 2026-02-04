@@ -192,7 +192,7 @@ def generate_nginx(
             ]
 
             all_ips = [
-                str(iface.ipv4) for iface in host.interfaces
+                str(vi.ipv4) for vi in host.virtual_interfaces
             ]
 
             # Collect per-interface (name_list, ip) pairs
