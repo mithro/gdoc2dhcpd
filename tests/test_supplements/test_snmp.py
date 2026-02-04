@@ -162,9 +162,16 @@ class TestScanSNMP:
             "ip_addresses": [],
             "raw": {},
         }
+        reachability = {
+            "switch": HostReachability(
+                hostname="switch", active_ips=("10.1.10.1",),
+            ),
+        }
         host = _make_host()
         cache_path = tmp_path / "snmp.json"
-        result = scan_snmp([host], cache_path, force=True)
+        result = scan_snmp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert "switch" in result
         assert result["switch"]["system_info"]["sysName"] == "switch-1"
@@ -233,9 +240,16 @@ class TestScanSNMP:
             "ip_addresses": [],
             "raw": {},
         }
+        reachability = {
+            "switch": HostReachability(
+                hostname="switch", active_ips=("10.1.10.1",),
+            ),
+        }
         host = _make_host()
         cache_path = tmp_path / "snmp.json"
-        scan_snmp([host], cache_path, force=True)
+        scan_snmp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert cache_path.exists()
         loaded = json.loads(cache_path.read_text())
@@ -244,28 +258,28 @@ class TestScanSNMP:
     @patch("gdoc2netcfg.supplements.snmp._try_snmp_credentials")
     def test_scan_no_snmp_response(self, mock_try, tmp_path):
         mock_try.return_value = None
+        reachability = {
+            "switch": HostReachability(
+                hostname="switch", active_ips=("10.1.10.1",),
+            ),
+        }
         host = _make_host()
         cache_path = tmp_path / "snmp.json"
-        result = scan_snmp([host], cache_path, force=True)
+        result = scan_snmp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert "switch" not in result
 
     @patch("gdoc2netcfg.supplements.snmp._try_snmp_credentials")
-    def test_scan_without_reachability_uses_all_ips(self, mock_try, tmp_path):
-        """Without reachability data, all interface IPs are candidates."""
-        mock_try.return_value = {
-            "snmp_version": "v2c",
-            "system_info": {},
-            "interfaces": [],
-            "ip_addresses": [],
-            "raw": {},
-        }
+    def test_scan_skips_without_reachability(self, mock_try, tmp_path):
+        """Without reachability data, hosts are skipped."""
         host = _make_host()
         cache_path = tmp_path / "snmp.json"
-        scan_snmp([host], cache_path, force=True, reachability=None)
+        result = scan_snmp([host], cache_path, force=True, reachability=None)
 
-        call_args = mock_try.call_args
-        assert call_args[0][0] == "10.1.10.1"
+        assert result == {}
+        mock_try.assert_not_called()
 
 
 class TestTrySNMPCredentials:

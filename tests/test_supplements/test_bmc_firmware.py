@@ -338,9 +338,16 @@ class TestScanBMCFirmware:
             "Firmware Revision": "1.74",
             "IPMI Version": "2.0",
         }
+        reachability = {
+            "bmc.server": HostReachability(
+                hostname="bmc.server", active_ips=("10.1.5.10",),
+            ),
+        }
         host = _make_host()
         cache_path = tmp_path / "bmc_firmware.json"
-        result = scan_bmc_firmware([host], cache_path, force=True)
+        result = scan_bmc_firmware(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert "bmc.server" in result
         assert result["bmc.server"]["product_name"] == "X11SPM-T(P)F"
@@ -355,9 +362,16 @@ class TestScanBMCFirmware:
             "Firmware Revision": "3.40",
             "IPMI Version": "2.0",
         }
+        reachability = {
+            "bmc.server": HostReachability(
+                hostname="bmc.server", active_ips=("10.1.5.10",),
+            ),
+        }
         host = _make_host()
         cache_path = tmp_path / "bmc_firmware.json"
-        result = scan_bmc_firmware([host], cache_path, force=True)
+        result = scan_bmc_firmware(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert result["bmc.server"]["series"] == 9
         assert result["bmc.server"]["snmp_capable"] is False
@@ -433,9 +447,16 @@ class TestScanBMCFirmware:
             "Firmware Revision": "1.74",
             "IPMI Version": "2.0",
         }
+        reachability = {
+            "bmc.server": HostReachability(
+                hostname="bmc.server", active_ips=("10.1.5.10",),
+            ),
+        }
         host = _make_host()
         cache_path = tmp_path / "bmc_firmware.json"
-        scan_bmc_firmware([host], cache_path, force=True)
+        scan_bmc_firmware(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert cache_path.exists()
         loaded = json.loads(cache_path.read_text())
@@ -444,8 +465,15 @@ class TestScanBMCFirmware:
     @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
     def test_scan_no_ipmi_response(self, mock_try, tmp_path):
         mock_try.return_value = None
+        reachability = {
+            "bmc.server": HostReachability(
+                hostname="bmc.server", active_ips=("10.1.5.10",),
+            ),
+        }
         host = _make_host()
         cache_path = tmp_path / "bmc_firmware.json"
-        result = scan_bmc_firmware([host], cache_path, force=True)
+        result = scan_bmc_firmware(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert "bmc.server" not in result

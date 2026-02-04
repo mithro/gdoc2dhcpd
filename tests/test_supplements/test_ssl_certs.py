@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import serialization
 
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface, SSLCertInfo
+from gdoc2netcfg.supplements.reachability import HostReachability
 from gdoc2netcfg.supplements.ssl_certs import (
     enrich_hosts_with_ssl_certs,
     load_ssl_cert_cache,
@@ -128,11 +129,9 @@ class TestEnrichHosts:
 
 
 class TestScanSSLCerts:
-    @patch("gdoc2netcfg.supplements.ssl_certs.check_reachable")
     @patch("gdoc2netcfg.supplements.ssl_certs.check_port_open")
     @patch("gdoc2netcfg.supplements.ssl_certs._fetch_cert")
-    def test_scan_finds_cert(self, mock_fetch, mock_port, mock_reach, tmp_path):
-        mock_reach.return_value = True
+    def test_scan_finds_cert(self, mock_fetch, mock_port, tmp_path):
         mock_port.return_value = True
         mock_fetch.return_value = {
             "issuer": "Let's Encrypt",
@@ -141,41 +140,54 @@ class TestScanSSLCerts:
             "expiry": "2026-04-15",
             "sans": ["desktop.example.com"],
         }
+        reachability = {
+            "desktop": HostReachability(
+                hostname="desktop", active_ips=("10.1.10.100",),
+            ),
+        }
 
         host = _make_host()
         cache_path = tmp_path / "ssl_certs.json"
-        result = scan_ssl_certs([host], cache_path, force=True)
+        result = scan_ssl_certs(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert "desktop" in result
         assert result["desktop"]["valid"] is True
         mock_fetch.assert_called_once_with("10.1.10.100")
 
-    @patch("gdoc2netcfg.supplements.ssl_certs.check_reachable")
-    def test_scan_skips_unreachable(self, mock_reach, tmp_path):
-        mock_reach.return_value = False
+    def test_scan_skips_unreachable(self, tmp_path):
+        reachability = {
+            "desktop": HostReachability(hostname="desktop", active_ips=()),
+        }
 
         host = _make_host()
         cache_path = tmp_path / "ssl_certs.json"
-        result = scan_ssl_certs([host], cache_path, force=True)
+        result = scan_ssl_certs(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert result == {}
 
-    @patch("gdoc2netcfg.supplements.ssl_certs.check_reachable")
     @patch("gdoc2netcfg.supplements.ssl_certs.check_port_open")
-    def test_scan_skips_no_https(self, mock_port, mock_reach, tmp_path):
-        mock_reach.return_value = True
+    def test_scan_skips_no_https(self, mock_port, tmp_path):
         mock_port.return_value = False
+        reachability = {
+            "desktop": HostReachability(
+                hostname="desktop", active_ips=("10.1.10.100",),
+            ),
+        }
 
         host = _make_host()
         cache_path = tmp_path / "ssl_certs.json"
-        result = scan_ssl_certs([host], cache_path, force=True)
+        result = scan_ssl_certs(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert result == {}
 
-    @patch("gdoc2netcfg.supplements.ssl_certs.check_reachable")
-    @patch("gdoc2netcfg.supplements.ssl_certs.check_port_open")
     @patch("gdoc2netcfg.supplements.ssl_certs._fetch_cert")
-    def test_scan_uses_cache_when_fresh(self, mock_fetch, mock_port, mock_reach, tmp_path):
+    def test_scan_uses_cache_when_fresh(self, mock_fetch, tmp_path):
         cache_path = tmp_path / "ssl_certs.json"
         existing = {
             "desktop": {
@@ -192,14 +204,11 @@ class TestScanSSLCerts:
         result = scan_ssl_certs([host], cache_path, force=False, max_age=9999)
 
         assert result == existing
-        mock_reach.assert_not_called()
         mock_fetch.assert_not_called()
 
-    @patch("gdoc2netcfg.supplements.ssl_certs.check_reachable")
     @patch("gdoc2netcfg.supplements.ssl_certs.check_port_open")
     @patch("gdoc2netcfg.supplements.ssl_certs._fetch_cert")
-    def test_scan_saves_cache(self, mock_fetch, mock_port, mock_reach, tmp_path):
-        mock_reach.return_value = True
+    def test_scan_saves_cache(self, mock_fetch, mock_port, tmp_path):
         mock_port.return_value = True
         mock_fetch.return_value = {
             "issuer": "LE",
@@ -208,10 +217,17 @@ class TestScanSSLCerts:
             "expiry": "2026-06-01",
             "sans": [],
         }
+        reachability = {
+            "desktop": HostReachability(
+                hostname="desktop", active_ips=("10.1.10.100",),
+            ),
+        }
 
         host = _make_host()
         cache_path = tmp_path / "ssl_certs.json"
-        scan_ssl_certs([host], cache_path, force=True)
+        scan_ssl_certs(
+            [host], cache_path, force=True, reachability=reachability,
+        )
 
         assert cache_path.exists()
         loaded = json.loads(cache_path.read_text())

@@ -479,18 +479,13 @@ class TestScanBridge:
         mock_collect.assert_called_once()
 
     @patch("gdoc2netcfg.supplements.bridge._collect_bridge_data")
-    def test_scan_without_reachability_uses_all_ips(self, mock_collect, tmp_path):
-        """Without reachability data, all interface IPs are candidates."""
-        mock_collect.return_value = {
-            "mac_table": [], "vlan_names": [], "port_pvids": [],
-            "port_names": [], "port_status": [], "lldp_neighbors": [],
-            "vlan_egress_ports": [], "vlan_untagged_ports": [], "poe_status": [],
-        }
+    def test_scan_skips_without_reachability(self, mock_collect, tmp_path):
+        """Without reachability data, hosts are skipped."""
         host = _make_switch()
         cache_path = tmp_path / "bridge.json"
-        scan_bridge([host], cache_path, force=True, reachability=None)
-        call_args = mock_collect.call_args
-        assert call_args[0][0] == "10.1.5.10"
+        result = scan_bridge([host], cache_path, force=True, reachability=None)
+        assert result == {}
+        mock_collect.assert_not_called()
 
     @patch("gdoc2netcfg.supplements.bridge._collect_bridge_data")
     def test_scan_skips_netgear_switch_plus(self, mock_collect, tmp_path):
