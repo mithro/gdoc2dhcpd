@@ -1,6 +1,8 @@
 """Tests for hardware type detection via MAC OUI."""
 
 from gdoc2netcfg.derivations.hardware import (
+    CISCO_SWITCH_OUIS,
+    HARDWARE_CISCO_SWITCH,
     HARDWARE_NETGEAR_SWITCH_PLUS,
     NETGEAR_OUIS,
     SUPERMICRO_OUIS,
@@ -98,6 +100,17 @@ class TestDetectHardwareType:
         host = _make_host("switch-1", "28:80:88:ab:cd:ef")
         assert detect_hardware_type(host) == "netgear-switch"
 
+    def test_cisco_switch(self):
+        host = _make_host("sw-cisco-shed", "c8:00:84:89:71:70")
+        assert detect_hardware_type(host) == HARDWARE_CISCO_SWITCH
+
+    def test_cisco_switch_all_ouis(self):
+        """All known Cisco SB OUIs should detect as cisco-switch."""
+        for oui in CISCO_SWITCH_OUIS:
+            mac = f"{oui}:11:22:33"
+            host = _make_host("sw-cisco", mac)
+            assert detect_hardware_type(host) == HARDWARE_CISCO_SWITCH, f"OUI {oui} not detected"
+
 
 class TestOUILists:
     def test_supermicro_ouis_are_lowercase(self):
@@ -120,6 +133,25 @@ class TestOUILists:
             parts = oui.split(":")
             assert len(parts) == 3, f"OUI {oui} wrong format"
 
+    def test_cisco_switch_ouis_are_lowercase(self):
+        for oui in CISCO_SWITCH_OUIS:
+            assert oui == oui.lower(), f"OUI {oui} not lowercase"
+
+    def test_cisco_switch_ouis_format(self):
+        for oui in CISCO_SWITCH_OUIS:
+            parts = oui.split(":")
+            assert len(parts) == 3, f"OUI {oui} wrong format"
+            for part in parts:
+                assert len(part) == 2, f"OUI {oui} part {part} wrong length"
+
     def test_no_overlap(self):
         """Supermicro and Netgear OUIs should not overlap."""
         assert not SUPERMICRO_OUIS & NETGEAR_OUIS
+
+    def test_no_overlap_cisco_supermicro(self):
+        """Cisco and Supermicro OUIs should not overlap."""
+        assert not CISCO_SWITCH_OUIS & SUPERMICRO_OUIS
+
+    def test_no_overlap_cisco_netgear(self):
+        """Cisco and Netgear OUIs should not overlap."""
+        assert not CISCO_SWITCH_OUIS & NETGEAR_OUIS

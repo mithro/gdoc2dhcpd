@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 HARDWARE_SUPERMICRO_BMC = "supermicro-bmc"
 HARDWARE_NETGEAR_SWITCH = "netgear-switch"
 HARDWARE_NETGEAR_SWITCH_PLUS = "netgear-switch-plus"
+HARDWARE_CISCO_SWITCH = "cisco-switch"
 HARDWARE_SUPERMICRO_BMC_LEGACY = "supermicro-bmc-legacy"
 
 # Netgear Plus/unmanaged models that lack SNMP support.
@@ -57,6 +58,12 @@ NETGEAR_OUIS: set[str] = {
     "f8:73:94",
 }
 
+# IEEE OUI prefixes for Cisco Small Business switches in our inventory.
+# Only includes OUIs from devices we actually have; Cisco owns 1200+ OUIs.
+CISCO_SWITCH_OUIS: set[str] = {
+    "c8:00:84",
+}
+
 
 def _mac_oui(mac_address: str) -> str:
     """Extract the OUI prefix (first 3 octets) from a MAC address."""
@@ -71,6 +78,7 @@ def detect_hardware_type(host: "Host") -> str | None:
         "netgear-switch-plus" if any interface has a Netgear OUI and hostname
             matches a known Plus/unmanaged model.
         "netgear-switch" if any interface has a Netgear OUI.
+        "cisco-switch" if any interface has a Cisco Small Business OUI.
         None if no match.
 
     Supermicro detection requires the hostname to contain 'bmc' (indicating
@@ -92,5 +100,9 @@ def detect_hardware_type(host: "Host") -> str | None:
             if model in hostname_lower:
                 return HARDWARE_NETGEAR_SWITCH_PLUS
         return HARDWARE_NETGEAR_SWITCH
+
+    # Cisco Small Business switch: any interface with a Cisco SB OUI
+    if ouis & CISCO_SWITCH_OUIS:
+        return HARDWARE_CISCO_SWITCH
 
     return None
