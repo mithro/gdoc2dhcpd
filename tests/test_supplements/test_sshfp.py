@@ -1,14 +1,15 @@
 """Tests for the SSHFP supplement."""
 
-import json
-from pathlib import Path
+from unittest.mock import patch
 
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface
+from gdoc2netcfg.supplements.reachability import HostReachability
 from gdoc2netcfg.supplements.sshfp import (
     enrich_hosts_with_sshfp,
     load_sshfp_cache,
     save_sshfp_cache,
+    scan_sshfp,
 )
 
 
@@ -75,3 +76,100 @@ class TestEnrichHostsWithSSHFP:
         enrich_hosts_with_sshfp(hosts, sshfp_data)
 
         assert len(hosts[0].sshfp_records) == 2
+
+
+class TestScanSSHFP:
+    @patch("gdoc2netcfg.supplements.sshfp.check_port_open")
+    @patch("gdoc2netcfg.supplements.sshfp._keyscan")
+    def test_scan_finds_sshfp(self, mock_keyscan, mock_port, tmp_path):
+        mock_port.return_value = True
+        mock_keyscan.return_value = ["server IN SSHFP 1 2 abc123"]
+        reachability = {
+            "server": HostReachability(
+                hostname="server", active_ips=("10.1.10.1",),
+            ),
+        }
+        host = _make_host("server", "10.1.10.1")
+        cache_path = tmp_path / "sshfp.json"
+        result = scan_sshfp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        assert "server" in result
+        assert result["server"] == ["server IN SSHFP 1 2 abc123"]
+        mock_keyscan.assert_called_once()
+
+    @patch("gdoc2netcfg.supplements.sshfp._keyscan")
+    def test_scan_skips_unreachable(self, mock_keyscan, tmp_path):
+        reachability = {
+            "server": HostReachability(hostname="server", active_ips=()),
+        }
+        host = _make_host("server", "10.1.10.1")
+        cache_path = tmp_path / "sshfp.json"
+        result = scan_sshfp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        assert result == {}
+        mock_keyscan.assert_not_called()
+
+    @patch("gdoc2netcfg.supplements.sshfp.check_port_open")
+    @patch("gdoc2netcfg.supplements.sshfp._keyscan")
+    def test_scan_skips_no_ssh(self, mock_keyscan, mock_port, tmp_path):
+        mock_port.return_value = False
+        reachability = {
+            "server": HostReachability(
+                hostname="server", active_ips=("10.1.10.1",),
+            ),
+        }
+        host = _make_host("server", "10.1.10.1")
+        cache_path = tmp_path / "sshfp.json"
+        result = scan_sshfp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        assert result == {}
+        mock_keyscan.assert_not_called()
+
+    @patch("gdoc2netcfg.supplements.sshfp._keyscan")
+    def test_scan_skips_without_reachability(self, mock_keyscan, tmp_path):
+        """Without reachability data, hosts are skipped."""
+        host = _make_host("server", "10.1.10.1")
+        cache_path = tmp_path / "sshfp.json"
+        result = scan_sshfp([host], cache_path, force=True, reachability=None)
+
+        assert result == {}
+        mock_keyscan.assert_not_called()
+
+    @patch("gdoc2netcfg.supplements.sshfp._keyscan")
+    def test_scan_uses_cache_when_fresh(self, mock_keyscan, tmp_path):
+        cache_path = tmp_path / "sshfp.json"
+        existing = {"server": ["server IN SSHFP 1 2 abc123"]}
+        save_sshfp_cache(cache_path, existing)
+
+        host = _make_host("server", "10.1.10.1")
+        result = scan_sshfp([host], cache_path, force=False, max_age=9999)
+
+        assert result == existing
+        mock_keyscan.assert_not_called()
+
+    @patch("gdoc2netcfg.supplements.sshfp.check_port_open")
+    @patch("gdoc2netcfg.supplements.sshfp._keyscan")
+    def test_scan_saves_cache(self, mock_keyscan, mock_port, tmp_path):
+        mock_port.return_value = True
+        mock_keyscan.return_value = ["server IN SSHFP 4 2 def456"]
+        reachability = {
+            "server": HostReachability(
+                hostname="server", active_ips=("10.1.10.1",),
+            ),
+        }
+        host = _make_host("server", "10.1.10.1")
+        cache_path = tmp_path / "sshfp.json"
+        scan_sshfp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        assert cache_path.exists()
+        import json
+        loaded = json.loads(cache_path.read_text())
+        assert "server" in loaded
