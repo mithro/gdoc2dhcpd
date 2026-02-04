@@ -1,3 +1,13 @@
+# Example configuration for gdoc2netcfg.
+# Copy this file to gdoc2netcfg.toml and edit for your site:
+#   cp gdoc2netcfg.toml.example gdoc2netcfg.toml
+#
+# The values below are for the Welland site. Monarto differences:
+#   name = "monarto", domain = "monarto.mithis.com",
+#   site_octet = 2, ipv6 prefix = "2404:e80:a137:" (same),
+#   enabled generators = ["dnsmasq_internal"] only.
+
+# ── Site-specific: change these per site ──────────────────────────
 [site]
 name = "welland"
 domain = "welland.mithis.com"
@@ -13,6 +23,7 @@ vlan_allocations = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR5j6yiZCEv5
 [cache]
 directory = ".cache"
 
+# ── Site-specific: IPv6 prefixes may differ per site ─────────────
 [ipv6]
 # IPv6 prefixes for dual-stack address generation
 # Format: 10.AA.BB.CCC -> {prefix}AABB::CCC
@@ -26,6 +37,7 @@ disabled_prefixes = [
 # VLANs and network_subdomains are now derived from the
 # VLAN Allocations spreadsheet sheet, not configured here.
 
+# ── Site-specific: Monarto only enables ["dnsmasq_internal"] ─────
 [generators]
 # Which generators to enable
 enabled = ["dnsmasq_internal", "dnsmasq_external", "nagios", "nginx"]
