@@ -152,7 +152,7 @@ def scan_snmp(
     verbose: bool = False,
     reachability: dict[str, HostReachability] | None = None,
 ) -> dict[str, dict]:
-    """Scan hosts for SNMP data.
+    """Scan reachable hosts for SNMP data.
 
     Args:
         hosts: Host objects with IPs to scan.
@@ -160,8 +160,8 @@ def scan_snmp(
         force: Force re-scan even if cache is fresh.
         max_age: Maximum cache age in seconds (default 5 minutes).
         verbose: Print progress to stderr.
-        reachability: Pre-computed reachability data. When provided,
-            only scans hosts that are up.
+        reachability: Pre-computed reachability data from the
+            reachability pass. Only reachable hosts are scanned.
 
     Returns:
         Mapping of hostname to SNMP data dict.
@@ -182,23 +182,13 @@ def scan_snmp(
         if verbose:
             print(f"  {host.hostname:>20s} ", end="", flush=True, file=sys.stderr)
 
-        # Use pre-computed reachability if available
-        if reachability is not None:
-            host_reach = reachability.get(host.hostname)
-            if host_reach is None or not host_reach.is_up:
-                if verbose:
-                    print("down", file=sys.stderr)
-                continue
-            active_ips = list(host_reach.active_ips)
-        else:
-            # Without reachability data, use all interface IPs
-            # The SNMP timeout acts as the reachability check
-            active_ips = [str(iface.ipv4) for iface in host.interfaces]
-
-        if not active_ips:
+        # Skip hosts not in reachability data or not reachable
+        host_reach = reachability.get(host.hostname) if reachability else None
+        if host_reach is None or not host_reach.is_up:
             if verbose:
-                print("no-ips", file=sys.stderr)
+                print("down", file=sys.stderr)
             continue
+        active_ips = list(host_reach.active_ips)
 
         # Try SNMP on the first active IP
         ip = active_ips[0]

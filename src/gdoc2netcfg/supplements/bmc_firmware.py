@@ -157,7 +157,7 @@ def scan_bmc_firmware(
     verbose: bool = False,
     reachability: dict[str, HostReachability] | None = None,
 ) -> dict[str, dict]:
-    """Scan Supermicro BMCs for firmware information.
+    """Scan reachable Supermicro BMCs for firmware information.
 
     Only probes hosts with hardware_type == "supermicro-bmc".
 
@@ -167,7 +167,8 @@ def scan_bmc_firmware(
         force: Force re-scan even if cache is fresh.
         max_age: Maximum cache age in seconds (default 24 hours).
         verbose: Print progress to stderr.
-        reachability: Pre-computed reachability data.
+        reachability: Pre-computed reachability data from the
+            reachability pass. Only reachable hosts are scanned.
 
     Returns:
         Mapping of hostname to BMC firmware info dict.
@@ -194,21 +195,13 @@ def scan_bmc_firmware(
         if verbose:
             print(f"  {host.hostname:>20s} ", end="", flush=True, file=sys.stderr)
 
-        # Use pre-computed reachability if available
-        if reachability is not None:
-            host_reach = reachability.get(host.hostname)
-            if host_reach is None or not host_reach.is_up:
-                if verbose:
-                    print("down", file=sys.stderr)
-                continue
-            active_ips = list(host_reach.active_ips)
-        else:
-            active_ips = [str(iface.ipv4) for iface in host.interfaces]
-
-        if not active_ips:
+        # Skip hosts not in reachability data or not reachable
+        host_reach = reachability.get(host.hostname) if reachability else None
+        if host_reach is None or not host_reach.is_up:
             if verbose:
-                print("no-ips", file=sys.stderr)
+                print("down", file=sys.stderr)
             continue
+        active_ips = list(host_reach.active_ips)
 
         ip = active_ips[0]
         if verbose:

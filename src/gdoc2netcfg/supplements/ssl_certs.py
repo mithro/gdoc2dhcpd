@@ -23,7 +23,6 @@ from gdoc2netcfg.models.host import Host, SSLCertInfo
 from gdoc2netcfg.supplements.reachability import (
     HostReachability,
     check_port_open,
-    check_reachable,
 )
 
 
@@ -151,16 +150,16 @@ def scan_ssl_certs(
     verbose: bool = False,
     reachability: dict[str, HostReachability] | None = None,
 ) -> dict[str, dict]:
-    """Scan hosts for SSL/TLS certificates on port 443.
+    """Scan reachable hosts for SSL/TLS certificates on port 443.
 
     Args:
         hosts: Host objects with IPs to scan.
         cache_path: Path to ssl_certs.json cache file.
         force: Force re-scan even if cache is fresh.
         max_age: Maximum cache age in seconds (default 5 minutes).
-        verbose: Print progress to stdout.
-        reachability: Pre-computed reachability data. When provided,
-            uses active IPs from this instead of pinging each host.
+        verbose: Print progress to stderr.
+        reachability: Pre-computed reachability data from the
+            reachability pass. Only reachable hosts are scanned.
 
     Returns:
         Mapping of hostname to certificate info dict.
@@ -181,26 +180,13 @@ def scan_ssl_certs(
         if verbose:
             print(f"  {host.hostname:>20s} ", end="", flush=True, file=sys.stderr)
 
-        # Use pre-computed reachability if available, otherwise ping
-        if reachability is not None:
-            host_reach = reachability.get(host.hostname)
-            if host_reach is None or not host_reach.is_up:
-                if verbose:
-                    print("down", file=sys.stderr)
-                continue
-            active_ip = host_reach.active_ips[0] if host_reach.active_ips else None
-        else:
-            active_ip = None
-            for iface in host.interfaces:
-                ip_str = str(iface.ipv4)
-                if check_reachable(ip_str):
-                    active_ip = ip_str
-                    break
-
-        if active_ip is None:
+        # Skip hosts not in reachability data or not reachable
+        host_reach = reachability.get(host.hostname) if reachability else None
+        if host_reach is None or not host_reach.is_up:
             if verbose:
                 print("down", file=sys.stderr)
             continue
+        active_ip = host_reach.active_ips[0]
 
         if verbose:
             print(f"up({active_ip}) ", end="", flush=True, file=sys.stderr)
