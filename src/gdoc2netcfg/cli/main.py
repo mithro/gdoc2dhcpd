@@ -484,12 +484,15 @@ def cmd_sshfp(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
+    reachability = _load_or_run_reachability(config, hosts)
+
     cache_path = Path(config.cache.directory) / "sshfp.json"
     sshfp_data = scan_sshfp(
         hosts,
         cache_path=cache_path,
         force=args.force,
         verbose=True,
+        reachability=reachability,
     )
 
     enrich_hosts_with_sshfp(hosts, sshfp_data)
@@ -537,12 +540,15 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
     for host in hosts:
         derive_all_dns_names(host, config.site)
 
+    reachability = _load_or_run_reachability(config, hosts)
+
     cache_path = Path(config.cache.directory) / "ssl_certs.json"
     cert_data = scan_ssl_certs(
         hosts,
         cache_path=cache_path,
         force=args.force,
         verbose=True,
+        reachability=reachability,
     )
 
     enrich_hosts_with_ssl_certs(hosts, cert_data)
@@ -576,7 +582,6 @@ def cmd_snmp(args: argparse.Namespace) -> int:
         refine_bmc_hardware_type,
         scan_bmc_firmware,
     )
-    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
     from gdoc2netcfg.supplements.snmp import (
         enrich_hosts_with_snmp,
         scan_snmp,
@@ -594,9 +599,7 @@ def cmd_snmp(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    # Run shared reachability pass
-    print("Checking host reachability...", file=sys.stderr)
-    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    reachability = _load_or_run_reachability(config, hosts)
 
     # Scan BMC firmware and reclassify legacy BMCs before SNMP
     bmc_fw_cache = Path(config.cache.directory) / "bmc_firmware.json"
@@ -657,7 +660,6 @@ def cmd_bmc_firmware(args: argparse.Namespace) -> int:
         refine_bmc_hardware_type,
         scan_bmc_firmware,
     )
-    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
 
     # Minimal pipeline to get hosts with IPs
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
@@ -671,9 +673,7 @@ def cmd_bmc_firmware(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    # Check reachability
-    print("Checking host reachability...", file=sys.stderr)
-    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    reachability = _load_or_run_reachability(config, hosts)
 
     # Scan BMC firmware
     cache_path = Path(config.cache.directory) / "bmc_firmware.json"
@@ -721,7 +721,6 @@ def cmd_bridge(args: argparse.Namespace) -> int:
         enrich_hosts_with_bridge_data,
         scan_bridge,
     )
-    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
 
     # Minimal pipeline to get hosts with IPs
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
@@ -735,9 +734,7 @@ def cmd_bridge(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    # Run shared reachability pass
-    print("Checking host reachability...", file=sys.stderr)
-    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    reachability = _load_or_run_reachability(config, hosts)
 
     cache_path = Path(config.cache.directory) / "bridge.json"
     print("\nScanning bridge data...", file=sys.stderr)
