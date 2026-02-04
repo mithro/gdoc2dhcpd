@@ -87,8 +87,7 @@ def _fetch_cert(ip: str, timeout: float = 5.0) -> dict | None:
     issuer_cn = _get_name_attribute(cert.issuer, NameOID.COMMON_NAME)
     issuer = issuer_org or issuer_cn or "Unknown"
 
-    # Extract subject for self-signed detection
-    subject_org = _get_name_attribute(cert.subject, NameOID.ORGANIZATION_NAME)
+    # Extract subject CN for SAN fallback
     subject_cn = _get_name_attribute(cert.subject, NameOID.COMMON_NAME)
 
     # Detect self-signed: issuer == subject (compare full Name objects)

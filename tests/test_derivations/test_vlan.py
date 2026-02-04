@@ -96,10 +96,16 @@ class TestIpToVlanIdMonarto:
         site_octet=2,
         vlans={
             5: VLAN(id=5, name="net", subdomain="net", third_octets=(5,)),
-            10: VLAN(id=10, name="int", subdomain="int", third_octets=(8, 9, 10, 11, 12, 13, 14, 15)),
+            10: VLAN(
+                id=10, name="int", subdomain="int",
+                third_octets=(8, 9, 10, 11, 12, 13, 14, 15),
+            ),
             31: VLAN(id=31, name="fpgas", subdomain="fpgas", is_global=True),
         },
-        network_subdomains={5: "net", 8: "int", 9: "int", 10: "int", 11: "int", 12: "int", 13: "int", 14: "int", 15: "int"},
+        network_subdomains={
+            5: "net", 8: "int", 9: "int", 10: "int", 11: "int",
+            12: "int", 13: "int", 14: "int", 15: "int",
+        },
     )
 
     def test_monarto_site_vlan(self):

@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from gdoc2netcfg.utils.ip import is_local as _is_local
 from gdoc2netcfg.utils.ip import is_rfc1918 as _is_rfc1918
 
-
 _MAC_RE = re.compile(r'^([0-9a-f]{2}:){5}[0-9a-f]{2}$')
 
 

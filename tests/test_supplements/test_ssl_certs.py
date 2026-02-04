@@ -388,8 +388,10 @@ class TestCertificateFormats:
 
         from gdoc2netcfg.supplements.ssl_certs import _fetch_cert
 
-        with patch("gdoc2netcfg.supplements.ssl_certs.ssl.create_default_context") as mock_ctx_factory:
-            with patch("gdoc2netcfg.supplements.ssl_certs.socket.create_connection") as mock_conn:
+        ctx_path = "gdoc2netcfg.supplements.ssl_certs.ssl.create_default_context"
+        conn_path = "gdoc2netcfg.supplements.ssl_certs.socket.create_connection"
+        with patch(ctx_path) as mock_ctx_factory:
+            with patch(conn_path) as mock_conn:
                 mock_ctx = MagicMock()
                 mock_ctx_factory.return_value = mock_ctx
 

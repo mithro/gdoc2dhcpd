@@ -2,8 +2,7 @@
 
 from pathlib import Path
 
-from gdoc2netcfg.sources.parser import DeviceRecord, find_header_row, parse_csv
-
+from gdoc2netcfg.sources.parser import find_header_row, parse_csv
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 

@@ -1,7 +1,5 @@
 """Tests for the SSHFP supplement."""
 
-import json
-from pathlib import Path
 
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface

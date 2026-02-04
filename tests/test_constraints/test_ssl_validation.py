@@ -2,7 +2,6 @@
 
 from datetime import datetime, timedelta, timezone
 
-from gdoc2netcfg.constraints.errors import Severity
 from gdoc2netcfg.constraints.ssl_validation import (
     format_ssl_validation_report,
     validate_ssl_certificates,
@@ -202,7 +201,8 @@ class TestSANValidation:
 
         missing = [v for v in result.warnings if v.code == "ssl_missing_sans"]
         assert len(missing) == 1
-        assert "api.server.example.com" in missing[0].message or "www.server.example.com" in missing[0].message
+        msg = missing[0].message
+        assert "api.server.example.com" in msg or "www.server.example.com" in msg
 
     def test_extra_sans(self):
         host = _make_host(
