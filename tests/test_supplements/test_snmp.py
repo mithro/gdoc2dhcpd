@@ -1,7 +1,7 @@
 """Tests for the SNMP supplement."""
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface
@@ -269,9 +269,9 @@ class TestScanSNMP:
 
 
 class TestTrySNMPCredentials:
-    @patch("gdoc2netcfg.supplements.snmp.asyncio.run")
-    def test_public_community_succeeds(self, mock_run):
-        mock_run.return_value = {
+    @patch("gdoc2netcfg.supplements.snmp._collect_snmp_data", new_callable=AsyncMock)
+    def test_public_community_succeeds(self, mock_collect):
+        mock_collect.return_value = {
             "snmp_version": "v2c",
             "system_info": {"sysName": "device"},
         }
@@ -283,12 +283,12 @@ class TestTrySNMPCredentials:
         assert result is not None
         assert result["system_info"]["sysName"] == "device"
         # Should only have tried once (public succeeded)
-        assert mock_run.call_count == 1
+        assert mock_collect.call_count == 1
 
-    @patch("gdoc2netcfg.supplements.snmp.asyncio.run")
-    def test_fallback_to_custom_community(self, mock_run):
+    @patch("gdoc2netcfg.supplements.snmp._collect_snmp_data", new_callable=AsyncMock)
+    def test_fallback_to_custom_community(self, mock_collect):
         # First call (public) fails, second call (custom) succeeds
-        mock_run.side_effect = [
+        mock_collect.side_effect = [
             None,
             {"snmp_version": "v2c", "system_info": {"sysName": "device"}},
         ]
@@ -298,11 +298,11 @@ class TestTrySNMPCredentials:
         result = _try_snmp_credentials("10.1.10.1", host)
 
         assert result is not None
-        assert mock_run.call_count == 2
+        assert mock_collect.call_count == 2
 
-    @patch("gdoc2netcfg.supplements.snmp.asyncio.run")
-    def test_all_credentials_fail(self, mock_run):
-        mock_run.return_value = None
+    @patch("gdoc2netcfg.supplements.snmp._collect_snmp_data", new_callable=AsyncMock)
+    def test_all_credentials_fail(self, mock_collect):
+        mock_collect.return_value = None
         from gdoc2netcfg.supplements.snmp import _try_snmp_credentials
 
         host = _make_host()
@@ -310,10 +310,10 @@ class TestTrySNMPCredentials:
 
         assert result is None
 
-    @patch("gdoc2netcfg.supplements.snmp.asyncio.run")
-    def test_skips_duplicate_community(self, mock_run):
+    @patch("gdoc2netcfg.supplements.snmp._collect_snmp_data", new_callable=AsyncMock)
+    def test_skips_duplicate_community(self, mock_collect):
         """If custom community is 'public', don't try it twice."""
-        mock_run.return_value = None
+        mock_collect.return_value = None
         from gdoc2netcfg.supplements.snmp import _try_snmp_credentials
 
         host = _make_host(extra={"SNMP Community": "public"})
@@ -321,4 +321,4 @@ class TestTrySNMPCredentials:
 
         assert result is None
         # Should only try once — "public" custom == "public" default
-        assert mock_run.call_count == 1
+        assert mock_collect.call_count == 1
