@@ -1,6 +1,6 @@
 """Tests for host data models."""
 
-from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
+from gdoc2netcfg.models.addressing import IPv4Address, IPv6Address, MACAddress
 from gdoc2netcfg.models.host import (
     Host,
     NetworkInterface,
@@ -195,6 +195,31 @@ class TestVirtualInterface:
         )
         vis = host.virtual_interfaces
         assert vis[0].dhcp_names == ('roku-wired', 'roku-wifi')
+
+    def test_ipv6_and_vlan_from_first_nic(self):
+        ipv6 = IPv6Address('2404:e80:a137:110::1', '2404:e80:a137:')
+        wired = NetworkInterface(
+            name='eth0',
+            mac=MACAddress.parse('aa:bb:cc:dd:ee:01'),
+            ipv4=IPv4Address('10.1.10.1'),
+            ipv6_addresses=[ipv6],
+            vlan_id=10,
+        )
+        wifi = NetworkInterface(
+            name='wlan0',
+            mac=MACAddress.parse('aa:bb:cc:dd:ee:02'),
+            ipv4=IPv4Address('10.1.10.1'),
+            ipv6_addresses=[],
+            vlan_id=10,
+        )
+        host = Host(
+            machine_name='roku', hostname='roku',
+            interfaces=[wired, wifi],
+        )
+        vis = host.virtual_interfaces
+        assert len(vis) == 1
+        assert vis[0].ipv6_addresses == (ipv6,)
+        assert vis[0].vlan_id == 10
 
     def test_frozen(self):
         vi = VirtualInterface(

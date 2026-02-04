@@ -66,7 +66,7 @@ class VirtualInterface:
     ipv4: IPv4Address
     macs: tuple[MACAddress, ...]
     dhcp_names: tuple[str, ...] = ()
-    ipv6_addresses: list[IPv6Address] = field(default_factory=list)
+    ipv6_addresses: tuple[IPv6Address, ...] = ()
     vlan_id: int | None = None
 
 
@@ -226,9 +226,7 @@ class Host:
         same device) are combined into one VirtualInterface with multiple
         MACs.  Order follows first occurrence in self.interfaces.
         """
-        from collections import OrderedDict
-
-        groups: OrderedDict[str, list[NetworkInterface]] = OrderedDict()
+        groups: dict[str, list[NetworkInterface]] = {}
         for iface in self.interfaces:
             key = str(iface.ipv4)
             groups.setdefault(key, []).append(iface)
@@ -240,7 +238,7 @@ class Host:
                 ipv4=first.ipv4,
                 macs=tuple(i.mac for i in ifaces),
                 dhcp_names=tuple(i.dhcp_name for i in ifaces),
-                ipv6_addresses=first.ipv6_addresses,
+                ipv6_addresses=tuple(first.ipv6_addresses),
                 vlan_id=first.vlan_id,
             ))
         return result
