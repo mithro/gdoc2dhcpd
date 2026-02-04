@@ -1,5 +1,9 @@
 """Tests for the shared reachability module."""
 
+import json
+import os
+import time
+from pathlib import Path
 from unittest.mock import patch
 
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
@@ -10,6 +14,8 @@ from gdoc2netcfg.supplements.reachability import (
     check_all_hosts_reachability,
     check_port_open,
     check_reachable,
+    load_reachability_cache,
+    save_reachability_cache,
 )
 
 
@@ -241,3 +247,86 @@ class TestCheckAllHostsReachability:
         # Both should be present regardless of order
         assert "zebra.example.com" in result
         assert "alpha.example.com" in result
+
+
+class TestReachabilityCache:
+    def test_save_and_load_roundtrip(self, tmp_path):
+        cache_path = tmp_path / "reachability.json"
+        data = {
+            "server": HostReachability(hostname="server", active_ips=("10.1.10.1",)),
+            "desktop": HostReachability(hostname="desktop", active_ips=()),
+        }
+
+        save_reachability_cache(cache_path, data)
+        result = load_reachability_cache(cache_path)
+
+        assert result is not None
+        loaded, age = result
+        assert len(loaded) == 2
+        assert loaded["server"].hostname == "server"
+        assert loaded["server"].active_ips == ("10.1.10.1",)
+        assert loaded["server"].is_up is True
+        assert loaded["desktop"].active_ips == ()
+        assert loaded["desktop"].is_up is False
+        assert age < 2  # just written
+
+    def test_load_missing_file_returns_none(self, tmp_path):
+        cache_path = tmp_path / "nonexistent.json"
+        assert load_reachability_cache(cache_path) is None
+
+    def test_load_stale_file_returns_none(self, tmp_path):
+        cache_path = tmp_path / "reachability.json"
+        data = {
+            "server": HostReachability(hostname="server", active_ips=("10.1.10.1",)),
+        }
+        save_reachability_cache(cache_path, data)
+
+        # Backdate the file modification time by 600 seconds
+        old_time = time.time() - 600
+        os.utime(cache_path, (old_time, old_time))
+
+        assert load_reachability_cache(cache_path, max_age=300) is None
+
+    def test_fresh_file_within_max_age(self, tmp_path):
+        cache_path = tmp_path / "reachability.json"
+        data = {
+            "server": HostReachability(hostname="server", active_ips=("10.1.10.1",)),
+        }
+        save_reachability_cache(cache_path, data)
+
+        result = load_reachability_cache(cache_path, max_age=300)
+        assert result is not None
+
+    def test_corrupted_json_returns_none(self, tmp_path):
+        cache_path = tmp_path / "reachability.json"
+        cache_path.write_text("not valid json{{{")
+
+        assert load_reachability_cache(cache_path) is None
+
+    def test_empty_reachability_roundtrip(self, tmp_path):
+        cache_path = tmp_path / "reachability.json"
+        save_reachability_cache(cache_path, {})
+
+        result = load_reachability_cache(cache_path)
+        assert result is not None
+        loaded, _ = result
+        assert loaded == {}
+
+    def test_creates_parent_directories(self, tmp_path):
+        cache_path = tmp_path / "deep" / "nested" / "reachability.json"
+        data = {"server": HostReachability(hostname="server", active_ips=())}
+
+        save_reachability_cache(cache_path, data)
+
+        assert cache_path.exists()
+
+    def test_json_format_is_sorted(self, tmp_path):
+        cache_path = tmp_path / "reachability.json"
+        data = {
+            "zebra": HostReachability(hostname="zebra", active_ips=("10.1.10.3",)),
+            "alpha": HostReachability(hostname="alpha", active_ips=("10.1.10.1",)),
+        }
+        save_reachability_cache(cache_path, data)
+
+        raw = json.loads(cache_path.read_text())
+        assert list(raw.keys()) == ["alpha", "zebra"]
