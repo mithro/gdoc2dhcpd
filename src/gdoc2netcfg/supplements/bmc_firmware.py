@@ -153,7 +153,7 @@ def scan_bmc_firmware(
     hosts: list[Host],
     cache_path: Path,
     force: bool = False,
-    max_age: float = 86400,
+    max_age: float = 300,
     verbose: bool = False,
     reachability: dict[str, HostReachability] | None = None,
 ) -> dict[str, dict]:
@@ -165,7 +165,7 @@ def scan_bmc_firmware(
         hosts: Host objects with hardware_type set.
         cache_path: Path to bmc_firmware.json cache file.
         force: Force re-scan even if cache is fresh.
-        max_age: Maximum cache age in seconds (default 24 hours).
+        max_age: Maximum cache age in seconds (default 5 minutes).
         verbose: Print progress to stderr.
         reachability: Pre-computed reachability data from the
             reachability pass. Only reachable hosts are scanned.
