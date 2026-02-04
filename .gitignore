@@ -1,3 +1,6 @@
+# Site-specific config (copy from gdoc2netcfg.toml.example)
+gdoc2netcfg.toml
+
 out/
 internal/
 external/
