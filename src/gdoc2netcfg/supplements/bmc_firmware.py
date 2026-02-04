@@ -188,24 +188,25 @@ def scan_bmc_firmware(
                 )
             return fw_data
 
-    for host in sorted(hosts, key=lambda h: h.hostname.split(".")[::-1]):
+    sorted_hosts = sorted(hosts, key=lambda h: h.hostname.split(".")[::-1])
+    name_width = max((len(h.hostname) for h in sorted_hosts), default=0)
+
+    for host in sorted_hosts:
         if host.hardware_type != HARDWARE_SUPERMICRO_BMC:
             continue
-
-        if verbose:
-            print(f"  {host.hostname:>20s} ", end="", flush=True, file=sys.stderr)
 
         # Skip hosts not in reachability data or not reachable
         host_reach = reachability.get(host.hostname) if reachability else None
         if host_reach is None or not host_reach.is_up:
-            if verbose:
-                print("down", file=sys.stderr)
             continue
         active_ips = list(host_reach.active_ips)
 
         ip = active_ips[0]
         if verbose:
-            print(f"ipmitool({ip}) ", end="", flush=True, file=sys.stderr)
+            print(
+                f"  {host.hostname:>{name_width}s} ipmitool({ip}) ",
+                end="", flush=True, file=sys.stderr,
+            )
 
         mc_info = _try_ipmi_credentials(ip, host)
         if mc_info is not None:

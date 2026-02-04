@@ -178,22 +178,23 @@ def scan_snmp(
                 print(f"snmp.json last updated {age:.0f}s ago, using cache.", file=sys.stderr)
             return snmp_data
 
-    for host in sorted(hosts, key=lambda h: h.hostname.split(".")[::-1]):
-        if verbose:
-            print(f"  {host.hostname:>20s} ", end="", flush=True, file=sys.stderr)
+    sorted_hosts = sorted(hosts, key=lambda h: h.hostname.split(".")[::-1])
+    name_width = max((len(h.hostname) for h in sorted_hosts), default=0)
 
+    for host in sorted_hosts:
         # Skip hosts not in reachability data or not reachable
         host_reach = reachability.get(host.hostname) if reachability else None
         if host_reach is None or not host_reach.is_up:
-            if verbose:
-                print("down", file=sys.stderr)
             continue
         active_ips = list(host_reach.active_ips)
 
         # Try SNMP on the first active IP
         ip = active_ips[0]
         if verbose:
-            print(f"snmp({ip}) ", end="", flush=True, file=sys.stderr)
+            print(
+                f"  {host.hostname:>{name_width}s} snmp({ip}) ",
+                end="", flush=True, file=sys.stderr,
+            )
 
         data = _try_snmp_credentials(ip, host)
         if data is not None:
