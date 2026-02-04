@@ -14,8 +14,6 @@ bindings are the only internal-only section.
 
 from __future__ import annotations
 
-from collections import defaultdict
-
 from gdoc2netcfg.derivations.dns_names import common_suffix
 from gdoc2netcfg.generators.dnsmasq_common import (
     _ipv6_for_ip,
@@ -53,20 +51,14 @@ def _host_dhcp_config(host: Host, inventory: NetworkInventory) -> list[str]:
     if not host.interfaces:
         return []
 
-    # Group MACs by IP within this host
-    ip_to_macs: dict[str, list[tuple]] = defaultdict(list)
-    for iface in host.interfaces:
-        ip_str = str(iface.ipv4)
-        ip_to_macs[ip_str].append((iface.mac, iface.dhcp_name))
-
     output: list[str] = []
     output.append(f"# {host.hostname} — DHCP")
-    for ip, macs in sorted(ip_to_macs.items(), key=lambda x: ip_sort_key(x[0])):
-        dhcp_names = set(name for _, name in macs)
-        dhcp_name = common_suffix(*dhcp_names).strip("-")
+    for vi in sorted(host.virtual_interfaces, key=lambda v: ip_sort_key(str(v.ipv4))):
+        ip = str(vi.ipv4)
+        dhcp_name = common_suffix(*set(vi.dhcp_names)).strip("-")
 
         ipv6_strs = _ipv6_for_ip(ip, inventory)
-        mac_str = ",".join(str(mac) for mac, _ in macs)
+        mac_str = ",".join(str(mac) for mac in vi.macs)
 
         if ipv6_strs:
             ipv6_brackets = ",".join(f"[{addr}]" for addr in ipv6_strs)

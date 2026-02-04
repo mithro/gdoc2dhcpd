@@ -46,6 +46,31 @@ class NetworkInterface:
 
 
 @dataclass(frozen=True)
+class VirtualInterface:
+    """A logical network endpoint grouping physical NICs that share an IP.
+
+    When a device has multiple physical interfaces (e.g. wired + wireless)
+    with the same IPv4, they are grouped into one VirtualInterface.
+    Single-NIC endpoints produce a VirtualInterface with one MAC.
+
+    Attributes:
+        name: Interface name from the first physical NIC (None for default).
+        ipv4: The shared IPv4 address.
+        macs: All MAC addresses for this IP (tuple for immutability).
+        dhcp_names: DHCP names from all physical NICs (tuple for immutability).
+        ipv6_addresses: IPv6 addresses (from the first physical NIC).
+        vlan_id: VLAN ID (from the first physical NIC).
+    """
+
+    name: str | None
+    ipv4: IPv4Address
+    macs: tuple[MACAddress, ...]
+    dhcp_names: tuple[str, ...] = ()
+    ipv6_addresses: tuple[IPv6Address, ...] = ()
+    vlan_id: int | None = None
+
+
+@dataclass(frozen=True)
 class SSLCertInfo:
     """SSL/TLS certificate information for a host.
 
@@ -193,9 +218,34 @@ class Host:
             for iface in self.interfaces
         )
 
+    @property
+    def virtual_interfaces(self) -> list[VirtualInterface]:
+        """Group physical interfaces by IPv4 into logical endpoints.
+
+        Interfaces sharing the same IPv4 (e.g. wired + wireless on the
+        same device) are combined into one VirtualInterface with multiple
+        MACs.  Order follows first occurrence in self.interfaces.
+        """
+        groups: dict[str, list[NetworkInterface]] = {}
+        for iface in self.interfaces:
+            key = str(iface.ipv4)
+            groups.setdefault(key, []).append(iface)
+        result = []
+        for ifaces in groups.values():
+            first = ifaces[0]
+            result.append(VirtualInterface(
+                name=first.name,
+                ipv4=first.ipv4,
+                macs=tuple(i.mac for i in ifaces),
+                dhcp_names=tuple(i.dhcp_name for i in ifaces),
+                ipv6_addresses=tuple(first.ipv6_addresses),
+                vlan_id=first.vlan_id,
+            ))
+        return result
+
     def is_multi_interface(self) -> bool:
-        """Check if this host has multiple network interfaces."""
-        return len(self.interfaces) > 1
+        """Check if this host has multiple distinct IP endpoints."""
+        return len(self.virtual_interfaces) > 1
 
 
 @dataclass

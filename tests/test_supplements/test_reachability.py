@@ -329,3 +329,19 @@ class TestReachabilityCache:
 
         raw = json.loads(cache_path.read_text())
         assert list(raw.keys()) == ["alpha", "zebra"]
+
+
+class TestSharedIPReachability:
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_shared_ip_pinged_once(self, mock_reachable):
+        """Two NICs sharing the same IP should only produce one ping."""
+        mock_reachable.return_value = PingResult(10, 10, 1.0)
+        # Two interfaces, same IP, different MACs
+        host = _make_multi_iface_host("roku", ["10.1.10.50", "10.1.10.50"])
+
+        result = check_all_hosts_reachability([host])
+
+        assert result["roku"].is_up is True
+        assert result["roku"].active_ips == ("10.1.10.50",)
+        # Should ping once, not twice
+        mock_reachable.assert_called_once_with("10.1.10.50")

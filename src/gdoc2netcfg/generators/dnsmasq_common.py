@@ -112,8 +112,8 @@ def host_sshfp_records(
         if iface.name:
             _records(f"{iface.name}.{host.hostname}.{domain}")
 
-    for iface in host.interfaces:
-        ip_str = ipv4_transform(str(iface.ipv4))
+    for vi in host.virtual_interfaces:
+        ip_str = ipv4_transform(str(vi.ipv4))
         ptr = ".".join(ip_str.split(".")[::-1]) + ".in-addr.arpa"
         _records(ptr)
 
@@ -130,8 +130,8 @@ def host_ptr_config(host: Host, inventory: NetworkInventory) -> list[str]:
     domain = inventory.site.domain
     output: list[str] = []
 
-    for iface in sorted(host.interfaces, key=lambda i: ip_sort_key(str(i.ipv4))):
-        ip = str(iface.ipv4)
+    for vi in sorted(host.virtual_interfaces, key=lambda v: ip_sort_key(str(v.ipv4))):
+        ip = str(vi.ipv4)
         hostname = inventory.ip_to_hostname.get(ip)
         if not hostname:
             continue

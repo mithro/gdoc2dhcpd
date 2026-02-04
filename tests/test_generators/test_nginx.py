@@ -612,3 +612,41 @@ class TestPathValidation:
                 _make_inventory(host),
                 htpasswd_file="/etc/passwd\n    evil_directive;",
             )
+
+
+class TestSharedIPHost:
+    """Tests for hosts with multiple NICs sharing the same IP address."""
+
+    def test_shared_ip_treated_as_single_interface(self):
+        """Two NICs with same IP should produce single-interface config (no upstream)."""
+        host = _make_multi_iface_host(
+            hostname="roku",
+            iface_ips={"eth0": "10.1.90.50", "wlan0": "10.1.90.50"},
+            subdomain="iot",
+        )
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "roku.welland.mithis.com"
+        site_files = [k for k in files if k.startswith("sites-available/")]
+        assert len(site_files) == 4
+
+        # Should use direct proxy_pass, not upstream
+        http_pub = files[f"sites-available/{fqdn}-http-public"]
+        assert "upstream" not in http_pub
+        assert "proxy_pass http://10.1.90.50;" in http_pub
+
+    def test_shared_ip_no_duplicate_upstream_entries(self):
+        """If shared-IP host is somehow multi-interface, IPs should be unique."""
+        # Create a host with 3 NICs: eth0+wlan0 on same IP, eth1 on different IP
+        host = _make_multi_iface_host(
+            hostname="server",
+            iface_ips={"eth0": "10.1.10.100", "wlan0": "10.1.10.100", "eth1": "10.1.10.101"},
+            subdomain="int",
+        )
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "server.welland.mithis.com"
+        http_pub = files[f"sites-available/{fqdn}-http-public"]
+        # Upstream should have two entries, not three
+        assert http_pub.count("server 10.1.10.100:80;") == 1
+        assert http_pub.count("server 10.1.10.101:80;") == 1
