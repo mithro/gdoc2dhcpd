@@ -394,6 +394,41 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Shared reachability helper
+# ---------------------------------------------------------------------------
+
+def _load_or_run_reachability(config, hosts, force: bool = False):
+    """Load cached reachability or run a fresh scan.
+
+    Returns dict[str, HostReachability].
+    """
+    from gdoc2netcfg.supplements.reachability import (
+        check_all_hosts_reachability,
+        load_reachability_cache,
+        save_reachability_cache,
+    )
+
+    cache_path = Path(config.cache.directory) / "reachability.json"
+
+    if not force:
+        cached = load_reachability_cache(cache_path)
+        if cached is not None:
+            import time
+
+            age = time.time() - cache_path.stat().st_mtime
+            print(
+                f"Using cached reachability ({age:.0f}s old).",
+                file=sys.stderr,
+            )
+            return cached
+
+    print("Checking host reachability...", file=sys.stderr)
+    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    save_reachability_cache(cache_path, reachability)
+    return reachability
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: reachability
 # ---------------------------------------------------------------------------
 
@@ -403,7 +438,6 @@ def cmd_reachability(args: argparse.Namespace) -> int:
 
     from gdoc2netcfg.derivations.host_builder import build_hosts
     from gdoc2netcfg.sources.parser import parse_csv
-    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
 
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
     _enrich_site_from_vlan_sheet(config, csv_data)
@@ -416,8 +450,7 @@ def cmd_reachability(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    print("Checking host reachability...", file=sys.stderr)
-    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     hosts_up = sum(1 for r in reachability.values() if r.is_up)
     hosts_down = sum(1 for r in reachability.values() if not r.is_up)
@@ -805,7 +838,11 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("info", help="Show pipeline configuration")
 
     # reachability
-    subparsers.add_parser("reachability", help="Ping all hosts and report up/down")
+    reach_parser = subparsers.add_parser("reachability", help="Ping all hosts and report up/down")
+    reach_parser.add_argument(
+        "--force", action="store_true",
+        help="Force re-scan even if cache is fresh",
+    )
 
     # sshfp
     sshfp_parser = subparsers.add_parser("sshfp", help="Scan hosts for SSH fingerprints")
