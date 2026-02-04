@@ -484,7 +484,7 @@ def cmd_sshfp(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     cache_path = Path(config.cache.directory) / "sshfp.json"
     sshfp_data = scan_sshfp(
@@ -540,7 +540,7 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
     for host in hosts:
         derive_all_dns_names(host, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     cache_path = Path(config.cache.directory) / "ssl_certs.json"
     cert_data = scan_ssl_certs(
@@ -599,7 +599,7 @@ def cmd_snmp(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     # Scan BMC firmware and reclassify legacy BMCs before SNMP
     bmc_fw_cache = Path(config.cache.directory) / "bmc_firmware.json"
@@ -673,7 +673,7 @@ def cmd_bmc_firmware(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     # Scan BMC firmware
     cache_path = Path(config.cache.directory) / "bmc_firmware.json"
@@ -734,7 +734,7 @@ def cmd_bridge(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     cache_path = Path(config.cache.directory) / "bridge.json"
     print("\nScanning bridge data...", file=sys.stderr)
