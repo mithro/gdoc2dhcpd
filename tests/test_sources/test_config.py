@@ -7,9 +7,9 @@ from gdoc2netcfg.config import load_config
 
 class TestLoadConfig:
     def test_load_project_config(self):
-        """Load the actual gdoc2netcfg.toml from the project root."""
+        """Load the example config template from the project root."""
         project_root = Path(__file__).parent.parent.parent
-        config_path = project_root / "gdoc2netcfg.toml"
+        config_path = project_root / "gdoc2netcfg.toml.example"
         config = load_config(config_path)
 
         # Site
