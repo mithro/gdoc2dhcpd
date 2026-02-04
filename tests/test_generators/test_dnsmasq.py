@@ -259,3 +259,89 @@ class TestAltNames:
         assert "host-record=alias.welland.mithis.com," in output
         assert "*.welland.mithis.com" not in output
         assert "alias.example.com" not in output
+
+
+def _shared_ip_host(hostname, ip, macs, dhcp_name="test"):
+    """Create a host with multiple NICs sharing the same IP."""
+    ipv4 = IPv4Address(ip)
+    ipv6s = []
+    if ip.startswith("10."):
+        parts = ip.split(".")
+        aa = parts[1]
+        bb = parts[2].zfill(2)
+        ccc = parts[3]
+        ipv6s = [IPv6Address(f"2404:e80:a137:{aa}{bb}::{ccc}", "2404:e80:a137:")]
+
+    ifaces = [
+        NetworkInterface(
+            name=f"eth{i}",
+            mac=MACAddress.parse(mac),
+            ipv4=ipv4,
+            ipv6_addresses=ipv6s if i == 0 else [],
+            dhcp_name=dhcp_name,
+        )
+        for i, mac in enumerate(macs)
+    ]
+    host = Host(
+        machine_name=hostname,
+        hostname=hostname,
+        interfaces=ifaces,
+        default_ipv4=ipv4,
+        subdomain="int" if ip.startswith("10.1.10.") else None,
+    )
+    derive_all_dns_names(host, SITE)
+    return host
+
+
+class TestSharedIP:
+    """Tests for hosts with multiple NICs sharing the same IPv4 address."""
+
+    def test_shared_ip_produces_single_dhcp_line(self):
+        host = _shared_ip_host("roku", "10.1.10.50",
+                               ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"],
+                               dhcp_name="roku")
+        inv = _make_inventory(
+            hosts=[host],
+            ip_to_hostname={"10.1.10.50": "roku"},
+        )
+        result = generate_dnsmasq_internal(inv)
+        output = result["roku.conf"]
+        dhcp_lines = [line for line in output.split("\n") if line.startswith("dhcp-host=")]
+        assert len(dhcp_lines) == 1
+        assert "aa:bb:cc:dd:ee:01,aa:bb:cc:dd:ee:02" in dhcp_lines[0]
+
+    def test_shared_ip_produces_single_ptr_record(self):
+        host = _shared_ip_host("roku", "10.1.10.50",
+                               ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"])
+        inv = _make_inventory(
+            hosts=[host],
+            ip_to_hostname={"10.1.10.50": "roku"},
+        )
+        result = generate_dnsmasq_internal(inv)
+        output = result["roku.conf"]
+        ipv4_ptrs = [line for line in output.split("\n")
+                     if line.startswith("ptr-record=/") and "in-addr.arpa" not in line]
+        assert len(ipv4_ptrs) == 1
+
+    def test_shared_ip_sshfp_ptr_appears_once(self):
+        host = _shared_ip_host("roku", "10.1.10.50",
+                               ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"])
+        host.sshfp_records = ["roku IN SSHFP 1 2 abc123"]
+        inv = _make_inventory(hosts=[host])
+        result = generate_dnsmasq_internal(inv)
+        output = result["roku.conf"]
+        # Count SSHFP records for the PTR name (in-addr.arpa)
+        sshfp_ptr_lines = [line for line in output.split("\n")
+                           if "in-addr.arpa,44," in line]
+        assert len(sshfp_ptr_lines) == 1
+
+    def test_shared_ip_sshfp_per_interface_names_preserved(self):
+        host = _shared_ip_host("roku", "10.1.10.50",
+                               ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"])
+        host.sshfp_records = ["roku IN SSHFP 1 2 abc123"]
+        inv = _make_inventory(hosts=[host])
+        result = generate_dnsmasq_internal(inv)
+        output = result["roku.conf"]
+        # Both named interfaces should still get SSHFP FQDN records
+        assert "eth0.roku.welland.mithis.com,44," in output
+        assert "eth1.roku.welland.mithis.com,44," in output
