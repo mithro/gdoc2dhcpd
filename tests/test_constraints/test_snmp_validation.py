@@ -3,6 +3,7 @@
 from gdoc2netcfg.constraints.errors import Severity
 from gdoc2netcfg.constraints.snmp_validation import validate_snmp_availability
 from gdoc2netcfg.derivations.hardware import (
+    HARDWARE_CISCO_SWITCH,
     HARDWARE_NETGEAR_SWITCH,
     HARDWARE_NETGEAR_SWITCH_PLUS,
     HARDWARE_SUPERMICRO_BMC,
@@ -87,6 +88,37 @@ class TestKnownDeviceUp:
         reachability = {
             "gs110emx-rack1": HostReachability(
                 hostname="gs110emx-rack1", active_ips=("10.1.10.100",)
+            ),
+        }
+        result = validate_snmp_availability([host], reachability)
+        assert len(result.violations) == 0
+
+    def test_cisco_up_no_snmp_error(self):
+        """Cisco switch UP + no SNMP → error."""
+        host = _make_host("sw-cisco-shed", hardware_type=HARDWARE_CISCO_SWITCH)
+        reachability = {
+            "sw-cisco-shed": HostReachability(
+                hostname="sw-cisco-shed", active_ips=("10.1.5.35",)
+            ),
+        }
+        result = validate_snmp_availability([host], reachability)
+
+        errors = [v for v in result.errors if v.code == "snmp_no_response"]
+        assert len(errors) == 1
+        assert "cisco-switch" in errors[0].message
+        assert errors[0].severity == Severity.ERROR
+        assert errors[0].record_id == "sw-cisco-shed"
+
+    def test_cisco_up_has_snmp_ok(self):
+        """Cisco switch UP + has SNMP → no error."""
+        host = _make_host(
+            "sw-cisco-shed",
+            hardware_type=HARDWARE_CISCO_SWITCH,
+            snmp_data=_snmp_data(),
+        )
+        reachability = {
+            "sw-cisco-shed": HostReachability(
+                hostname="sw-cisco-shed", active_ips=("10.1.5.35",)
             ),
         }
         result = validate_snmp_availability([host], reachability)

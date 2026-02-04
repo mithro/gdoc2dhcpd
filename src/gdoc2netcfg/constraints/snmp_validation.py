@@ -14,14 +14,18 @@ from gdoc2netcfg.constraints.errors import (
     Severity,
     ValidationResult,
 )
-from gdoc2netcfg.derivations.hardware import HARDWARE_NETGEAR_SWITCH, HARDWARE_SUPERMICRO_BMC
+from gdoc2netcfg.derivations.hardware import (
+    HARDWARE_CISCO_SWITCH,
+    HARDWARE_NETGEAR_SWITCH,
+    HARDWARE_SUPERMICRO_BMC,
+)
 
 if TYPE_CHECKING:
     from gdoc2netcfg.models.host import Host
     from gdoc2netcfg.supplements.reachability import HostReachability
 
 # Hardware types that should always respond to SNMP
-SNMP_REQUIRED_HARDWARE = {HARDWARE_NETGEAR_SWITCH, HARDWARE_SUPERMICRO_BMC}
+SNMP_REQUIRED_HARDWARE = {HARDWARE_CISCO_SWITCH, HARDWARE_NETGEAR_SWITCH, HARDWARE_SUPERMICRO_BMC}
 
 
 def validate_snmp_availability(
