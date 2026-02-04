@@ -541,6 +541,8 @@ class TestCertificateFormats:
 
     def test_near_expiry_cert(self):
         """Certificate expiring soon should parse correctly."""
+        from datetime import date, timedelta
+
         cert_der = _make_test_cert_der(
             issuer_org="Let's Encrypt",
             issuer_cn="R3",
@@ -553,6 +555,7 @@ class TestCertificateFormats:
 
         assert result is not None
         assert result["issuer"] == "Let's Encrypt"
-        # Expiry date should be within the next week
-        assert result["expiry"] <= "2026-02-10"
-        assert result["expiry"] >= "2026-01-29"
+        # Expiry date should be within the next week (relative to today)
+        today = date.today()
+        assert result["expiry"] >= (today + timedelta(days=6)).isoformat()
+        assert result["expiry"] <= (today + timedelta(days=8)).isoformat()
