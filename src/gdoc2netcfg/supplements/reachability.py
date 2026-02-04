@@ -134,8 +134,8 @@ def check_all_hosts_reachability(
         host_futures: list[tuple[Host, list[tuple[str, Future[PingResult]]]]] = []
         for host in sorted_hosts:
             ip_futures = []
-            for iface in host.interfaces:
-                ip_str = str(iface.ipv4)
+            for vi in host.virtual_interfaces:
+                ip_str = str(vi.ipv4)
                 future = pool.submit(check_reachable, ip_str)
                 ip_futures.append((ip_str, future))
             host_futures.append((host, ip_futures))
