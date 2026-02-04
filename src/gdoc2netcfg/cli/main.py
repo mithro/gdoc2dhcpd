@@ -492,6 +492,9 @@ def cmd_sshfp(args: argparse.Namespace) -> int:
     hosts = build_hosts(all_records, config.site)
 
     reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    hosts_up = sum(1 for r in reachability.values() if r.is_up)
+    hosts_down = sum(1 for r in reachability.values() if not r.is_up)
+    print(f"{hosts_up} up, {hosts_down} down, {len(hosts)} total.", file=sys.stderr)
 
     cache_path = Path(config.cache.directory) / "sshfp.json"
     sshfp_data = scan_sshfp(
@@ -548,6 +551,9 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
         derive_all_dns_names(host, config.site)
 
     reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    hosts_up = sum(1 for r in reachability.values() if r.is_up)
+    hosts_down = sum(1 for r in reachability.values() if not r.is_up)
+    print(f"{hosts_up} up, {hosts_down} down, {len(hosts)} total.", file=sys.stderr)
 
     cache_path = Path(config.cache.directory) / "ssl_certs.json"
     cert_data = scan_ssl_certs(
@@ -607,6 +613,9 @@ def cmd_snmp(args: argparse.Namespace) -> int:
     hosts = build_hosts(all_records, config.site)
 
     reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    hosts_up = sum(1 for r in reachability.values() if r.is_up)
+    hosts_down = sum(1 for r in reachability.values() if not r.is_up)
+    print(f"{hosts_up} up, {hosts_down} down, {len(hosts)} total.", file=sys.stderr)
 
     # Scan BMC firmware and reclassify legacy BMCs before SNMP
     bmc_fw_cache = Path(config.cache.directory) / "bmc_firmware.json"
@@ -638,7 +647,6 @@ def cmd_snmp(args: argparse.Namespace) -> int:
 
     # Report
     hosts_with_snmp = sum(1 for h in hosts if h.snmp_data is not None)
-    hosts_up = sum(1 for r in reachability.values() if r.is_up)
     print(f"\nSNMP data for {hosts_with_snmp}/{len(hosts)} hosts "
           f"({hosts_up} reachable).")
 
@@ -681,6 +689,9 @@ def cmd_bmc_firmware(args: argparse.Namespace) -> int:
     hosts = build_hosts(all_records, config.site)
 
     reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    hosts_up = sum(1 for r in reachability.values() if r.is_up)
+    hosts_down = sum(1 for r in reachability.values() if not r.is_up)
+    print(f"{hosts_up} up, {hosts_down} down, {len(hosts)} total.", file=sys.stderr)
 
     # Scan BMC firmware
     cache_path = Path(config.cache.directory) / "bmc_firmware.json"
@@ -742,6 +753,9 @@ def cmd_bridge(args: argparse.Namespace) -> int:
     hosts = build_hosts(all_records, config.site)
 
     reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    hosts_up = sum(1 for r in reachability.values() if r.is_up)
+    hosts_down = sum(1 for r in reachability.values() if not r.is_up)
+    print(f"{hosts_up} up, {hosts_down} down, {len(hosts)} total.", file=sys.stderr)
 
     cache_path = Path(config.cache.directory) / "bridge.json"
     print("\nScanning bridge data...", file=sys.stderr)
