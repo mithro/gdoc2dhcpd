@@ -15,6 +15,12 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gdoc2netcfg.config import PipelineConfig
+    from gdoc2netcfg.models.host import Host
+    from gdoc2netcfg.supplements.reachability import HostReachability
 
 
 def _load_config(args: argparse.Namespace):
@@ -394,6 +400,40 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Shared reachability helper
+# ---------------------------------------------------------------------------
+
+def _load_or_run_reachability(
+    config: PipelineConfig,
+    hosts: list[Host],
+    force: bool = False,
+) -> dict[str, HostReachability]:
+    """Load cached reachability or run a fresh scan."""
+    from gdoc2netcfg.supplements.reachability import (
+        check_all_hosts_reachability,
+        load_reachability_cache,
+        save_reachability_cache,
+    )
+
+    cache_path = Path(config.cache.directory) / "reachability.json"
+
+    if not force:
+        result = load_reachability_cache(cache_path)
+        if result is not None:
+            cached, age = result
+            print(
+                f"Using cached reachability ({age:.0f}s old).",
+                file=sys.stderr,
+            )
+            return cached
+
+    print("Checking host reachability...", file=sys.stderr)
+    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    save_reachability_cache(cache_path, reachability)
+    return reachability
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: reachability
 # ---------------------------------------------------------------------------
 
@@ -403,7 +443,6 @@ def cmd_reachability(args: argparse.Namespace) -> int:
 
     from gdoc2netcfg.derivations.host_builder import build_hosts
     from gdoc2netcfg.sources.parser import parse_csv
-    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
 
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
     _enrich_site_from_vlan_sheet(config, csv_data)
@@ -416,8 +455,7 @@ def cmd_reachability(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    print("Checking host reachability...", file=sys.stderr)
-    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     hosts_up = sum(1 for r in reachability.values() if r.is_up)
     hosts_down = sum(1 for r in reachability.values() if not r.is_up)
@@ -453,12 +491,15 @@ def cmd_sshfp(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+
     cache_path = Path(config.cache.directory) / "sshfp.json"
     sshfp_data = scan_sshfp(
         hosts,
         cache_path=cache_path,
         force=args.force,
         verbose=True,
+        reachability=reachability,
     )
 
     enrich_hosts_with_sshfp(hosts, sshfp_data)
@@ -506,12 +547,15 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
     for host in hosts:
         derive_all_dns_names(host, config.site)
 
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+
     cache_path = Path(config.cache.directory) / "ssl_certs.json"
     cert_data = scan_ssl_certs(
         hosts,
         cache_path=cache_path,
         force=args.force,
         verbose=True,
+        reachability=reachability,
     )
 
     enrich_hosts_with_ssl_certs(hosts, cert_data)
@@ -545,7 +589,6 @@ def cmd_snmp(args: argparse.Namespace) -> int:
         refine_bmc_hardware_type,
         scan_bmc_firmware,
     )
-    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
     from gdoc2netcfg.supplements.snmp import (
         enrich_hosts_with_snmp,
         scan_snmp,
@@ -563,9 +606,7 @@ def cmd_snmp(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    # Run shared reachability pass
-    print("Checking host reachability...", file=sys.stderr)
-    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     # Scan BMC firmware and reclassify legacy BMCs before SNMP
     bmc_fw_cache = Path(config.cache.directory) / "bmc_firmware.json"
@@ -626,7 +667,6 @@ def cmd_bmc_firmware(args: argparse.Namespace) -> int:
         refine_bmc_hardware_type,
         scan_bmc_firmware,
     )
-    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
 
     # Minimal pipeline to get hosts with IPs
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
@@ -640,9 +680,7 @@ def cmd_bmc_firmware(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    # Check reachability
-    print("Checking host reachability...", file=sys.stderr)
-    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     # Scan BMC firmware
     cache_path = Path(config.cache.directory) / "bmc_firmware.json"
@@ -690,7 +728,6 @@ def cmd_bridge(args: argparse.Namespace) -> int:
         enrich_hosts_with_bridge_data,
         scan_bridge,
     )
-    from gdoc2netcfg.supplements.reachability import check_all_hosts_reachability
 
     # Minimal pipeline to get hosts with IPs
     csv_data = _fetch_or_load_csvs(config, use_cache=True)
@@ -704,9 +741,7 @@ def cmd_bridge(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    # Run shared reachability pass
-    print("Checking host reachability...", file=sys.stderr)
-    reachability = check_all_hosts_reachability(hosts, verbose=True)
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
 
     cache_path = Path(config.cache.directory) / "bridge.json"
     print("\nScanning bridge data...", file=sys.stderr)
@@ -805,7 +840,11 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("info", help="Show pipeline configuration")
 
     # reachability
-    subparsers.add_parser("reachability", help="Ping all hosts and report up/down")
+    reach_parser = subparsers.add_parser("reachability", help="Ping all hosts and report up/down")
+    reach_parser.add_argument(
+        "--force", action="store_true",
+        help="Force re-ping even if .cache/reachability.json is <5 min old",
+    )
 
     # sshfp
     sshfp_parser = subparsers.add_parser("sshfp", help="Scan hosts for SSH fingerprints")

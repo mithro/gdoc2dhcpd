@@ -1,12 +1,17 @@
 """Tests for the CLI entry point."""
 
 import argparse
+import json
+import os
 import textwrap
+import time
+from unittest.mock import patch
 
 import pytest
 
 from gdoc2netcfg.cli.main import _write_multi_file_output, main
 from gdoc2netcfg.config import GeneratorConfig
+from gdoc2netcfg.supplements.reachability import PingResult
 
 
 @pytest.fixture
@@ -257,3 +262,107 @@ class TestDnsmasqExternalGenerator:
         # With no public_ipv4, the external generator returns an empty dict,
         # so the CLI writes 0 files and produces no stdout output
         assert "No public_ipv4 configured" not in captured.out
+
+
+def _make_config_with_csv(tmp_path):
+    """Create a minimal config + cached CSV for reachability tests."""
+    cache_dir = tmp_path / ".cache"
+    cache_dir.mkdir()
+    (cache_dir / "network.csv").write_text(
+        "Machine,MAC Address,IP,Interface\n"
+        "desktop,aa:bb:cc:dd:ee:ff,10.1.10.1,\n"
+    )
+    config = tmp_path / "gdoc2netcfg.toml"
+    config.write_text(textwrap.dedent(f"""\
+        [site]
+        name = "test"
+        domain = "test.example.com"
+
+        [sheets]
+        network = "https://example.com/not-used"
+
+        [cache]
+        directory = "{cache_dir}"
+
+        [ipv6]
+        prefixes = ["2001:db8:1:"]
+
+        [vlans]
+        10 = {{ name = "int", subdomain = "int" }}
+
+        [network_subdomains]
+        10 = "int"
+
+        [generators]
+        enabled = []
+    """))
+    return config, cache_dir
+
+
+class TestReachabilityCache:
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_reachability_creates_cache_file(self, mock_ping, tmp_path, capsys):
+        """Running reachability should create .cache/reachability.json."""
+        mock_ping.return_value = PingResult(10, 10, 0.5)
+        config, cache_dir = _make_config_with_csv(tmp_path)
+
+        result = main(["-c", str(config), "reachability"])
+
+        assert result == 0
+        cache_file = cache_dir / "reachability.json"
+        assert cache_file.exists()
+        data = json.loads(cache_file.read_text())
+        assert "desktop" in data
+        assert data["desktop"] == ["10.1.10.1"]
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_reachability_uses_cache_on_second_run(self, mock_ping, tmp_path, capsys):
+        """Second run within 5 min should use cache, not re-ping."""
+        mock_ping.return_value = PingResult(10, 10, 0.5)
+        config, cache_dir = _make_config_with_csv(tmp_path)
+
+        # First run — should ping
+        main(["-c", str(config), "reachability"])
+        first_call_count = mock_ping.call_count
+
+        # Second run — should use cache
+        main(["-c", str(config), "reachability"])
+        captured = capsys.readouterr()
+
+        assert mock_ping.call_count == first_call_count  # no new pings
+        assert "Using cached reachability" in captured.err
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_reachability_force_bypasses_cache(self, mock_ping, tmp_path, capsys):
+        """--force should re-ping even if cache is fresh."""
+        mock_ping.return_value = PingResult(10, 10, 0.5)
+        config, cache_dir = _make_config_with_csv(tmp_path)
+
+        # First run — creates cache
+        main(["-c", str(config), "reachability"])
+        first_call_count = mock_ping.call_count
+
+        # Second run with --force — should re-ping
+        main(["-c", str(config), "reachability", "--force"])
+
+        assert mock_ping.call_count > first_call_count
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_stale_cache_triggers_rescan(self, mock_ping, tmp_path, capsys):
+        """Expired cache should trigger a fresh scan."""
+        mock_ping.return_value = PingResult(10, 10, 0.5)
+        config, cache_dir = _make_config_with_csv(tmp_path)
+
+        # First run — creates cache
+        main(["-c", str(config), "reachability"])
+        first_call_count = mock_ping.call_count
+
+        # Backdate the cache file
+        cache_file = cache_dir / "reachability.json"
+        old_time = time.time() - 600
+        os.utime(cache_file, (old_time, old_time))
+
+        # Second run — cache is stale, should re-ping
+        main(["-c", str(config), "reachability"])
+
+        assert mock_ping.call_count > first_call_count

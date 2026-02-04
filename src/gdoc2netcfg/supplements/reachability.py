@@ -6,10 +6,13 @@ Provides ping and port-check utilities used by multiple supplements
 
 from __future__ import annotations
 
+import json
 import re
 import socket
 import subprocess
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -101,6 +104,46 @@ class HostReachability:
     def is_up(self) -> bool:
         """True if any IP responded to ping."""
         return len(self.active_ips) > 0
+
+
+def save_reachability_cache(
+    cache_path: Path,
+    reachability: dict[str, HostReachability],
+) -> None:
+    """Save reachability data to disk cache."""
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        hostname: list(hr.active_ips)
+        for hostname, hr in reachability.items()
+    }
+    with open(cache_path, "w") as f:
+        json.dump(data, f, indent="  ", sort_keys=True)
+
+
+def load_reachability_cache(
+    cache_path: Path,
+    max_age: float = 300,
+) -> tuple[dict[str, HostReachability], float] | None:
+    """Load cached reachability data from disk.
+
+    Returns (data, age_seconds) tuple if cache is fresh, or None if the
+    cache file is missing, older than max_age seconds, or corrupted.
+    """
+    if not cache_path.exists():
+        return None
+    age = time.time() - cache_path.stat().st_mtime
+    if age >= max_age:
+        return None
+    try:
+        with open(cache_path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    reachability = {
+        hostname: HostReachability(hostname=hostname, active_ips=tuple(ips))
+        for hostname, ips in data.items()
+    }
+    return (reachability, age)
 
 
 def check_all_hosts_reachability(
