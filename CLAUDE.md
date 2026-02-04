@@ -62,7 +62,7 @@ BMCs (Baseboard Management Controllers) are physically separate machines attache
 
 ### IPv4→IPv6 Mapping
 
-Dual-stack addressing uses the scheme: `10.AA.BB.CCC` → `{prefix}AABB::CCC` where AA is unpadded and BB is zero-padded to 2 digits. Prefixes are configured in `gdoc2netcfg.toml` under `[ipv6]`.
+Dual-stack addressing uses the scheme: `10.AA.BB.CCC` → `{prefix}AABB::CCC` where AA is unpadded and BB is zero-padded to 2 digits. Prefixes are configured under `[ipv6]` in the site's `gdoc2netcfg.toml`.
 
 ### Split-Horizon DNS
 
@@ -80,7 +80,9 @@ Multi-interface hosts get a combined config file (per variant) containing an `up
 
 ### Configuration
 
-`gdoc2netcfg.toml` defines site topology (domain, VLANs, IPv6 prefixes, network subdomains), sheet URLs, cache directory, and generator settings. Loaded by `config.py` into a `PipelineConfig` dataclass containing a `Site` object.
+`gdoc2netcfg.toml` (gitignored, site-specific) defines site topology (domain, VLANs, IPv6 prefixes, network subdomains), sheet URLs, cache directory, and generator settings. Loaded by `config.py` into a `PipelineConfig` dataclass containing a `Site` object.
+
+`gdoc2netcfg.toml.example` is the tracked template with Welland defaults. Each site copies it to `gdoc2netcfg.toml` and edits the `[site]`, `[ipv6]`, and `[generators] enabled` sections. This avoids merge conflicts when deploying to Monarto.
 
 ### Models
 
@@ -114,6 +116,13 @@ ssh -A ten64.welland.mithis.com "cd /opt/gdoc2netcfg && sudo -E git pull"
 # Monarto (via WireGuard tunnel)
 ssh -o ControlPath=none -o ForwardAgent=yes tim@10.255.0.2 \
   "cd /opt/gdoc2netcfg && sudo -E git pull"
+```
+
+`git pull` is clean on both sites — `gdoc2netcfg.toml` is gitignored, so each site's local config is never touched by pulls. If a site doesn't have a local config yet, create one after pulling:
+
+```bash
+cp gdoc2netcfg.toml.example gdoc2netcfg.toml
+# Edit [site], [ipv6], and [generators] enabled for this site
 ```
 
 Note: `uv` on monarto is at `~/.local/bin/uv` (not in PATH for non-interactive shells).

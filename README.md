@@ -41,13 +41,21 @@ See [docs/architecture.md](docs/architecture.md) for details.
 
 ## Configuration
 
-All settings live in `gdoc2netcfg.toml`:
+Copy the example template and edit for your site:
 
-- `[site]` -- domain name, public IPv4
+```bash
+cp gdoc2netcfg.toml.example gdoc2netcfg.toml
+```
+
+`gdoc2netcfg.toml` is gitignored — each site keeps its own untracked copy. The tracked `gdoc2netcfg.toml.example` contains Welland defaults and comments marking site-specific fields.
+
+Settings:
+
+- `[site]` -- domain name, public IPv4 (site-specific)
 - `[sheets]` -- Google Sheets published CSV URLs
 - `[ipv6]` -- IPv6 prefix list for dual-stack address generation
 - `[vlans]` and `[network_subdomains]` -- VLAN topology and subdomain mappings
-- `[generators]` -- which generators to enable and their output directories
+- `[generators]` -- which generators to enable and their output directories (site-specific)
 
 ## Output format
 
