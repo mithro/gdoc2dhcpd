@@ -411,11 +411,9 @@ def _load_or_run_reachability(config, hosts, force: bool = False):
     cache_path = Path(config.cache.directory) / "reachability.json"
 
     if not force:
-        cached = load_reachability_cache(cache_path)
-        if cached is not None:
-            import time
-
-            age = time.time() - cache_path.stat().st_mtime
+        result = load_reachability_cache(cache_path)
+        if result is not None:
+            cached, age = result
             print(
                 f"Using cached reachability ({age:.0f}s old).",
                 file=sys.stderr,

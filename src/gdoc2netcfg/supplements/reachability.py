@@ -123,22 +123,27 @@ def save_reachability_cache(
 def load_reachability_cache(
     cache_path: Path,
     max_age: float = 300,
-) -> dict[str, HostReachability] | None:
+) -> tuple[dict[str, HostReachability], float] | None:
     """Load cached reachability data from disk.
 
-    Returns None if cache file is missing or older than max_age seconds.
+    Returns (data, age_seconds) tuple if cache is fresh, or None if the
+    cache file is missing, older than max_age seconds, or corrupted.
     """
     if not cache_path.exists():
         return None
     age = time.time() - cache_path.stat().st_mtime
     if age >= max_age:
         return None
-    with open(cache_path) as f:
-        data = json.load(f)
-    return {
+    try:
+        with open(cache_path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    reachability = {
         hostname: HostReachability(hostname=hostname, active_ips=tuple(ips))
         for hostname, ips in data.items()
     }
+    return (reachability, age)
 
 
 def check_all_hosts_reachability(
