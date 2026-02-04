@@ -3,7 +3,6 @@
 import json
 import os
 import time
-from pathlib import Path
 from unittest.mock import patch
 
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
