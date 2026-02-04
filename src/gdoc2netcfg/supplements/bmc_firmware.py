@@ -203,7 +203,7 @@ def scan_bmc_firmware(
                 continue
             active_ips = list(host_reach.active_ips)
         else:
-            active_ips = [str(iface.ipv4) for iface in host.interfaces]
+            active_ips = [str(vi.ipv4) for vi in host.virtual_interfaces]
 
         if not active_ips:
             if verbose:

@@ -193,7 +193,7 @@ def scan_snmp(
         else:
             # Without reachability data, use all interface IPs
             # The SNMP timeout acts as the reachability check
-            active_ips = [str(iface.ipv4) for iface in host.interfaces]
+            active_ips = [str(vi.ipv4) for vi in host.virtual_interfaces]
 
         if not active_ips:
             if verbose:

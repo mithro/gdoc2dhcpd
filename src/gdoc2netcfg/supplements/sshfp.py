@@ -105,8 +105,8 @@ def scan_sshfp(
             active_ips = list(host_reach.active_ips)
         else:
             active_ips = []
-            for iface in host.interfaces:
-                ip_str = str(iface.ipv4)
+            for vi in host.virtual_interfaces:
+                ip_str = str(vi.ipv4)
                 if check_reachable(ip_str):
                     active_ips.append(ip_str)
 

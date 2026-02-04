@@ -192,8 +192,8 @@ def scan_ssl_certs(
             active_ip = host_reach.active_ips[0] if host_reach.active_ips else None
         else:
             active_ip = None
-            for iface in host.interfaces:
-                ip_str = str(iface.ipv4)
+            for vi in host.virtual_interfaces:
+                ip_str = str(vi.ipv4)
                 if check_reachable(ip_str):
                     active_ip = ip_str
                     break
