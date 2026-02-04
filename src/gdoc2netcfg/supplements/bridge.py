@@ -533,7 +533,7 @@ def scan_bridge(
     verbose: bool = False,
     reachability: dict[str, HostReachability] | None = None,
 ) -> dict[str, dict]:
-    """Scan managed switches for bridge/topology data.
+    """Scan reachable managed switches for bridge/topology data.
 
     Args:
         hosts: Host objects with IPs to scan.
@@ -541,8 +541,8 @@ def scan_bridge(
         force: Force re-scan even if cache is fresh.
         max_age: Maximum cache age in seconds (default 5 minutes).
         verbose: Print progress to stderr.
-        reachability: Pre-computed reachability data. When provided,
-            only scans hosts that are up.
+        reachability: Pre-computed reachability data from the
+            reachability pass. Only reachable hosts are scanned.
 
     Returns:
         Mapping of hostname to bridge data dict.

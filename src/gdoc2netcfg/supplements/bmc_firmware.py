@@ -157,7 +157,7 @@ def scan_bmc_firmware(
     verbose: bool = False,
     reachability: dict[str, HostReachability] | None = None,
 ) -> dict[str, dict]:
-    """Scan Supermicro BMCs for firmware information.
+    """Scan reachable Supermicro BMCs for firmware information.
 
     Only probes hosts with hardware_type == "supermicro-bmc".
 
@@ -167,7 +167,8 @@ def scan_bmc_firmware(
         force: Force re-scan even if cache is fresh.
         max_age: Maximum cache age in seconds (default 24 hours).
         verbose: Print progress to stderr.
-        reachability: Pre-computed reachability data.
+        reachability: Pre-computed reachability data from the
+            reachability pass. Only reachable hosts are scanned.
 
     Returns:
         Mapping of hostname to BMC firmware info dict.
