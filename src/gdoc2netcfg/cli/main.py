@@ -15,6 +15,12 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gdoc2netcfg.config import PipelineConfig
+    from gdoc2netcfg.models.host import Host
+    from gdoc2netcfg.supplements.reachability import HostReachability
 
 
 def _load_config(args: argparse.Namespace):
@@ -397,11 +403,12 @@ def cmd_info(args: argparse.Namespace) -> int:
 # Shared reachability helper
 # ---------------------------------------------------------------------------
 
-def _load_or_run_reachability(config, hosts, force: bool = False):
-    """Load cached reachability or run a fresh scan.
-
-    Returns dict[str, HostReachability].
-    """
+def _load_or_run_reachability(
+    config: PipelineConfig,
+    hosts: list[Host],
+    force: bool = False,
+) -> dict[str, HostReachability]:
+    """Load cached reachability or run a fresh scan."""
     from gdoc2netcfg.supplements.reachability import (
         check_all_hosts_reachability,
         load_reachability_cache,
@@ -836,7 +843,7 @@ def main(argv: list[str] | None = None) -> int:
     reach_parser = subparsers.add_parser("reachability", help="Ping all hosts and report up/down")
     reach_parser.add_argument(
         "--force", action="store_true",
-        help="Force re-scan even if cache is fresh",
+        help="Force re-ping even if .cache/reachability.json is <5 min old",
     )
 
     # sshfp
