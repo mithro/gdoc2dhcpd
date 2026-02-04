@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from gdoc2netcfg.derivations.hardware import HARDWARE_NETGEAR_SWITCH
+from gdoc2netcfg.derivations.hardware import HARDWARE_CISCO_SWITCH, HARDWARE_NETGEAR_SWITCH
 from gdoc2netcfg.models.host import BridgeData
 from gdoc2netcfg.supplements.snmp_common import (
     load_json_cache,
@@ -32,7 +32,10 @@ if TYPE_CHECKING:
 
 # Hardware types that support bridge SNMP queries.
 # Excludes netgear-switch-plus (unmanaged, no SNMP).
-BRIDGE_CAPABLE_HARDWARE: frozenset[str] = frozenset({HARDWARE_NETGEAR_SWITCH})
+BRIDGE_CAPABLE_HARDWARE: frozenset[str] = frozenset({
+    HARDWARE_NETGEAR_SWITCH,
+    HARDWARE_CISCO_SWITCH,
+})
 
 # ---------------------------------------------------------------------------
 # Bridge-specific OID constants

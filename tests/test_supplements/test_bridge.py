@@ -272,6 +272,9 @@ class TestBridgeCapableHardware:
     def test_includes_netgear_switch(self):
         assert "netgear-switch" in BRIDGE_CAPABLE_HARDWARE
 
+    def test_includes_cisco_switch(self):
+        assert "cisco-switch" in BRIDGE_CAPABLE_HARDWARE
+
     def test_excludes_netgear_switch_plus(self):
         assert "netgear-switch-plus" not in BRIDGE_CAPABLE_HARDWARE
 
