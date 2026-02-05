@@ -17,10 +17,9 @@ from enum import IntEnum
 class LinkSpeed(IntEnum):
     """Port link speed/status as reported in NSDP tag 0x0C00 byte 1.
 
-    Values 0x00–0x05 are documented. Values for 2.5G, 5G, and 10G
-    are present on newer hardware (e.g. GS110EMX) but not yet documented
-    in any public specification — they need to be discovered via packet
-    capture on real hardware.
+    Values 0x00–0x05 are documented for older switches. Value 0xFF is
+    used by newer hardware (e.g. GS110EMX) for 10G links. Values for
+    2.5G and 5G are not yet known.
     """
 
     DOWN = 0x00
@@ -29,19 +28,20 @@ class LinkSpeed(IntEnum):
     HALF_100M = 0x03
     FULL_100M = 0x04
     GIGABIT = 0x05
-    UNKNOWN = 0xFF  # Placeholder for undiscovered speed values
+    TEN_GIGABIT = 0xFF  # 10G link (observed on GS110EMX ports 9-10)
 
     @classmethod
     def from_byte(cls, value: int) -> LinkSpeed:
-        """Parse a speed byte, returning UNKNOWN for unrecognised values."""
+        """Parse a speed byte, returning DOWN for unrecognised values."""
         try:
             return cls(value)
         except ValueError:
-            return cls.UNKNOWN
+            # Unknown speed code - treat as down/unknown
+            return cls.DOWN
 
     @property
     def speed_mbps(self) -> int:
-        """Approximate speed in Mbps (0 for down/unknown)."""
+        """Approximate speed in Mbps (0 for down)."""
         return {
             LinkSpeed.DOWN: 0,
             LinkSpeed.HALF_10M: 10,
@@ -49,7 +49,7 @@ class LinkSpeed(IntEnum):
             LinkSpeed.HALF_100M: 100,
             LinkSpeed.FULL_100M: 100,
             LinkSpeed.GIGABIT: 1000,
-            LinkSpeed.UNKNOWN: 0,
+            LinkSpeed.TEN_GIGABIT: 10000,
         }.get(self, 0)
 
 

@@ -24,9 +24,14 @@ class TestLinkSpeed:
     def test_from_byte_100m_full(self):
         assert LinkSpeed.from_byte(0x04) is LinkSpeed.FULL_100M
 
-    def test_from_byte_unknown(self):
+    def test_from_byte_10g(self):
         speed = LinkSpeed.from_byte(0xFF)
-        assert speed is LinkSpeed.UNKNOWN
+        assert speed is LinkSpeed.TEN_GIGABIT
+
+    def test_from_byte_unknown_returns_down(self):
+        # Unknown speed codes return DOWN
+        speed = LinkSpeed.from_byte(0xFE)
+        assert speed is LinkSpeed.DOWN
 
 
 class TestVLANEngine:
