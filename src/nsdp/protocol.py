@@ -14,7 +14,6 @@ import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
 
-
 NSDP_SIGNATURE = b"NSDP"
 
 # Port assignments
@@ -121,7 +120,8 @@ class TLVEntry:
         """
         tag_raw, length = struct.unpack_from(">HH", data, 0)
         if len(data) < 4 + length:
-            msg = f"TLV tag 0x{tag_raw:04X} declares {length} bytes but only {len(data) - 4} available"
+            available = len(data) - 4
+            msg = f"TLV tag 0x{tag_raw:04X} declares {length} bytes but only {available} available"
             raise ValueError(msg)
         value = data[4:4 + length]
         try:

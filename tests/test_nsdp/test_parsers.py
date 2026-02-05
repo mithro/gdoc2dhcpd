@@ -11,8 +11,8 @@ from nsdp.parsers import (
     parse_port_status,
     parse_vlan_members,
 )
-from nsdp.protocol import NSDPPacket, Op, Tag, TLVEntry
-from nsdp.types import LinkSpeed, VLANEngine
+from nsdp.protocol import NSDPPacket, Op, Tag
+from nsdp.types import LinkSpeed
 
 
 class TestParseIPv4:

@@ -3,11 +3,10 @@
 import struct
 
 from nsdp.protocol import (
-    NSDP_SIGNATURE,
+    NSDPPacket,
     Op,
     Tag,
     TLVEntry,
-    NSDPPacket,
 )
 
 
