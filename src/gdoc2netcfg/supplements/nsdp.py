@@ -29,7 +29,6 @@ from gdoc2netcfg.models.host import NSDPData
 
 if TYPE_CHECKING:
     from gdoc2netcfg.models.host import Host
-    from gdoc2netcfg.supplements.reachability import HostReachability
 
 NSDP_HARDWARE_TYPES = frozenset({HARDWARE_NETGEAR_SWITCH, HARDWARE_NETGEAR_SWITCH_PLUS})
 
@@ -55,26 +54,19 @@ def scan_nsdp(
     force: bool = False,
     max_age: float = 300,
     verbose: bool = False,
-    reachability: dict[str, HostReachability] | None = None,
-    interface: str | None = None,
 ) -> dict[str, dict]:
-    """Scan Netgear switches via NSDP broadcast discovery.
+    """Scan Netgear switches via NSDP unicast queries.
 
-    Sends a single NSDP broadcast and matches responses to known hosts
-    by MAC address.
+    Queries each known Netgear switch by IP address using the NSDP
+    protocol to retrieve device info, port status, and VLAN config.
 
     Args:
-        hosts: Host objects to match against NSDP responses.
+        hosts: Host objects — only those with hardware_type in
+            NSDP_HARDWARE_TYPES will be queried.
         cache_path: Path to nsdp.json cache file.
         force: Force re-scan even if cache is fresh.
         max_age: Maximum cache age in seconds (default 5 minutes).
         verbose: Print progress to stderr.
-        reachability: Pre-computed reachability data (not used for
-            filtering — NSDP is broadcast-based, so all switches on
-            the broadcast domain respond regardless).
-        interface: Network interface for NSDP broadcast (e.g. "eth0").
-            Required for actual scanning; if None, returns cached data
-            only.
 
     Returns:
         Mapping of hostname to NSDP data dict.
@@ -88,11 +80,6 @@ def scan_nsdp(
             if verbose:
                 print(f"nsdp.json last updated {age:.0f}s ago, using cache.", file=sys.stderr)
             return nsdp_data
-
-    if interface is None:
-        if verbose:
-            print("No interface specified for NSDP scan, using cache only.", file=sys.stderr)
-        return nsdp_data
 
     # Build list of (hostname, ip) pairs for switches to query
     switches_to_query: list[tuple[str, str]] = []
@@ -114,7 +101,7 @@ def scan_nsdp(
     try:
         from nsdp import NSDPClient
 
-        with NSDPClient(interface) as client:
+        with NSDPClient() as client:
             # Query each switch by IP (unicast) - more reliable than broadcast
             for hostname, ip in switches_to_query:
                 if verbose:
@@ -160,18 +147,10 @@ def scan_nsdp(
                     fw = device.firmware_version or "?"
                     print(f"{device.model} fw={fw}", file=sys.stderr)
 
-    except FileNotFoundError as e:
-        # Interface doesn't exist or sysfs path missing
-        print(
-            f"Error: Interface '{interface}' not found.\n"
-            f"  Available interfaces: ip link show\n"
-            f"  ({e})",
-            file=sys.stderr,
-        )
     except PermissionError:
         print(
             "Error: NSDP scan requires elevated privileges.\n"
-            "  Run with: sudo uv run gdoc2netcfg nsdp --interface <iface>\n"
+            "  Run with: sudo uv run gdoc2netcfg nsdp\n"
             "  Or grant capability: sudo setcap cap_net_raw+ep $(which python3)",
             file=sys.stderr,
         )

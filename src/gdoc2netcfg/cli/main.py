@@ -839,7 +839,7 @@ def cmd_bridge(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_nsdp(args: argparse.Namespace) -> int:
-    """Scan Netgear switches via NSDP broadcast discovery."""
+    """Scan Netgear switches via NSDP unicast queries."""
     config = _load_config(args)
 
     from gdoc2netcfg.derivations.host_builder import build_hosts
@@ -861,25 +861,22 @@ def cmd_nsdp(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts, force=args.force)
-    _print_reachability_summary(reachability, hosts)
-
     cache_path = Path(config.cache.directory) / "nsdp.json"
-    print("\nScanning via NSDP...", file=sys.stderr)
     nsdp_data = scan_nsdp(
         hosts,
         cache_path=cache_path,
         force=args.force,
         verbose=True,
-        reachability=reachability,
-        interface=args.interface,
     )
 
     enrich_hosts_with_nsdp(hosts, nsdp_data)
 
-    # Report
-    hosts_with_nsdp = sum(1 for h in hosts if h.nsdp_data is not None)
-    print(f"\nNSDP data for {hosts_with_nsdp}/{len(hosts)} hosts.")
+    # Report - count only Netgear switches
+    from gdoc2netcfg.supplements.nsdp import NSDP_HARDWARE_TYPES
+
+    netgear_hosts = [h for h in hosts if h.hardware_type in NSDP_HARDWARE_TYPES]
+    hosts_with_nsdp = sum(1 for h in netgear_hosts if h.nsdp_data is not None)
+    print(f"\nNSDP data for {hosts_with_nsdp}/{len(netgear_hosts)} Netgear switches.")
 
     return 0
 
@@ -979,14 +976,10 @@ def main(argv: list[str] | None = None) -> int:
     cron_subparsers.add_parser("uninstall", help="Remove gdoc2netcfg cron entries from crontab")
 
     # nsdp
-    nsdp_parser = subparsers.add_parser("nsdp", help="Scan Netgear switches via NSDP discovery")
+    nsdp_parser = subparsers.add_parser("nsdp", help="Scan Netgear switches via NSDP")
     nsdp_parser.add_argument(
         "--force", action="store_true",
         help="Force re-scan even if cache is fresh",
-    )
-    nsdp_parser.add_argument(
-        "--interface",
-        help="Network interface for NSDP broadcast (e.g. eth0)",
     )
 
     args = parser.parse_args(argv)

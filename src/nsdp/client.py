@@ -75,25 +75,30 @@ def get_interface_mac(interface: str) -> bytes:
 class NSDPClient:
     """UDP client for NSDP switch discovery and property queries.
 
-    Creates a UDP socket bound to the NSDP client port (63321) on the
-    specified network interface. The socket has SO_BROADCAST enabled
-    for discovery requests.
+    Creates a UDP socket bound to the NSDP client port (63321).
 
     Args:
         interface: Network interface to bind to (e.g. "eth0").
-            Used to determine the client MAC address and to bind
-            the socket via SO_BINDTODEVICE.
+            Optional for unicast queries (query_ip). Required for
+            broadcast discovery (discover) to ensure packets go to
+            the correct network segment.
 
     Raises:
         PermissionError: If binding to port 63321 requires elevated
             privileges. Run with sudo or grant CAP_NET_RAW:
             ``sudo setcap cap_net_raw+ep $(which python3)``
-        FileNotFoundError: If the interface does not exist.
+        FileNotFoundError: If the interface does not exist (when specified).
     """
 
-    def __init__(self, interface: str) -> None:
+    # Dummy MAC used when no interface is specified
+    _DUMMY_MAC = b"\x00\x00\x00\x00\x00\x01"
+
+    def __init__(self, interface: str | None = None) -> None:
         self._interface = interface
-        self._client_mac = get_interface_mac(interface)
+        if interface is not None:
+            self._client_mac = get_interface_mac(interface)
+        else:
+            self._client_mac = self._DUMMY_MAC
         self._sequence = 0
         self._sock: socket.socket | None = None
 
@@ -103,12 +108,13 @@ class NSDPClient:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            # Bind to specific interface (Linux only)
-            sock.setsockopt(
-                socket.SOL_SOCKET,
-                socket.SO_BINDTODEVICE,
-                self._interface.encode() + b"\0",
-            )
+            # Bind to specific interface if specified (Linux only)
+            if self._interface is not None:
+                sock.setsockopt(
+                    socket.SOL_SOCKET,
+                    socket.SO_BINDTODEVICE,
+                    self._interface.encode() + b"\0",
+                )
             sock.bind(("", CLIENT_PORT_V2))
             self._sock = sock
         return self._sock
@@ -154,13 +160,22 @@ class NSDPClient:
         (defaults to DISCOVERY_TAGS) and waits for responses until the
         timeout expires.
 
+        Requires an interface to be specified when creating the client,
+        as broadcast needs SO_BINDTODEVICE to reach the correct network.
+
         Args:
             timeout: Seconds to wait for responses after sending.
             tags: Tags to request (default: DISCOVERY_TAGS).
 
         Returns:
             List of NSDPDevice objects, one per responding switch.
+
+        Raises:
+            ValueError: If no interface was specified (required for broadcast).
         """
+        if self._interface is None:
+            msg = "discover() requires an interface for broadcast. Use query_ip() for unicast."
+            raise ValueError(msg)
         sock = self._get_socket()
         sock.settimeout(timeout)
 
