@@ -296,7 +296,7 @@ class TestValidateMacConnectivity:
 
 class TestValidateLldpTopology:
     def test_known_neighbor_no_violation(self):
-        """LLDP neighbor matching a known hostname produces no warning."""
+        """LLDP neighbor whose chassis MAC matches a known host produces no warning."""
         site = _make_site_with_vlans()
         neighbor_switch = Host(
             machine_name="sw-cisco-shed",
@@ -310,9 +310,10 @@ class TestValidateLldpTopology:
             ],
             hardware_type="netgear-switch",
         )
+        # Use a non-matching sysName to prove matching is MAC-based
         switch = _make_switch_with_bridge(
             "sw-test", [],
-            lldp_neighbors=((50, "sw-cisco-shed", "gi24", "C8:00:84:89:71:70"),),
+            lldp_neighbors=((50, "different-name", "gi24", "C8:00:84:89:71:70"),),
         )
         inventory = _make_inventory_with_switch(switch, [neighbor_switch], site)
         result = validate_lldp_topology(inventory)
@@ -320,7 +321,7 @@ class TestValidateLldpTopology:
         assert len(result.warnings) == 0
 
     def test_unknown_lldp_neighbor_produces_warning(self):
-        """An LLDP neighbor not matching any hostname produces a warning."""
+        """An LLDP neighbor whose chassis MAC is not in inventory produces a warning."""
         site = _make_site_with_vlans()
         switch = _make_switch_with_bridge(
             "sw-test", [],
@@ -342,25 +343,29 @@ class TestValidateLldpTopology:
         assert result.is_valid
         assert len(result.warnings) == 0
 
-    def test_fqdn_neighbor_matched_with_domain_stripped(self):
-        """LLDP sysName with FQDN should match after stripping domain suffix."""
+    def test_mismatched_sysname_matched_by_mac(self):
+        """Neighbor with non-matching sysName but matching chassis MAC → no warning.
+
+        This covers the real-world scenario where the Netgear S3300 reports
+        'manage-sw-netgear-s3300-1' as sysName but the inventory hostname
+        is 'sw-netgear-s3300-1'. The chassis MAC matches, so no warning.
+        """
         site = _make_site_with_vlans()
-        # The host is known as "tweed" but LLDP reports "tweed.ext.k207.mithis.com"
         neighbor = Host(
-            machine_name="tweed",
-            hostname="tweed",
+            machine_name="sw-netgear-s3300-1",
+            hostname="sw-netgear-s3300-1",
             interfaces=[
                 NetworkInterface(
-                    name=None,
+                    name="manage",
                     mac=MACAddress.parse("aa:bb:cc:00:11:22"),
-                    ipv4=IPv4Address("10.1.10.50"),
+                    ipv4=IPv4Address("10.1.5.50"),
                 ),
             ],
         )
         switch = _make_switch_with_bridge(
             "sw-test", [],
             lldp_neighbors=(
-                (3, "tweed.ext.k207.mithis.com", "eth0", "AA:BB:CC:00:11:22"),
+                (3, "manage-sw-netgear-s3300-1", "gi24", "AA:BB:CC:00:11:22"),
             ),
         )
         inventory = _make_inventory_with_switch(switch, [neighbor], site)
@@ -368,28 +373,14 @@ class TestValidateLldpTopology:
         assert result.is_valid
         assert len(result.warnings) == 0
 
-    def test_fqdn_neighbor_matched_as_is(self):
-        """LLDP sysName that exactly matches a hostname is not flagged."""
+    def test_empty_chassis_mac_skipped(self):
+        """Neighbor with empty chassis MAC is silently skipped (no warning)."""
         site = _make_site_with_vlans()
-        # The host is known with FQDN hostname
-        neighbor = Host(
-            machine_name="tweed.ext.k207.mithis.com",
-            hostname="tweed.ext.k207.mithis.com",
-            interfaces=[
-                NetworkInterface(
-                    name=None,
-                    mac=MACAddress.parse("aa:bb:cc:00:11:22"),
-                    ipv4=IPv4Address("10.1.10.50"),
-                ),
-            ],
-        )
         switch = _make_switch_with_bridge(
             "sw-test", [],
-            lldp_neighbors=(
-                (3, "tweed.ext.k207.mithis.com", "eth0", "AA:BB:CC:00:11:22"),
-            ),
+            lldp_neighbors=((50, "some-device", "eth0", ""),),
         )
-        inventory = _make_inventory_with_switch(switch, [neighbor], site)
+        inventory = _make_inventory_with_switch(switch, [], site)
         result = validate_lldp_topology(inventory)
         assert result.is_valid
         assert len(result.warnings) == 0
@@ -414,7 +405,7 @@ class TestValidateLldpTopology:
         assert len(result.warnings) == 0
 
     def test_multiple_lldp_neighbors_mixed(self):
-        """Multiple LLDP neighbors: known ones pass, unknown produce warnings."""
+        """Multiple LLDP neighbors: known MAC passes, unknown MACs produce warnings."""
         site = _make_site_with_vlans()
         known_host = Host(
             machine_name="sw-known",
@@ -430,7 +421,9 @@ class TestValidateLldpTopology:
         switch = _make_switch_with_bridge(
             "sw-test", [],
             lldp_neighbors=(
-                (50, "sw-known", "gi24", "C8:00:84:89:71:70"),
+                # Known by MAC (sysName doesn't match hostname)
+                (50, "manage-sw-known", "gi24", "C8:00:84:89:71:70"),
+                # Unknown MACs
                 (51, "mystery-device", "eth1", "DD:EE:FF:00:11:22"),
                 (52, "another-mystery", "eth2", "DD:EE:FF:00:33:44"),
             ),

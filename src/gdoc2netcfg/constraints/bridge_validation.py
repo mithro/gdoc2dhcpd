@@ -128,20 +128,24 @@ def validate_mac_connectivity(
 def validate_lldp_topology(
     inventory: NetworkInventory,
 ) -> ValidationResult:
-    """Validate LLDP neighbor data against known inventory hostnames.
+    """Validate LLDP neighbor data against known inventory MACs.
 
-    For each LLDP neighbor, checks if the sysName matches any known
-    hostname in the inventory. Also tries matching after stripping the
-    domain suffix (e.g. "tweed.ext.k207.mithis.com" -> "tweed").
+    For each LLDP neighbor, checks if the chassis MAC matches any known
+    MAC in the inventory. Matching on chassis MAC is more reliable than
+    sysName because devices may report different naming conventions
+    (e.g. Netgear S3300 reports 'manage-sw-netgear-s3300-1' but the
+    inventory hostname is 'sw-netgear-s3300-1').
+
     Reports unknown neighbors as informational warnings for topology
     discovery purposes.
     """
     result = ValidationResult()
 
-    # Build set of all known hostnames from inventory
-    known_hostnames: set[str] = set()
+    # Build set of all known MACs from inventory (upper-cased for comparison)
+    known_macs: set[str] = set()
     for host in inventory.hosts:
-        known_hostnames.add(host.hostname)
+        for mac in host.all_macs:
+            known_macs.add(str(mac).upper())
 
     for host in inventory.hosts:
         if host.bridge_data is None:
@@ -150,16 +154,10 @@ def validate_lldp_topology(
         for _local_ifindex, remote_sysname, remote_port_id, remote_chassis_mac in (
             host.bridge_data.lldp_neighbors
         ):
-            if not remote_sysname:
+            if not remote_chassis_mac:
                 continue
 
-            # Check as-is first
-            if remote_sysname in known_hostnames:
-                continue
-
-            # Try stripping domain suffix (take first label before '.')
-            short_name = remote_sysname.split(".")[0]
-            if short_name in known_hostnames:
+            if remote_chassis_mac.upper() in known_macs:
                 continue
 
             result.add(ConstraintViolation(
