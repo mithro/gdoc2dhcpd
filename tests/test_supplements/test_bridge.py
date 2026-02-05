@@ -7,6 +7,7 @@ from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface
 from gdoc2netcfg.supplements.bridge import (
     BRIDGE_CAPABLE_HARDWARE,
+    _format_hex_mac,
     enrich_hosts_with_bridge_data,
     parse_bridge_port_map,
     parse_if_names,
@@ -220,6 +221,34 @@ class TestParseLldpNeighbors:
         result = parse_lldp_neighbors(walk)
         assert len(result) == 1
         assert result[0][3] == "some-string-id"
+
+
+class TestFormatHexMac:
+    """Tests for _format_hex_mac() which normalises chassis IDs to XX:XX:XX:XX:XX:XX."""
+
+    def test_format_hex_mac_raw_bytes(self):
+        """Raw 6-byte binary string (pysnmp OCTET STRING via str()) → formatted MAC."""
+        raw = "\xc8\x00\x84\x89\x71\x70"
+        assert _format_hex_mac(raw) == "C8:00:84:89:71:70"
+
+    def test_format_hex_mac_raw_bytes_all_zeros(self):
+        """Raw 6-byte binary string of all zeros."""
+        raw = "\x00\x00\x00\x00\x00\x00"
+        assert _format_hex_mac(raw) == "00:00:00:00:00:00"
+
+    def test_format_hex_mac_0x_prefix(self):
+        """0x-prefixed 12-hex-digit string → formatted MAC."""
+        assert _format_hex_mac("0xc80084897170") == "C8:00:84:89:71:70"
+
+    def test_format_hex_mac_12_hex_digits(self):
+        """12 hex digits without 0x prefix → formatted MAC."""
+        assert _format_hex_mac("aabbccddeeff") == "AA:BB:CC:DD:EE:FF"
+
+    def test_format_hex_mac_passthrough(self):
+        """Non-MAC strings returned unchanged."""
+        assert _format_hex_mac("some-string-id") == "some-string-id"
+        assert _format_hex_mac("") == ""
+        assert _format_hex_mac("short") == "short"
 
 
 class TestParseVlanEgressPorts:

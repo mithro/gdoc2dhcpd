@@ -108,11 +108,14 @@ def _format_mac_bytes(mac_bytes: list[int]) -> str:
 def _format_hex_mac(hex_str: str) -> str:
     """Format a hex MAC string (like '0xc80084897170') as XX:XX:XX:XX:XX:XX.
 
-    If the string is not a valid 12-hex-digit MAC, returns it as-is.
+    Also handles raw 6-byte binary strings produced by pysnmp's str() on
+    OCTET STRING values, where each character's ord() is the byte value.
+
+    If the string is not a valid MAC in any recognised format, returns it as-is.
     """
     if hex_str.startswith("0x"):
         hex_str = hex_str[2:]
-    # Should be exactly 12 hex digits
+    # 12 hex digits (e.g. from "0xc80084897170" after stripping prefix)
     if len(hex_str) == 12:
         try:
             int(hex_str, 16)  # Validate it's hex
@@ -121,6 +124,9 @@ def _format_hex_mac(hex_str: str) -> str:
             )
         except ValueError:
             pass
+    # Raw 6-byte binary (pysnmp OCTET STRING via str())
+    if len(hex_str) == 6:
+        return ":".join(f"{ord(c):02X}" for c in hex_str)
     return hex_str
 
 
