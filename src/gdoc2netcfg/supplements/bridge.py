@@ -105,6 +105,11 @@ def _format_mac_bytes(mac_bytes: list[int]) -> str:
     return ":".join(f"{b:02X}" for b in mac_bytes)
 
 
+def _is_printable_ascii(s: str) -> bool:
+    """Check if a string contains only printable ASCII characters."""
+    return all(32 <= ord(c) < 127 for c in s)
+
+
 def _format_hex_mac(hex_str: str) -> str:
     """Format a hex MAC string (like '0xc80084897170') as XX:XX:XX:XX:XX:XX.
 
@@ -128,6 +133,19 @@ def _format_hex_mac(hex_str: str) -> str:
     if len(hex_str) == 6:
         return ":".join(f"{ord(c):02X}" for c in hex_str)
     return hex_str
+
+
+def _format_octet_string(s: str) -> str:
+    """Format a pysnmp OCTET STRING for display.
+
+    If the string is printable ASCII (like 'gi24' or '1/xg50'), return as-is.
+    Otherwise, format as colon-separated hex bytes (like 'C4:7A:3B:4A').
+    """
+    if not s:
+        return s
+    if _is_printable_ascii(s):
+        return s
+    return ":".join(f"{ord(c):02X}" for c in s)
 
 
 def parse_mac_table(
@@ -355,9 +373,9 @@ def parse_lldp_neighbors(
         if not sys_name and not port_id:
             continue
 
-        # Format IDs if they're hex MACs (handles raw binary from pysnmp)
+        # Format IDs (handles raw binary from pysnmp)
         chassis_id = _format_hex_mac(chassis_id)
-        port_id = _format_hex_mac(port_id)
+        port_id = _format_octet_string(port_id)
 
         try:
             local_port_int = int(local_port)

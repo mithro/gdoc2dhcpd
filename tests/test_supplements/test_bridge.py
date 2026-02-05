@@ -8,6 +8,7 @@ from gdoc2netcfg.models.host import Host, NetworkInterface
 from gdoc2netcfg.supplements.bridge import (
     BRIDGE_CAPABLE_HARDWARE,
     _format_hex_mac,
+    _format_octet_string,
     enrich_hosts_with_bridge_data,
     parse_bridge_port_map,
     parse_if_names,
@@ -222,8 +223,8 @@ class TestParseLldpNeighbors:
         assert len(result) == 1
         assert result[0][3] == "some-string-id"
 
-    def test_raw_binary_port_id(self):
-        """Port ID as raw 6-byte binary (MAC) should be formatted."""
+    def test_raw_binary_port_id_6_bytes(self):
+        """Port ID as raw 6-byte binary (MAC) should be formatted as hex."""
         walk = [
             ("1.0.8802.1.1.2.1.4.1.1.5.97.50.1", "0xc80084897170"),
             # Raw binary port ID: 0C:C4:7A:16:3B:4A
@@ -233,6 +234,18 @@ class TestParseLldpNeighbors:
         result = parse_lldp_neighbors(walk)
         assert len(result) == 1
         assert result[0][2] == "0C:C4:7A:16:3B:4A"
+
+    def test_raw_binary_port_id_4_bytes(self):
+        """Port ID as raw 4-byte binary should be formatted as hex."""
+        walk = [
+            ("1.0.8802.1.1.2.1.4.1.1.5.97.50.1", "0xc80084897170"),
+            # Raw binary port ID: C4:7A:3B:4A (4 bytes, not a MAC)
+            ("1.0.8802.1.1.2.1.4.1.1.7.97.50.1", "\xc4\x7a\x3b\x4a"),
+            ("1.0.8802.1.1.2.1.4.1.1.9.97.50.1", "neighbor"),
+        ]
+        result = parse_lldp_neighbors(walk)
+        assert len(result) == 1
+        assert result[0][2] == "C4:7A:3B:4A"
 
 
 class TestFormatHexMac:
@@ -261,6 +274,30 @@ class TestFormatHexMac:
         assert _format_hex_mac("some-string-id") == "some-string-id"
         assert _format_hex_mac("") == ""
         assert _format_hex_mac("short") == "short"
+
+
+class TestFormatOctetString:
+    """Tests for _format_octet_string() which formats arbitrary binary for display."""
+
+    def test_printable_ascii_unchanged(self):
+        """Printable ASCII strings are returned as-is."""
+        assert _format_octet_string("gi24") == "gi24"
+        assert _format_octet_string("1/xg50") == "1/xg50"
+        assert _format_octet_string("eth0") == "eth0"
+
+    def test_binary_formatted_as_hex(self):
+        """Non-printable binary is formatted as colon-separated hex."""
+        assert _format_octet_string("\xc4\x7a\x3b\x4a") == "C4:7A:3B:4A"
+        assert _format_octet_string("\x0c\xc4\x7a\x16\x3b\x4a") == "0C:C4:7A:16:3B:4A"
+
+    def test_empty_string(self):
+        """Empty string returns empty."""
+        assert _format_octet_string("") == ""
+
+    def test_mixed_with_control_chars(self):
+        """String with control characters is formatted as hex."""
+        # Contains newline and null
+        assert _format_octet_string("\x00\x0a") == "00:0A"
 
 
 class TestParseVlanEgressPorts:
