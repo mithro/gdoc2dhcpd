@@ -26,11 +26,74 @@ from gdoc2netcfg.derivations.hardware import (
     HARDWARE_NETGEAR_SWITCH_PLUS,
 )
 from gdoc2netcfg.models.host import NSDPData
+from gdoc2netcfg.models.switch_data import (
+    PortLinkStatus,
+    PortTrafficStats,
+    SwitchData,
+    SwitchDataSource,
+    VLANInfo,
+)
+from nsdp.types import LinkSpeed
 
 if TYPE_CHECKING:
     from gdoc2netcfg.models.host import Host
 
 NSDP_HARDWARE_TYPES = frozenset({HARDWARE_NETGEAR_SWITCH, HARDWARE_NETGEAR_SWITCH_PLUS})
+
+
+def nsdp_to_switch_data(nsdp: NSDPData) -> SwitchData:
+    """Convert NSDPData to unified SwitchData format.
+
+    Args:
+        nsdp: The NSDPData instance to convert.
+
+    Returns:
+        A SwitchData instance with the converted data.
+    """
+    # Convert port status tuples to PortLinkStatus objects
+    port_status = tuple(
+        PortLinkStatus(
+            port_id=ps[0],
+            is_up=ps[1] != LinkSpeed.DOWN.value,
+            speed_mbps=LinkSpeed.from_byte(ps[1]).speed_mbps,
+        )
+        for ps in nsdp.port_status
+    )
+
+    # Convert port statistics tuples to PortTrafficStats objects
+    port_stats = tuple(
+        PortTrafficStats(
+            port_id=ps[0],
+            bytes_rx=ps[1],
+            bytes_tx=ps[2],
+            errors=ps[3],
+        )
+        for ps in nsdp.port_statistics
+    )
+
+    # Convert VLAN membership tuples to VLANInfo objects
+    vlans = tuple(
+        VLANInfo(
+            vlan_id=vm[0],
+            name=None,  # NSDP doesn't have VLAN names
+            member_ports=vm[1],
+            tagged_ports=vm[2],
+        )
+        for vm in nsdp.vlan_members
+    )
+
+    return SwitchData(
+        source=SwitchDataSource.NSDP,
+        model=nsdp.model,
+        firmware_version=nsdp.firmware_version,
+        port_count=nsdp.port_count,
+        port_status=port_status,
+        port_pvids=nsdp.port_pvids,
+        port_stats=port_stats,
+        vlans=vlans,
+        serial_number=nsdp.serial_number,
+        qos_engine=nsdp.vlan_engine,  # Note: vlan_engine stored here for now
+    )
 
 
 def load_nsdp_cache(cache_path: Path) -> dict[str, dict]:
@@ -179,7 +242,7 @@ def enrich_hosts_with_nsdp(
 ) -> None:
     """Attach cached NSDP data to Host objects.
 
-    Modifies hosts in-place by setting host.nsdp_data.
+    Modifies hosts in-place by setting host.nsdp_data and host.switch_data.
     """
     for host in hosts:
         info = nsdp_cache.get(host.hostname)
@@ -211,3 +274,5 @@ def enrich_hosts_with_nsdp(
                     for ps in info.get("port_statistics", [])
                 ),
             )
+            # Also set unified switch_data from the NSDP data
+            host.switch_data = nsdp_to_switch_data(host.nsdp_data)
