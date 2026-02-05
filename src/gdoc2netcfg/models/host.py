@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from gdoc2netcfg.models.addressing import IPv4Address, IPv6Address, MACAddress
 from gdoc2netcfg.models.network import Site
+from gdoc2netcfg.models.switch_data import SwitchData
 
 
 @dataclass(frozen=True)
@@ -276,6 +277,7 @@ class Host:
     bmc_firmware_info: BMCFirmwareInfo | None = None
     bridge_data: BridgeData | None = None
     nsdp_data: NSDPData | None = None
+    switch_data: SwitchData | None = None
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:
