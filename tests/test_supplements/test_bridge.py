@@ -222,6 +222,18 @@ class TestParseLldpNeighbors:
         assert len(result) == 1
         assert result[0][3] == "some-string-id"
 
+    def test_raw_binary_port_id(self):
+        """Port ID as raw 6-byte binary (MAC) should be formatted."""
+        walk = [
+            ("1.0.8802.1.1.2.1.4.1.1.5.97.50.1", "0xc80084897170"),
+            # Raw binary port ID: 0C:C4:7A:16:3B:4A
+            ("1.0.8802.1.1.2.1.4.1.1.7.97.50.1", "\x0c\xc4\x7a\x16\x3b\x4a"),
+            ("1.0.8802.1.1.2.1.4.1.1.9.97.50.1", "neighbor"),
+        ]
+        result = parse_lldp_neighbors(walk)
+        assert len(result) == 1
+        assert result[0][2] == "0C:C4:7A:16:3B:4A"
+
 
 class TestFormatHexMac:
     """Tests for _format_hex_mac() which normalises chassis IDs to XX:XX:XX:XX:XX:XX."""

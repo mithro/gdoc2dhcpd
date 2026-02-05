@@ -355,8 +355,9 @@ def parse_lldp_neighbors(
         if not sys_name and not port_id:
             continue
 
-        # Format chassis ID if it's a hex MAC
+        # Format IDs if they're hex MACs (handles raw binary from pysnmp)
         chassis_id = _format_hex_mac(chassis_id)
+        port_id = _format_hex_mac(port_id)
 
         try:
             local_port_int = int(local_port)
