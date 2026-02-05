@@ -928,6 +928,25 @@ def cmd_nsdp_show(args: argparse.Namespace) -> int:
             for port_id, vlan_id in port_pvids:
                 print(f"  Port {port_id:2d}: VLAN {vlan_id}")
 
+        # VLAN memberships
+        vlan_members = data.get("vlan_members", [])
+        if vlan_members:
+            print("\nVLAN Memberships:")
+            for vlan_id, members, tagged in vlan_members:
+                untagged = set(members) - set(tagged)
+                print(f"  VLAN {vlan_id:3d}: members={sorted(members)}")
+                if tagged:
+                    print(f"            tagged={sorted(tagged)}")
+                if untagged:
+                    print(f"            untagged={sorted(untagged)}")
+
+        # Port statistics
+        port_statistics = data.get("port_statistics", [])
+        if port_statistics:
+            print("\nPort Statistics:")
+            for port_id, rx, tx, errors in port_statistics:
+                print(f"  Port {port_id:2d}: RX={rx:,} TX={tx:,} Errors={errors}")
+
     print(f"\n{len(nsdp_data)} switch(es) in cache.")
     return 0
 
