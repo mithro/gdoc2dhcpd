@@ -130,6 +130,45 @@ class PortPVID:
 
 
 @dataclass(frozen=True)
+class PortQoS:
+    """Port QoS priority setting (NSDP tag 0x3800).
+
+    Attributes:
+        port_id: 1-based port number.
+        priority: QoS priority (typically 1-8, higher = more priority).
+    """
+
+    port_id: int
+    priority: int
+
+
+@dataclass(frozen=True)
+class PortMirroring:
+    """Port mirroring configuration (NSDP tag 0x5C00).
+
+    Attributes:
+        destination_port: Port receiving mirrored traffic (0 = disabled).
+        source_ports: Ports being mirrored.
+    """
+
+    destination_port: int
+    source_ports: frozenset[int] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True)
+class IGMPSnooping:
+    """IGMP snooping configuration (NSDP tag 0x6800).
+
+    Attributes:
+        enabled: Whether IGMP snooping is enabled.
+        vlan_id: VLAN for IGMP snooping (if applicable).
+    """
+
+    enabled: bool
+    vlan_id: int | None = None
+
+
+@dataclass(frozen=True)
 class NSDPDevice:
     """Complete device information discovered via NSDP.
 
@@ -152,6 +191,12 @@ class NSDPDevice:
         vlan_engine: VLAN engine mode (tag 0x2000).
         vlan_members: VLAN membership table (tag 0x2800, repeated).
         port_pvids: Port native VLAN IDs (tag 0x3000, repeated).
+        port_qos: Per-port QoS priority settings (tag 0x3800, repeated).
+        qos_engine: QoS engine mode (tag 0x3400): 0=disabled, 1=port-based, 2=802.1p.
+        port_mirroring: Port mirroring configuration (tag 0x5C00).
+        igmp_snooping: IGMP snooping configuration (tag 0x6800).
+        broadcast_filtering: Whether broadcast storm filtering is enabled (tag 0x5400).
+        loop_detection: Whether loop detection is enabled (tag 0x9000).
     """
 
     model: str
@@ -169,3 +214,9 @@ class NSDPDevice:
     vlan_engine: VLANEngine | None = None
     vlan_members: tuple[VLANMembership, ...] = ()
     port_pvids: tuple[PortPVID, ...] = ()
+    port_qos: tuple[PortQoS, ...] = ()
+    qos_engine: int | None = None  # 0=disabled, 1=port-based, 2=802.1p
+    port_mirroring: PortMirroring | None = None
+    igmp_snooping: IGMPSnooping | None = None
+    broadcast_filtering: bool | None = None
+    loop_detection: bool | None = None
