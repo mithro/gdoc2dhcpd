@@ -92,16 +92,19 @@ class SwitchData:
         port_stats: Per-port traffic statistics (if available).
         vlans: VLAN configuration (if available).
 
-        # SNMP-only fields (None for NSDP)
+        # SNMP-only fields (None for NSDP, empty tuple for SNMP with no data)
         mac_table: MAC forwarding table entries.
         lldp_neighbors: LLDP neighbor information.
         poe_status: PoE port status.
 
         # NSDP-only fields (None for SNMP)
         serial_number: Device serial number.
-        qos_engine: QoS mode (0=off, 1=port-based, 2=802.1p).
+        vlan_engine: VLAN mode (0=disabled, 4=advanced 802.1Q).
+        qos_engine: QoS mode (0=disabled, 1=port-based, 2=802.1p).
         port_mirroring_dest: Destination port for mirroring (0=disabled).
         igmp_snooping_enabled: Whether IGMP snooping is on.
+        broadcast_filtering: Whether broadcast storm control is enabled.
+        loop_detection: Whether loop detection is enabled.
     """
 
     source: SwitchDataSource
@@ -125,6 +128,9 @@ class SwitchData:
 
     # NSDP-only (None for SNMP)
     serial_number: str | None = None
-    qos_engine: int | None = None
+    vlan_engine: int | None = None  # 0=disabled, 4=advanced 802.1Q
+    qos_engine: int | None = None  # 0=disabled, 1=port-based, 2=802.1p
     port_mirroring_dest: int | None = None
     igmp_snooping_enabled: bool | None = None
+    broadcast_filtering: bool | None = None
+    loop_detection: bool | None = None

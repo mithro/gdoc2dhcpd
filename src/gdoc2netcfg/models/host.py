@@ -245,6 +245,11 @@ class NSDPData:
     # Each tuple: (vlan_id, member_ports, tagged_ports)
     port_statistics: tuple[tuple[int, int, int, int], ...] = ()
     # Each tuple: (port_id, bytes_rx, bytes_tx, crc_errors)
+    qos_engine: int | None = None  # 0=disabled, 1=port-based, 2=802.1p
+    port_mirroring_dest: int | None = None  # Destination port (0=disabled)
+    igmp_snooping_enabled: bool | None = None
+    broadcast_filtering: bool | None = None
+    loop_detection: bool | None = None
 
 
 @dataclass

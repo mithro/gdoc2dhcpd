@@ -647,12 +647,6 @@ def bridge_to_switch_data(bridge: BridgeData, model: str | None = None) -> Switc
             tagged_ports=tagged,
         ))
 
-    # Handle empty mac_table -> None for consistency
-    mac_table = bridge.mac_table if bridge.mac_table else None
-
-    # Handle empty poe_status -> None for consistency
-    poe_status = bridge.poe_status if bridge.poe_status else None
-
     # Convert port statistics (ifIndex, bytes_rx, bytes_tx, errors) -> PortTrafficStats
     port_stats = tuple(
         PortTrafficStats(
@@ -671,9 +665,11 @@ def bridge_to_switch_data(bridge: BridgeData, model: str | None = None) -> Switc
         port_pvids=bridge.port_pvids,
         port_stats=port_stats,
         vlans=tuple(vlans),
-        mac_table=mac_table,
-        lldp_neighbors=bridge.lldp_neighbors if bridge.lldp_neighbors else None,
-        poe_status=poe_status,
+        # SNMP-only fields: keep as tuple (empty means "no data collected",
+        # vs None which means "source doesn't support this field")
+        mac_table=bridge.mac_table,
+        lldp_neighbors=bridge.lldp_neighbors,
+        poe_status=bridge.poe_status,
     )
 
 

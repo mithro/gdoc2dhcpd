@@ -92,7 +92,12 @@ def nsdp_to_switch_data(nsdp: NSDPData) -> SwitchData:
         port_stats=port_stats,
         vlans=vlans,
         serial_number=nsdp.serial_number,
-        qos_engine=nsdp.vlan_engine,  # Note: vlan_engine stored here for now
+        vlan_engine=nsdp.vlan_engine,
+        qos_engine=nsdp.qos_engine,
+        port_mirroring_dest=nsdp.port_mirroring_dest,
+        igmp_snooping_enabled=nsdp.igmp_snooping_enabled,
+        broadcast_filtering=nsdp.broadcast_filtering,
+        loop_detection=nsdp.loop_detection,
     )
 
 
@@ -216,6 +221,16 @@ def scan_nsdp(
                         (ps.port_id, ps.bytes_received, ps.bytes_sent, ps.crc_errors)
                         for ps in device.port_statistics
                     ]
+                if device.qos_engine is not None:
+                    entry["qos_engine"] = device.qos_engine
+                if device.port_mirroring is not None:
+                    entry["port_mirroring_dest"] = device.port_mirroring.destination_port
+                if device.igmp_snooping is not None:
+                    entry["igmp_snooping_enabled"] = device.igmp_snooping.enabled
+                if device.broadcast_filtering is not None:
+                    entry["broadcast_filtering"] = device.broadcast_filtering
+                if device.loop_detection is not None:
+                    entry["loop_detection"] = device.loop_detection
 
                 nsdp_data[hostname] = entry
                 if verbose:
@@ -243,6 +258,11 @@ def enrich_hosts_with_nsdp(
     """Attach cached NSDP data to Host objects.
 
     Modifies hosts in-place by setting host.nsdp_data and host.switch_data.
+
+    Note: For Netgear switches, NSDP data takes priority over SNMP data for
+    switch_data because NSDP is the native protocol and provides more complete
+    information (serial number, QoS, mirroring, etc.). This enrichment runs
+    after bridge enrichment, so switch_data from SNMP will be overwritten.
     """
     for host in hosts:
         info = nsdp_cache.get(host.hostname)
@@ -273,6 +293,11 @@ def enrich_hosts_with_nsdp(
                     (ps[0], ps[1], ps[2], ps[3])
                     for ps in info.get("port_statistics", [])
                 ),
+                qos_engine=info.get("qos_engine"),
+                port_mirroring_dest=info.get("port_mirroring_dest"),
+                igmp_snooping_enabled=info.get("igmp_snooping_enabled"),
+                broadcast_filtering=info.get("broadcast_filtering"),
+                loop_detection=info.get("loop_detection"),
             )
-            # Also set unified switch_data from the NSDP data
+            # Set unified switch_data from NSDP data (overwrites any SNMP data)
             host.switch_data = nsdp_to_switch_data(host.nsdp_data)

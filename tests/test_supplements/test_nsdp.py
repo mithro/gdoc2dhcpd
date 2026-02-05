@@ -315,17 +315,19 @@ class TestNSDPToSwitchData:
         assert result.vlans[2].tagged_ports == frozenset()
         assert result.vlans[2].untagged_ports == frozenset({4, 5})
 
-    def test_vlan_engine_to_qos_engine(self):
-        """Test that vlan_engine is mapped to qos_engine field."""
+    def test_vlan_engine_and_qos_engine(self):
+        """Test that vlan_engine and qos_engine are separate fields."""
         nsdp = NSDPData(
             model="GS110EMX",
             mac="aa:bb:cc:dd:ee:ff",
             vlan_engine=4,  # Advanced 802.1Q
+            qos_engine=2,  # 802.1p priority
         )
         result = nsdp_to_switch_data(nsdp)
 
-        # Note: the plan maps vlan_engine to qos_engine
-        assert result.qos_engine == 4
+        # vlan_engine (VLAN mode) and qos_engine (QoS mode) are separate
+        assert result.vlan_engine == 4
+        assert result.qos_engine == 2
 
     def test_empty_collections(self):
         """Test that empty collections are handled correctly."""
@@ -377,6 +379,6 @@ class TestNSDPToSwitchData:
         assert result.serial_number == "XYZ789"
         assert len(result.port_status) == 2
         assert result.port_pvids == ((1, 10), (2, 20))
-        assert result.qos_engine == 4
+        assert result.vlan_engine == 4  # vlan_engine, not qos_engine
         assert len(result.vlans) == 1
         assert len(result.port_stats) == 1

@@ -843,7 +843,11 @@ class TestBridgeToSwitchData:
         assert result.poe_status == ((1, 1, 3), (2, 2, 1))
 
     def test_empty_poe_status(self):
-        """Empty PoE status results in None."""
+        """Empty PoE status results in empty tuple (not None).
+
+        None means "source doesn't support this field" (e.g., NSDP).
+        Empty tuple means "source supports it but no data collected".
+        """
         from gdoc2netcfg.models.host import BridgeData
         from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
 
@@ -852,7 +856,7 @@ class TestBridgeToSwitchData:
         )
         result = bridge_to_switch_data(bridge)
 
-        assert result.poe_status is None
+        assert result.poe_status == ()
 
     def test_model_defaults_to_none(self):
         """Model defaults to None if not provided."""
@@ -865,7 +869,11 @@ class TestBridgeToSwitchData:
         assert result.model is None
 
     def test_empty_bridge_data(self):
-        """Empty BridgeData converts to minimal SwitchData."""
+        """Empty BridgeData converts to minimal SwitchData.
+
+        SNMP-only fields are empty tuples (not None) to distinguish
+        "no data collected" from "source doesn't support this field".
+        """
         from gdoc2netcfg.models.host import BridgeData
         from gdoc2netcfg.models.switch_data import SwitchDataSource
         from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
@@ -877,7 +885,9 @@ class TestBridgeToSwitchData:
         assert result.port_status == ()
         assert result.port_pvids == ()
         assert result.vlans == ()
-        assert result.mac_table is None
+        assert result.mac_table == ()  # Empty tuple, not None
+        assert result.lldp_neighbors == ()
+        assert result.poe_status == ()
 
     def test_hex_bitmap_with_0x_prefix(self):
         """Handle hex bitmap strings with 0x prefix."""
