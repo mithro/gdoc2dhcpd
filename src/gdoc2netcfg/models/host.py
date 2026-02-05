@@ -201,6 +201,43 @@ class BridgeData:
     poe_status: tuple[tuple[int, int, int], ...] = ()
 
 
+@dataclass(frozen=True)
+class NSDPData:
+    """NSDP discovery data for a Netgear switch.
+
+    Populated by the nsdp supplement after broadcast discovery.
+    Contains device identity, port status, and VLAN configuration
+    as reported by the Netgear Switch Discovery Protocol.
+
+    Attributes:
+        model: Device model string (e.g. "GS110EMX").
+        mac: Device MAC address as colon-separated hex string.
+        hostname: Device name.
+        ip: Management IPv4 address.
+        netmask: IPv4 subnet mask.
+        gateway: Default gateway IPv4.
+        firmware_version: Firmware version string.
+        dhcp_enabled: Whether DHCP is enabled.
+        port_count: Number of ports.
+        serial_number: Device serial number.
+        port_status: Per-port link status as (port_id, speed_byte) tuples.
+        port_pvids: Per-port native VLAN as (port_id, vlan_id) tuples.
+    """
+
+    model: str
+    mac: str
+    hostname: str | None = None
+    ip: str | None = None
+    netmask: str | None = None
+    gateway: str | None = None
+    firmware_version: str | None = None
+    dhcp_enabled: bool | None = None
+    port_count: int | None = None
+    serial_number: str | None = None
+    port_status: tuple[tuple[int, int], ...] = ()
+    port_pvids: tuple[tuple[int, int], ...] = ()
+
+
 @dataclass
 class Host:
     """A logical host with one or more network interfaces.
@@ -233,6 +270,7 @@ class Host:
     snmp_data: SNMPData | None = None
     bmc_firmware_info: BMCFirmwareInfo | None = None
     bridge_data: BridgeData | None = None
+    nsdp_data: NSDPData | None = None
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:
