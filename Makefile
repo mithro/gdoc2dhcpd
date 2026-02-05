@@ -8,44 +8,82 @@ $(VENV)/.stamp: pyproject.toml uv.lock
 	uv sync --dev
 	touch $@
 
-help: ## Show this help message
+.PHONY: help
+help: $(VENV)/.stamp ## Show this help message
 	@grep -E '^[a-zA-Z_.-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
+	@echo ""
+	@$(VENV_BIN)/gdoc2netcfg --help
 
+.PHONY: setup
 setup: $(VENV)/.stamp ## Create local development virtualenv
 
+.PHONY: run
 run: $(VENV)/.stamp ## Run gdoc2netcfg (use ARGS= for subcommands)
 	$(VENV_BIN)/gdoc2netcfg $(ARGS)
 
+.PHONY: generate
 generate: $(VENV)/.stamp ## Generate configs into out/ (use ARGS= for specific generators)
 	$(VENV_BIN)/gdoc2netcfg generate --output-dir $(OUTPUT_DIR) $(ARGS)
 
+.PHONY: fetch
 fetch: $(VENV)/.stamp ## Download CSVs from Google Sheets
 	$(VENV_BIN)/gdoc2netcfg fetch
 
+.PHONY: scan
 scan: $(VENV)/.stamp ## Run reachability check then all network scans
+	@echo "=== reachability ==="
 	$(VENV_BIN)/gdoc2netcfg reachability
+	@echo ""
+	@echo "=== sshfp ==="
 	$(VENV_BIN)/gdoc2netcfg sshfp
+	@echo ""
+	@echo "=== ssl-certs ==="
 	$(VENV_BIN)/gdoc2netcfg ssl-certs
+	@echo ""
+	@echo "=== snmp ==="
 	$(VENV_BIN)/gdoc2netcfg snmp
+	@echo ""
+	@echo "=== bmc-firmware ==="
 	$(VENV_BIN)/gdoc2netcfg bmc-firmware
+	@echo ""
+	@echo "=== bridge ==="
 	$(VENV_BIN)/gdoc2netcfg bridge
 
+.PHONY: test
 test: $(VENV)/.stamp ## Run tests
 	$(VENV_BIN)/pytest
 
+.PHONY: lint
 lint: $(VENV)/.stamp ## Run linter
 	$(VENV_BIN)/ruff check src/ tests/
 
 INSTALL_DIR := /opt/gdoc2netcfg
+DNSMASQ_CONF_DIR := /etc/dnsmasq.d
 
+.PHONY: deploy-dnsmasq-internal
+deploy-dnsmasq-internal: generate ## Generate and deploy internal dnsmasq configs (requires sudo)
+	sudo rm $(DNSMASQ_CONF_DIR)/internal/generated/*.conf
+	sudo cp $(OUTPUT_DIR)/internal/*.conf $(DNSMASQ_CONF_DIR)/internal/generated/
+	sudo systemctl restart dnsmasq@internal
+
+.PHONY: deploy-dnsmasq-external
+deploy-dnsmasq-external: generate ## Generate and deploy external dnsmasq configs (requires sudo)
+	sudo rm $(DNSMASQ_CONF_DIR)/external/generated/*.conf
+	sudo cp $(OUTPUT_DIR)/external/*.conf $(DNSMASQ_CONF_DIR)/external/generated/
+	sudo systemctl restart dnsmasq@external
+
+.PHONY: deploy-dnsmasq
+deploy-dnsmasq: deploy-dnsmasq-internal deploy-dnsmasq-external ## Deploy both internal and external dnsmasq configs
+
+.PHONY: install
 install: ## Install into /opt/gdoc2netcfg
 	uv venv $(INSTALL_DIR)
 	uv pip install --python $(INSTALL_DIR)/bin/python .
 
+.PHONY: clean
 clean: ## Remove generated output
 	rm -rf $(OUTPUT_DIR)
 
+.PHONY: dist-clean
 dist-clean: clean ## Remove generated output and virtualenv
 	rm -rf $(VENV)
-
-.PHONY: help setup run generate fetch scan test lint install clean dist-clean
