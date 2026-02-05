@@ -636,3 +636,209 @@ class TestScanBridgeMultiIP:
 
         # Should only try first IP since it succeeded
         mock_collect.assert_called_once()
+
+
+class TestBridgeToSwitchData:
+    """Tests for the bridge_to_switch_data converter function."""
+
+    def test_basic_conversion(self):
+        """Convert basic BridgeData with port status and PVIDs."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.models.switch_data import SwitchDataSource
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData(
+            port_status=((1, 1, 1000), (2, 2, 0)),  # (ifIndex, oper_status, speed)
+            port_names=((1, "ge-0/0/1"), (2, "ge-0/0/2")),
+            port_pvids=((1, 10), (2, 20)),
+        )
+        result = bridge_to_switch_data(bridge, model="GS724T")
+
+        assert result.source == SwitchDataSource.SNMP
+        assert result.model == "GS724T"
+        assert len(result.port_status) == 2
+        assert result.port_status[0].port_id == 1
+        assert result.port_status[0].is_up is True  # oper_status 1 = up
+        assert result.port_status[0].speed_mbps == 1000
+        assert result.port_status[0].port_name == "ge-0/0/1"
+        assert result.port_status[1].port_id == 2
+        assert result.port_status[1].is_up is False  # oper_status 2 = down
+        assert result.port_status[1].speed_mbps == 0
+        assert result.port_pvids == ((1, 10), (2, 20))
+
+    def test_vlan_conversion(self):
+        """Convert VLAN data from egress/untagged port bitmaps."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData(
+            vlan_names=((1, "default"), (10, "mgmt")),
+            # VLAN 1: ports 1-8 egress (0xff = 11111111)
+            # VLAN 10: ports 1,2 egress (0xc0 = 11000000)
+            vlan_egress_ports=((1, "ff"), (10, "c0")),
+            # VLAN 1: ports 3-8 untagged (0x3f = 00111111)
+            # VLAN 10: ports 1,2 untagged (0xc0 = 11000000)
+            vlan_untagged_ports=((1, "3f"), (10, "c0")),
+        )
+        result = bridge_to_switch_data(bridge)
+
+        assert len(result.vlans) == 2
+
+        vlan1 = next(v for v in result.vlans if v.vlan_id == 1)
+        assert vlan1.name == "default"
+        assert vlan1.member_ports == frozenset({1, 2, 3, 4, 5, 6, 7, 8})
+        # tagged = egress - untagged = {1,2,3,4,5,6,7,8} - {3,4,5,6,7,8} = {1,2}
+        assert vlan1.tagged_ports == frozenset({1, 2})
+        assert vlan1.untagged_ports == frozenset({3, 4, 5, 6, 7, 8})
+
+        vlan10 = next(v for v in result.vlans if v.vlan_id == 10)
+        assert vlan10.name == "mgmt"
+        assert vlan10.member_ports == frozenset({1, 2})
+        # All untagged (tagged = egress - untagged = empty)
+        assert vlan10.tagged_ports == frozenset()
+        assert vlan10.untagged_ports == frozenset({1, 2})
+
+    def test_mac_table_passthrough(self):
+        """MAC table is passed through unchanged."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData(
+            mac_table=(("AA:BB:CC:DD:EE:FF", 1, 5, "port5"),),
+        )
+        result = bridge_to_switch_data(bridge)
+
+        assert result.mac_table is not None
+        assert result.mac_table == (("AA:BB:CC:DD:EE:FF", 1, 5, "port5"),)
+
+    def test_lldp_neighbors_passthrough(self):
+        """LLDP neighbors are passed through unchanged."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData(
+            lldp_neighbors=((1, "switch-a", "port24", "AA:BB:CC:DD:EE:FF"),),
+        )
+        result = bridge_to_switch_data(bridge)
+
+        assert result.lldp_neighbors is not None
+        assert result.lldp_neighbors == ((1, "switch-a", "port24", "AA:BB:CC:DD:EE:FF"),)
+
+    def test_poe_status_passthrough(self):
+        """PoE status is passed through unchanged."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData(
+            poe_status=((1, 1, 3), (2, 2, 1)),
+        )
+        result = bridge_to_switch_data(bridge)
+
+        assert result.poe_status is not None
+        assert result.poe_status == ((1, 1, 3), (2, 2, 1))
+
+    def test_empty_poe_status(self):
+        """Empty PoE status results in None."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData(
+            poe_status=(),
+        )
+        result = bridge_to_switch_data(bridge)
+
+        assert result.poe_status is None
+
+    def test_model_defaults_to_none(self):
+        """Model defaults to None if not provided."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData()
+        result = bridge_to_switch_data(bridge)
+
+        assert result.model is None
+
+    def test_empty_bridge_data(self):
+        """Empty BridgeData converts to minimal SwitchData."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.models.switch_data import SwitchDataSource
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData()
+        result = bridge_to_switch_data(bridge)
+
+        assert result.source == SwitchDataSource.SNMP
+        assert result.port_status == ()
+        assert result.port_pvids == ()
+        assert result.vlans == ()
+        assert result.mac_table is None
+
+    def test_hex_bitmap_with_0x_prefix(self):
+        """Handle hex bitmap strings with 0x prefix."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData(
+            vlan_names=((5, "test"),),
+            vlan_egress_ports=((5, "0xc0"),),
+            vlan_untagged_ports=((5, "0xc0"),),
+        )
+        result = bridge_to_switch_data(bridge)
+
+        vlan5 = result.vlans[0]
+        assert vlan5.member_ports == frozenset({1, 2})
+
+    def test_invalid_hex_bitmap(self):
+        """Invalid hex bitmap results in empty port set."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData(
+            vlan_names=((5, "test"),),
+            vlan_egress_ports=((5, "not-hex"),),
+            vlan_untagged_ports=((5, ""),),
+        )
+        result = bridge_to_switch_data(bridge)
+
+        vlan5 = result.vlans[0]
+        assert vlan5.member_ports == frozenset()
+
+
+class TestEnrichHostsWithBridgeDataSetsSwitch:
+    """Tests that enrich_hosts_with_bridge_data also sets switch_data."""
+
+    def test_sets_switch_data(self):
+        """enrich_hosts_with_bridge_data should also set host.switch_data."""
+        from gdoc2netcfg.models.switch_data import SwitchDataSource
+
+        host = _make_switch()
+        cache = {
+            "sw-test": {
+                "mac_table": [["AA:BB:CC:DD:EE:FF", 5, 3, "1/g3"]],
+                "vlan_names": [[1, "Default"], [5, "net"]],
+                "port_pvids": [[1, 31]],
+                "port_names": [[1, "1/g1"]],
+                "port_status": [[1, 1, 1000]],  # port 1 up at 1Gbps
+                "lldp_neighbors": [],
+                "vlan_egress_ports": [],
+                "vlan_untagged_ports": [],
+                "poe_status": [],
+            }
+        }
+        enrich_hosts_with_bridge_data([host], cache)
+
+        assert host.bridge_data is not None
+        assert host.switch_data is not None
+        assert host.switch_data.source == SwitchDataSource.SNMP
+        assert len(host.switch_data.port_status) == 1
+        assert host.switch_data.port_status[0].is_up is True
+        assert host.switch_data.port_status[0].speed_mbps == 1000
+
+    def test_no_switch_data_when_no_bridge_data(self):
+        """switch_data should remain None when no bridge data exists."""
+        host = _make_switch()
+        enrich_hosts_with_bridge_data([host], {})
+
+        assert host.bridge_data is None
+        assert host.switch_data is None

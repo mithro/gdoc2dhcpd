@@ -20,6 +20,12 @@ from typing import TYPE_CHECKING
 
 from gdoc2netcfg.derivations.hardware import HARDWARE_CISCO_SWITCH, HARDWARE_NETGEAR_SWITCH
 from gdoc2netcfg.models.host import BridgeData
+from gdoc2netcfg.models.switch_data import (
+    PortLinkStatus,
+    SwitchData,
+    SwitchDataSource,
+    VLANInfo,
+)
 from gdoc2netcfg.supplements.snmp_common import (
     load_json_cache,
     save_json_cache,
@@ -487,6 +493,104 @@ def parse_poe_status(
 
 
 # ---------------------------------------------------------------------------
+# BridgeData to SwitchData conversion
+# ---------------------------------------------------------------------------
+
+
+def _bitmap_to_ports(hex_bitmap: str) -> frozenset[int]:
+    """Convert hex bitmap string to set of port numbers.
+
+    SNMP VLAN port bitmaps are stored as hex strings where each bit
+    represents a port. Bit 7 of byte 0 = port 1, bit 6 = port 2, etc.
+
+    Args:
+        hex_bitmap: Hex string like "ff" or "0xc0" or "ffc00000".
+
+    Returns:
+        Set of 1-based port numbers that are set in the bitmap.
+    """
+    if not hex_bitmap:
+        return frozenset()
+    # Strip 0x prefix if present
+    if hex_bitmap.startswith("0x"):
+        hex_bitmap = hex_bitmap[2:]
+    try:
+        bitmap_bytes = bytes.fromhex(hex_bitmap)
+    except ValueError:
+        return frozenset()
+    ports = set()
+    for byte_idx, byte_val in enumerate(bitmap_bytes):
+        for bit in range(8):
+            if byte_val & (0x80 >> bit):
+                ports.add(byte_idx * 8 + bit + 1)
+    return frozenset(ports)
+
+
+def bridge_to_switch_data(bridge: BridgeData, model: str | None = None) -> SwitchData:
+    """Convert BridgeData to unified SwitchData format.
+
+    Transforms SNMP-collected bridge data into the unified SwitchData
+    structure that can be consumed by generators without knowledge of
+    the underlying data source.
+
+    Args:
+        bridge: BridgeData from SNMP bridge supplement.
+        model: Optional switch model string.
+
+    Returns:
+        SwitchData with source=SwitchDataSource.SNMP.
+    """
+    # Build port_id to port_name mapping
+    port_names = {ifidx: name for ifidx, name in bridge.port_names}
+
+    # Convert port status (ifIndex, oper_status, speed_mbps) -> PortLinkStatus
+    # oper_status: 1 = up, 2 = down (RFC 2863)
+    port_status = tuple(
+        PortLinkStatus(
+            port_id=ifidx,
+            is_up=(oper == 1),
+            speed_mbps=speed,
+            port_name=port_names.get(ifidx),
+        )
+        for ifidx, oper, speed in bridge.port_status
+    )
+
+    # Convert VLANs from bitmap format
+    # Need vlan_names + vlan_egress_ports + vlan_untagged_ports
+    egress_map = {vid: bitmap for vid, bitmap in bridge.vlan_egress_ports}
+    untagged_map = {vid: bitmap for vid, bitmap in bridge.vlan_untagged_ports}
+
+    vlans = []
+    for vid, name in bridge.vlan_names:
+        member_ports = _bitmap_to_ports(egress_map.get(vid, ""))
+        untagged = _bitmap_to_ports(untagged_map.get(vid, ""))
+        tagged = member_ports - untagged
+        vlans.append(VLANInfo(
+            vlan_id=vid,
+            name=name,
+            member_ports=member_ports,
+            tagged_ports=tagged,
+        ))
+
+    # Handle empty mac_table -> None for consistency
+    mac_table = bridge.mac_table if bridge.mac_table else None
+
+    # Handle empty poe_status -> None for consistency
+    poe_status = bridge.poe_status if bridge.poe_status else None
+
+    return SwitchData(
+        source=SwitchDataSource.SNMP,
+        model=model,
+        port_status=port_status,
+        port_pvids=bridge.port_pvids,
+        vlans=tuple(vlans),
+        mac_table=mac_table,
+        lldp_neighbors=bridge.lldp_neighbors if bridge.lldp_neighbors else None,
+        poe_status=poe_status,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Data collection and scanning
 # ---------------------------------------------------------------------------
 
@@ -637,7 +741,7 @@ def enrich_hosts_with_bridge_data(
 ) -> None:
     """Attach cached bridge data to Host objects.
 
-    Modifies hosts in-place by setting host.bridge_data.
+    Modifies hosts in-place by setting host.bridge_data and host.switch_data.
     """
     for host in hosts:
         info = bridge_cache.get(host.hostname)
@@ -673,3 +777,6 @@ def enrich_hosts_with_bridge_data(
                 tuple(entry) for entry in info.get("poe_status", [])
             ),
         )
+
+        # Also set the unified switch_data
+        host.switch_data = bridge_to_switch_data(host.bridge_data, model=host.hostname)
