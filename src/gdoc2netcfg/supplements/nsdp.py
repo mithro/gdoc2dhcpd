@@ -141,6 +141,18 @@ def scan_nsdp(
                     entry["port_pvids"] = [
                         (pp.port_id, pp.vlan_id) for pp in device.port_pvids
                     ]
+                if device.vlan_engine is not None:
+                    entry["vlan_engine"] = device.vlan_engine.value
+                if device.vlan_members:
+                    entry["vlan_members"] = [
+                        (vm.vlan_id, sorted(vm.member_ports), sorted(vm.tagged_ports))
+                        for vm in device.vlan_members
+                    ]
+                if device.port_statistics:
+                    entry["port_statistics"] = [
+                        (ps.port_id, ps.bytes_received, ps.bytes_sent, ps.crc_errors)
+                        for ps in device.port_statistics
+                    ]
 
                 nsdp_data[hostname] = entry
                 if verbose:
@@ -188,5 +200,14 @@ def enrich_hosts_with_nsdp(
                 ),
                 port_pvids=tuple(
                     (pp[0], pp[1]) for pp in info.get("port_pvids", [])
+                ),
+                vlan_engine=info.get("vlan_engine"),
+                vlan_members=tuple(
+                    (vm[0], frozenset(vm[1]), frozenset(vm[2]))
+                    for vm in info.get("vlan_members", [])
+                ),
+                port_statistics=tuple(
+                    (ps[0], ps[1], ps[2], ps[3])
+                    for ps in info.get("port_statistics", [])
                 ),
             )

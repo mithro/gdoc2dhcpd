@@ -101,3 +101,79 @@ class TestEnrichHostsWithNSDP:
         enrich_hosts_with_nsdp([host], cache)
         # Still enriches — cache is hostname-keyed, not hardware-type filtered
         assert host.nsdp_data is not None
+
+    def test_enrich_with_vlan_engine(self):
+        """Test that vlan_engine is loaded from cache."""
+        host = _make_host()
+        cache = {
+            "gs110emx": {
+                "model": "GS110EMX",
+                "mac": "00:09:5b:aa:bb:cc",
+                "vlan_engine": 4,
+            }
+        }
+        enrich_hosts_with_nsdp([host], cache)
+        assert host.nsdp_data is not None
+        assert host.nsdp_data.vlan_engine == 4
+
+    def test_enrich_with_vlan_members(self):
+        """Test that vlan_members is loaded from cache."""
+        host = _make_host()
+        cache = {
+            "gs110emx": {
+                "model": "GS110EMX",
+                "mac": "00:09:5b:aa:bb:cc",
+                "vlan_members": [
+                    [1, [1, 2, 3], [3]],
+                    [10, [1, 2], [1, 2]],
+                ],
+            }
+        }
+        enrich_hosts_with_nsdp([host], cache)
+        assert host.nsdp_data is not None
+        assert len(host.nsdp_data.vlan_members) == 2
+        # Check first VLAN
+        assert host.nsdp_data.vlan_members[0][0] == 1  # vlan_id
+        assert host.nsdp_data.vlan_members[0][1] == frozenset({1, 2, 3})  # members
+        assert host.nsdp_data.vlan_members[0][2] == frozenset({3})  # tagged
+        # Check second VLAN
+        assert host.nsdp_data.vlan_members[1][0] == 10  # vlan_id
+        assert host.nsdp_data.vlan_members[1][1] == frozenset({1, 2})  # members
+        assert host.nsdp_data.vlan_members[1][2] == frozenset({1, 2})  # tagged
+
+    def test_enrich_with_port_statistics(self):
+        """Test that port_statistics is loaded from cache."""
+        host = _make_host()
+        cache = {
+            "gs110emx": {
+                "model": "GS110EMX",
+                "mac": "00:09:5b:aa:bb:cc",
+                "port_statistics": [
+                    [1, 1000, 500, 0],
+                    [2, 2000, 1000, 5],
+                ],
+            }
+        }
+        enrich_hosts_with_nsdp([host], cache)
+        assert host.nsdp_data is not None
+        assert len(host.nsdp_data.port_statistics) == 2
+        assert host.nsdp_data.port_statistics[0] == (1, 1000, 500, 0)
+        assert host.nsdp_data.port_statistics[1] == (2, 2000, 1000, 5)
+
+    def test_enrich_with_all_new_fields(self):
+        """Test enrichment with all new VLAN/stats fields together."""
+        host = _make_host()
+        cache = {
+            "gs110emx": {
+                "model": "GS110EMX",
+                "mac": "00:09:5b:aa:bb:cc",
+                "vlan_engine": 4,
+                "vlan_members": [[1, [1, 2], [2]]],
+                "port_statistics": [[1, 100, 50, 0]],
+            }
+        }
+        enrich_hosts_with_nsdp([host], cache)
+        assert host.nsdp_data is not None
+        assert host.nsdp_data.vlan_engine == 4
+        assert len(host.nsdp_data.vlan_members) == 1
+        assert len(host.nsdp_data.port_statistics) == 1

@@ -236,6 +236,11 @@ class NSDPData:
     serial_number: str | None = None
     port_status: tuple[tuple[int, int], ...] = ()
     port_pvids: tuple[tuple[int, int], ...] = ()
+    vlan_engine: int | None = None  # 0=disabled, 4=advanced 802.1Q
+    vlan_members: tuple[tuple[int, frozenset[int], frozenset[int]], ...] = ()
+    # Each tuple: (vlan_id, member_ports, tagged_ports)
+    port_statistics: tuple[tuple[int, int, int, int], ...] = ()
+    # Each tuple: (port_id, bytes_rx, bytes_tx, crc_errors)
 
 
 @dataclass
