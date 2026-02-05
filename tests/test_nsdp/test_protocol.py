@@ -20,6 +20,31 @@ class TestTag:
     def test_port_status_value(self):
         assert Tag.PORT_STATUS == 0x0C00
 
+    def test_qos_tags_exist(self):
+        """Verify QoS tags are defined with correct values."""
+        assert Tag.QOS_ENGINE == 0x3400
+        assert Tag.PORT_QOS_PRIORITY == 0x3800
+
+    def test_traffic_control_tags_exist(self):
+        """Verify traffic control tags are defined with correct values."""
+        assert Tag.INGRESS_RATE_LIMIT == 0x4C00
+        assert Tag.EGRESS_RATE_LIMIT == 0x5000
+        assert Tag.BROADCAST_FILTERING == 0x5400
+        assert Tag.BROADCAST_BANDWIDTH == 0x5800
+        assert Tag.PORT_MIRRORING == 0x5C00
+
+    def test_igmp_tags_exist(self):
+        """Verify IGMP tags are defined with correct values."""
+        assert Tag.IGMP_SNOOPING == 0x6800
+        assert Tag.BLOCK_UNKNOWN_MULTICAST == 0x6C00
+        assert Tag.IGMPV3_HEADER_VALIDATION == 0x7000
+        assert Tag.IGMP_STATIC_ROUTER_PORTS == 0x8000
+
+    def test_other_tags_exist(self):
+        """Verify other new tags are defined with correct values."""
+        assert Tag.LOOP_DETECTION == 0x9000
+        assert Tag.ACTIVE_FIRMWARE == 0x000C
+
 
 class TestOp:
     def test_read_request(self):
