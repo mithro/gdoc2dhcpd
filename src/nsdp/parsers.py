@@ -16,9 +16,12 @@ import struct
 
 from nsdp.protocol import NSDPPacket, Tag
 from nsdp.types import (
+    IGMPSnooping,
     LinkSpeed,
     NSDPDevice,
+    PortMirroring,
     PortPVID,
+    PortQoS,
     PortStatistics,
     PortStatus,
     VLANEngine,
@@ -121,6 +124,43 @@ def parse_vlan_members(data: bytes, port_count: int = 8) -> VLANMembership | Non
     )
 
 
+def parse_port_qos(data: bytes) -> PortQoS | None:
+    """Parse NSDP tag 0x3800 (2 bytes: port_id, priority).
+
+    Returns None if data is not exactly 2 bytes.
+    """
+    if len(data) != 2:
+        return None
+    return PortQoS(port_id=data[0], priority=data[1])
+
+
+def parse_port_mirroring(data: bytes) -> PortMirroring | None:
+    """Parse NSDP tag 0x5C00 (4 bytes: dest_port, source_bitmap).
+
+    Returns None if data is not exactly 4 bytes.
+    """
+    if len(data) != 4:
+        return None
+    dest_port = data[0]
+    # Bytes 1-3 are source port bitmap (MSB first)
+    source_ports = _bitmap_to_ports(data[1:4])
+    return PortMirroring(destination_port=dest_port, source_ports=source_ports)
+
+
+def parse_igmp_snooping(data: bytes) -> IGMPSnooping | None:
+    """Parse NSDP tag 0x6800 (4 bytes: unknown, enabled, unknown, vlan?).
+
+    Returns None if data is too short.
+    """
+    if len(data) < 2:
+        return None
+    enabled = bool(data[1])
+    vlan_id = None
+    if len(data) >= 4:
+        vlan_id = data[3] if data[3] != 0 else None
+    return IGMPSnooping(enabled=enabled, vlan_id=vlan_id)
+
+
 def parse_discovery_response(packet: NSDPPacket) -> NSDPDevice:
     """Parse a complete NSDP read response into an NSDPDevice.
 
@@ -151,6 +191,12 @@ def parse_discovery_response(packet: NSDPPacket) -> NSDPDevice:
     port_stats: list[PortStatistics] = []
     vlan_members_list: list[VLANMembership] = []
     port_pvids: list[PortPVID] = []
+    port_qos_list: list[PortQoS] = []
+    qos_engine: int | None = None
+    port_mirroring_obj: PortMirroring | None = None
+    igmp_snooping_obj: IGMPSnooping | None = None
+    broadcast_filtering: bool | None = None
+    loop_detection: bool | None = None
 
     for tlv in packet.tlvs:
         tag = tlv.tag
@@ -199,6 +245,20 @@ def parse_discovery_response(packet: NSDPPacket) -> NSDPDevice:
             pp = parse_port_pvid(val)
             if pp is not None:
                 port_pvids.append(pp)
+        elif tag == Tag.PORT_QOS_PRIORITY:
+            pq = parse_port_qos(val)
+            if pq is not None:
+                port_qos_list.append(pq)
+        elif tag == Tag.QOS_ENGINE:
+            qos_engine = val[0] if val else None
+        elif tag == Tag.PORT_MIRRORING:
+            port_mirroring_obj = parse_port_mirroring(val)
+        elif tag == Tag.IGMP_SNOOPING:
+            igmp_snooping_obj = parse_igmp_snooping(val)
+        elif tag == Tag.BROADCAST_FILTERING:
+            broadcast_filtering = bool(val[0]) if val else None
+        elif tag == Tag.LOOP_DETECTION:
+            loop_detection = bool(val[0]) if val else None
 
     if model is None:
         msg = "No model tag in NSDP response"
@@ -222,4 +282,10 @@ def parse_discovery_response(packet: NSDPPacket) -> NSDPDevice:
         vlan_engine=vlan_engine,
         vlan_members=tuple(vlan_members_list),
         port_pvids=tuple(port_pvids),
+        port_qos=tuple(port_qos_list),
+        qos_engine=qos_engine,
+        port_mirroring=port_mirroring_obj,
+        igmp_snooping=igmp_snooping_obj,
+        broadcast_filtering=broadcast_filtering,
+        loop_detection=loop_detection,
     )
