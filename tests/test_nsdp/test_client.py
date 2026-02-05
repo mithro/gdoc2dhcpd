@@ -59,3 +59,14 @@ class TestNSDPClient:
             target_mac=target_mac,
         )
         assert pkt.server_mac == target_mac
+
+    def test_unicast_request_has_broadcast_server_mac(self):
+        """query_ip sends to IP but with broadcast server MAC in header."""
+        client = NSDPClient.__new__(NSDPClient)
+        client._client_mac = b"\xaa\xbb\xcc\xdd\xee\xff"
+        client._sequence = 0
+
+        # When querying by IP, we don't know the switch MAC yet,
+        # so we send with zeros (broadcast) in the server MAC field
+        pkt = client._build_read_request([Tag.MODEL])
+        assert pkt.server_mac == b"\x00" * 6

@@ -94,72 +94,71 @@ def scan_nsdp(
             print("No interface specified for NSDP scan, using cache only.", file=sys.stderr)
         return nsdp_data
 
-    # Build MAC → hostname index for matching NSDP responses to hosts
-    mac_to_hostname: dict[str, str] = {}
+    # Build list of (hostname, ip) pairs for switches to query
+    switches_to_query: list[tuple[str, str]] = []
     for host in hosts:
         if host.hardware_type not in NSDP_HARDWARE_TYPES:
             continue
-        for iface in host.interfaces:
-            mac_to_hostname[str(iface.mac).lower()] = host.hostname
+        if host.default_ipv4 is None:
+            continue
+        switches_to_query.append((host.hostname, str(host.default_ipv4)))
 
-    if not mac_to_hostname:
+    if not switches_to_query:
         if verbose:
             print("No Netgear switches to scan.", file=sys.stderr)
         return nsdp_data
 
     if verbose:
-        print(f"Scanning {len(mac_to_hostname)} Netgear switch(es) via NSDP...", file=sys.stderr)
+        print(f"Scanning {len(switches_to_query)} Netgear switch(es) via NSDP...", file=sys.stderr)
 
     try:
         from nsdp import NSDPClient
 
         with NSDPClient(interface) as client:
-            devices = client.discover(timeout=3.0)
-
-        for device in devices:
-            hostname = mac_to_hostname.get(device.mac.lower())
-            if hostname is None:
+            # Query each switch by IP (unicast) - more reliable than broadcast
+            for hostname, ip in switches_to_query:
                 if verbose:
-                    print(
-                        f"  NSDP: unknown device {device.model} "
-                        f"({device.mac}) at {device.ip}",
-                        file=sys.stderr,
-                    )
-                continue
+                    print(f"  {hostname} ({ip})... ", end="", flush=True, file=sys.stderr)
 
-            entry: dict = {
-                "model": device.model,
-                "mac": device.mac,
-            }
-            if device.hostname is not None:
-                entry["hostname"] = device.hostname
-            if device.ip is not None:
-                entry["ip"] = device.ip
-            if device.netmask is not None:
-                entry["netmask"] = device.netmask
-            if device.gateway is not None:
-                entry["gateway"] = device.gateway
-            if device.firmware_version is not None:
-                entry["firmware_version"] = device.firmware_version
-            if device.dhcp_enabled is not None:
-                entry["dhcp_enabled"] = device.dhcp_enabled
-            if device.port_count is not None:
-                entry["port_count"] = device.port_count
-            if device.serial_number is not None:
-                entry["serial_number"] = device.serial_number
-            if device.port_status:
-                entry["port_status"] = [
-                    (ps.port_id, ps.speed.value) for ps in device.port_status
-                ]
-            if device.port_pvids:
-                entry["port_pvids"] = [
-                    (pp.port_id, pp.vlan_id) for pp in device.port_pvids
-                ]
+                device = client.query_ip(ip, timeout=2.0)
+                if device is None:
+                    if verbose:
+                        print("no response", file=sys.stderr)
+                    continue
 
-            nsdp_data[hostname] = entry
-            if verbose:
-                fw = device.firmware_version or "?"
-                print(f"  {hostname}: {device.model} fw={fw}", file=sys.stderr)
+                entry: dict = {
+                    "model": device.model,
+                    "mac": device.mac,
+                }
+                if device.hostname is not None:
+                    entry["hostname"] = device.hostname
+                if device.ip is not None:
+                    entry["ip"] = device.ip
+                if device.netmask is not None:
+                    entry["netmask"] = device.netmask
+                if device.gateway is not None:
+                    entry["gateway"] = device.gateway
+                if device.firmware_version is not None:
+                    entry["firmware_version"] = device.firmware_version
+                if device.dhcp_enabled is not None:
+                    entry["dhcp_enabled"] = device.dhcp_enabled
+                if device.port_count is not None:
+                    entry["port_count"] = device.port_count
+                if device.serial_number is not None:
+                    entry["serial_number"] = device.serial_number
+                if device.port_status:
+                    entry["port_status"] = [
+                        (ps.port_id, ps.speed.value) for ps in device.port_status
+                    ]
+                if device.port_pvids:
+                    entry["port_pvids"] = [
+                        (pp.port_id, pp.vlan_id) for pp in device.port_pvids
+                    ]
+
+                nsdp_data[hostname] = entry
+                if verbose:
+                    fw = device.firmware_version or "?"
+                    print(f"{device.model} fw={fw}", file=sys.stderr)
 
     except FileNotFoundError as e:
         # Interface doesn't exist or sysfs path missing

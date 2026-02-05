@@ -197,6 +197,52 @@ class NSDPClient:
 
         return devices
 
+    def query_ip(
+        self,
+        ip: str,
+        tags: list[Tag] | None = None,
+        timeout: float = 2.0,
+    ) -> NSDPDevice | None:
+        """Query a switch by IP address (unicast).
+
+        Sends a unicast NSDP read request to the specified IP address.
+        This is more reliable than broadcast on networks with VLANs or
+        where broadcast doesn't reach all switches.
+
+        Args:
+            ip: Switch IP address (e.g. "10.1.5.25").
+            tags: Tags to request (default: DISCOVERY_TAGS).
+            timeout: Seconds to wait for the response.
+
+        Returns:
+            NSDPDevice if the switch responds, None otherwise.
+        """
+        sock = self._get_socket()
+        sock.settimeout(timeout)
+
+        request_tags = tags or DISCOVERY_TAGS
+        pkt = self._build_read_request(request_tags)
+        sock.sendto(pkt.encode(), (ip, SERVER_PORT_V2))
+
+        while True:
+            try:
+                data, _addr = sock.recvfrom(4096)
+            except socket.timeout:
+                return None
+
+            try:
+                response = NSDPPacket.decode(data)
+            except (ValueError, struct.error):
+                continue
+
+            if response.op != Op.READ_RESPONSE:
+                continue
+
+            try:
+                return parse_discovery_response(response)
+            except ValueError:
+                continue
+
     def read_device(
         self,
         target_mac: bytes,
