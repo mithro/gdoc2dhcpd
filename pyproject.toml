@@ -18,7 +18,7 @@ dependencies = [
 gdoc2netcfg = "gdoc2netcfg.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/gdoc2netcfg"]
+packages = ["src/gdoc2netcfg", "src/nsdp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
