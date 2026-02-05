@@ -1,15 +1,28 @@
 """Tests for the NSDP supplement."""
 
-import json
-from unittest.mock import patch, MagicMock
-
+from gdoc2netcfg.cli.main import main
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
-from gdoc2netcfg.models.host import Host, NSDPData, NetworkInterface
+from gdoc2netcfg.models.host import Host, NetworkInterface
 from gdoc2netcfg.supplements.nsdp import (
     enrich_hosts_with_nsdp,
     load_nsdp_cache,
     save_nsdp_cache,
 )
+
+
+class TestNSDPCLIRegistration:
+    """Test that the 'nsdp' CLI subcommand is registered."""
+
+    def test_nsdp_subcommand_in_help(self, capsys):
+        """The nsdp subcommand should be registered in argparse."""
+        try:
+            main(["nsdp", "--help"])
+        except SystemExit as e:
+            # Should exit 0 with help output, not exit 2 with error
+            assert e.code == 0, f"Expected exit 0 for --help, got exit {e.code}"
+        captured = capsys.readouterr()
+        # The help output should describe what nsdp does
+        assert "nsdp" in captured.out.lower() or "netgear" in captured.out.lower()
 
 
 def _make_host(hostname="gs110emx", ip="10.1.20.1", hardware_type="netgear-switch-plus"):

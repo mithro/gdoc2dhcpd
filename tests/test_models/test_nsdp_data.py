@@ -1,7 +1,7 @@
 """Tests for the NSDPData model on Host."""
 
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
-from gdoc2netcfg.models.host import Host, NSDPData, NetworkInterface
+from gdoc2netcfg.models.host import Host, NetworkInterface, NSDPData
 
 
 def test_nsdp_data_creation():

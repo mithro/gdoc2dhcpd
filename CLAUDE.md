@@ -15,6 +15,7 @@ uv run gdoc2netcfg generate dnsmasq_internal  # Generate internal dnsmasq config
 uv run gdoc2netcfg generate dnsmasq_external  # Generate external dnsmasq config
 uv run gdoc2netcfg generate letsencrypt       # Generate certbot cert scripts
 uv run gdoc2netcfg sshfp --force        # Scan SSH fingerprints
+uv run gdoc2netcfg nsdp --interface eth0    # Scan Netgear switches via NSDP
 uv run gdoc2netcfg validate             # Run constraint validation
 ```
 

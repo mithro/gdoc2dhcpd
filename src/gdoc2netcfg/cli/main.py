@@ -167,6 +167,13 @@ def _build_pipeline(config):
     bridge_cache = load_json_cache(bridge_cache_path)
     enrich_hosts_with_bridge_data(hosts, bridge_cache)
 
+    # Load NSDP cache and enrich (don't scan — that's a separate subcommand)
+    from gdoc2netcfg.supplements.nsdp import enrich_hosts_with_nsdp, load_nsdp_cache
+
+    nsdp_cache_path = Path(config.cache.directory) / "nsdp.json"
+    nsdp_cache = load_nsdp_cache(nsdp_cache_path)
+    enrich_hosts_with_nsdp(hosts, nsdp_cache)
+
     # Validate
     result = validate_all(all_records, hosts, inventory)
 
@@ -828,6 +835,56 @@ def cmd_bridge(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: nsdp
+# ---------------------------------------------------------------------------
+
+def cmd_nsdp(args: argparse.Namespace) -> int:
+    """Scan Netgear switches via NSDP broadcast discovery."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.nsdp import (
+        enrich_hosts_with_nsdp,
+        scan_nsdp,
+    )
+
+    # Minimal pipeline to get hosts with IPs
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    _print_reachability_summary(reachability, hosts)
+
+    cache_path = Path(config.cache.directory) / "nsdp.json"
+    print("\nScanning via NSDP...", file=sys.stderr)
+    nsdp_data = scan_nsdp(
+        hosts,
+        cache_path=cache_path,
+        force=args.force,
+        verbose=True,
+        reachability=reachability,
+        interface=args.interface,
+    )
+
+    enrich_hosts_with_nsdp(hosts, nsdp_data)
+
+    # Report
+    hosts_with_nsdp = sum(1 for h in hosts if h.nsdp_data is not None)
+    print(f"\nNSDP data for {hosts_with_nsdp}/{len(hosts)} hosts.")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -921,6 +978,17 @@ def main(argv: list[str] | None = None) -> int:
     cron_subparsers.add_parser("install", help="Install cron entries into user's crontab")
     cron_subparsers.add_parser("uninstall", help="Remove gdoc2netcfg cron entries from crontab")
 
+    # nsdp
+    nsdp_parser = subparsers.add_parser("nsdp", help="Scan Netgear switches via NSDP discovery")
+    nsdp_parser.add_argument(
+        "--force", action="store_true",
+        help="Force re-scan even if cache is fresh",
+    )
+    nsdp_parser.add_argument(
+        "--interface",
+        help="Network interface for NSDP broadcast (e.g. eth0)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -941,6 +1009,7 @@ def main(argv: list[str] | None = None) -> int:
         "bmc-firmware": cmd_bmc_firmware,
         "bridge": cmd_bridge,
         "cron": cmd_cron,
+        "nsdp": cmd_nsdp,
     }
 
     return commands[args.command](args)
