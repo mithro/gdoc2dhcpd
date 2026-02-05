@@ -30,8 +30,9 @@ from nsdp.protocol import (
 from nsdp.types import NSDPDevice
 
 # Tags requested during broadcast discovery — covers device identity,
-# port status, and VLAN configuration.
+# port status, VLAN configuration, QoS, traffic control, and other settings.
 DISCOVERY_TAGS: list[Tag] = [
+    # Device identity
     Tag.MODEL,
     Tag.HOSTNAME,
     Tag.MAC,
@@ -42,11 +43,25 @@ DISCOVERY_TAGS: list[Tag] = [
     Tag.DHCP_MODE,
     Tag.PORT_COUNT,
     Tag.SERIAL_NUMBER,
+    Tag.ACTIVE_FIRMWARE,
+    # Port information
     Tag.PORT_STATUS,
     Tag.PORT_STATISTICS,
+    # VLAN
     Tag.VLAN_ENGINE,
     Tag.VLAN_MEMBERS,
     Tag.PORT_PVID,
+    # QoS
+    Tag.QOS_ENGINE,
+    Tag.PORT_QOS_PRIORITY,
+    # Traffic control
+    Tag.BROADCAST_FILTERING,
+    Tag.PORT_MIRRORING,
+    # IGMP
+    Tag.IGMP_SNOOPING,
+    Tag.BLOCK_UNKNOWN_MULTICAST,
+    # Loop detection
+    Tag.LOOP_DETECTION,
 ]
 
 
