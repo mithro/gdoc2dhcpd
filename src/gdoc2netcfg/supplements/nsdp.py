@@ -161,6 +161,14 @@ def scan_nsdp(
                 fw = device.firmware_version or "?"
                 print(f"  {hostname}: {device.model} fw={fw}", file=sys.stderr)
 
+    except FileNotFoundError as e:
+        # Interface doesn't exist or sysfs path missing
+        print(
+            f"Error: Interface '{interface}' not found.\n"
+            f"  Available interfaces: ip link show\n"
+            f"  ({e})",
+            file=sys.stderr,
+        )
     except PermissionError:
         print(
             "Error: NSDP scan requires elevated privileges.\n"
