@@ -835,16 +835,17 @@ def cmd_bridge(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: nsdp
+# Subcommand: nsdp scan
 # ---------------------------------------------------------------------------
 
-def cmd_nsdp(args: argparse.Namespace) -> int:
+def cmd_nsdp_scan(args: argparse.Namespace) -> int:
     """Scan Netgear switches via NSDP unicast queries."""
     config = _load_config(args)
 
     from gdoc2netcfg.derivations.host_builder import build_hosts
     from gdoc2netcfg.sources.parser import parse_csv
     from gdoc2netcfg.supplements.nsdp import (
+        NSDP_HARDWARE_TYPES,
         enrich_hosts_with_nsdp,
         scan_nsdp,
     )
@@ -872,12 +873,62 @@ def cmd_nsdp(args: argparse.Namespace) -> int:
     enrich_hosts_with_nsdp(hosts, nsdp_data)
 
     # Report - count only Netgear switches
-    from gdoc2netcfg.supplements.nsdp import NSDP_HARDWARE_TYPES
-
     netgear_hosts = [h for h in hosts if h.hardware_type in NSDP_HARDWARE_TYPES]
     hosts_with_nsdp = sum(1 for h in netgear_hosts if h.nsdp_data is not None)
     print(f"\nNSDP data for {hosts_with_nsdp}/{len(netgear_hosts)} Netgear switches.")
 
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: nsdp show
+# ---------------------------------------------------------------------------
+
+def cmd_nsdp_show(args: argparse.Namespace) -> int:
+    """Show cached NSDP data for Netgear switches."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.supplements.nsdp import load_nsdp_cache
+
+    cache_path = Path(config.cache.directory) / "nsdp.json"
+    nsdp_data = load_nsdp_cache(cache_path)
+
+    if not nsdp_data:
+        print("No NSDP data cached. Run 'gdoc2netcfg nsdp scan' first.")
+        return 1
+
+    for hostname in sorted(nsdp_data.keys()):
+        data = nsdp_data[hostname]
+        print(f"\n{'='*60}")
+        print(f"{hostname}")
+        print("=" * 60)
+        print(f"Model:    {data.get('model', '?')}")
+        print(f"MAC:      {data.get('mac', '?')}")
+        print(f"Hostname: {data.get('hostname', '?')}")
+        print(f"IP:       {data.get('ip', '?')}")
+        print(f"Netmask:  {data.get('netmask', '?')}")
+        print(f"Gateway:  {data.get('gateway', '?')}")
+        print(f"Firmware: {data.get('firmware_version', '?')}")
+        print(f"DHCP:     {data.get('dhcp_enabled', '?')}")
+        print(f"Ports:    {data.get('port_count', '?')}")
+        print(f"Serial:   {data.get('serial_number', '?')}")
+
+        port_status = data.get("port_status", [])
+        if port_status:
+            from nsdp.types import LinkSpeed
+
+            print("\nPort Status:")
+            for port_id, speed_val in port_status:
+                speed = LinkSpeed.from_byte(speed_val)
+                print(f"  Port {port_id:2d}: {speed.name}")
+
+        port_pvids = data.get("port_pvids", [])
+        if port_pvids:
+            print("\nPort PVIDs:")
+            for port_id, vlan_id in port_pvids:
+                print(f"  Port {port_id:2d}: VLAN {vlan_id}")
+
+    print(f"\n{len(nsdp_data)} switch(es) in cache.")
     return 0
 
 
@@ -975,12 +1026,17 @@ def main(argv: list[str] | None = None) -> int:
     cron_subparsers.add_parser("install", help="Install cron entries into user's crontab")
     cron_subparsers.add_parser("uninstall", help="Remove gdoc2netcfg cron entries from crontab")
 
-    # nsdp
-    nsdp_parser = subparsers.add_parser("nsdp", help="Scan Netgear switches via NSDP")
-    nsdp_parser.add_argument(
+    # nsdp (with subcommands)
+    nsdp_parser = subparsers.add_parser("nsdp", help="NSDP switch discovery and info")
+    nsdp_subparsers = nsdp_parser.add_subparsers(dest="nsdp_command")
+
+    nsdp_scan_parser = nsdp_subparsers.add_parser("scan", help="Scan Netgear switches via NSDP")
+    nsdp_scan_parser.add_argument(
         "--force", action="store_true",
         help="Force re-scan even if cache is fresh",
     )
+
+    nsdp_subparsers.add_parser("show", help="Show cached NSDP data")
 
     args = parser.parse_args(argv)
 
@@ -989,6 +1045,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     from gdoc2netcfg.cli.cron import cmd_cron
+
+    # Handle nsdp subcommands
+    if args.command == "nsdp":
+        if args.nsdp_command == "scan":
+            return cmd_nsdp_scan(args)
+        elif args.nsdp_command == "show":
+            return cmd_nsdp_show(args)
+        else:
+            nsdp_parser.print_help()
+            return 0
 
     commands = {
         "fetch": cmd_fetch,
@@ -1002,7 +1068,6 @@ def main(argv: list[str] | None = None) -> int:
         "bmc-firmware": cmd_bmc_firmware,
         "bridge": cmd_bridge,
         "cron": cmd_cron,
-        "nsdp": cmd_nsdp,
     }
 
     return commands[args.command](args)
