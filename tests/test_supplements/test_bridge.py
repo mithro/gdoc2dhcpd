@@ -9,6 +9,7 @@ from gdoc2netcfg.supplements.bridge import (
     BRIDGE_CAPABLE_HARDWARE,
     _format_hex_mac,
     _format_octet_string,
+    _parse_port_statistics,
     enrich_hosts_with_bridge_data,
     parse_bridge_port_map,
     parse_if_names,
@@ -323,6 +324,110 @@ class TestParseVlanUntaggedPorts:
 
     def test_empty(self):
         assert parse_vlan_untagged_ports([]) == []
+
+
+class TestParsePortStatistics:
+    """Tests for parsing IF-MIB interface statistics OIDs."""
+
+    def test_parses_port_statistics(self):
+        """Parse ifHCInOctets, ifHCOutOctets, and ifInErrors into tuples."""
+        raw = {
+            "ifHCInOctets": [
+                ("1.3.6.1.2.1.31.1.1.1.6.1", "1000"),
+                ("1.3.6.1.2.1.31.1.1.1.6.2", "2000"),
+            ],
+            "ifHCOutOctets": [
+                ("1.3.6.1.2.1.31.1.1.1.10.1", "500"),
+                ("1.3.6.1.2.1.31.1.1.1.10.2", "1000"),
+            ],
+            "ifInErrors": [
+                ("1.3.6.1.2.1.2.2.1.14.1", "5"),
+                ("1.3.6.1.2.1.2.2.1.14.2", "0"),
+            ],
+        }
+        result = _parse_port_statistics(raw)
+
+        assert len(result) == 2
+        assert result[0] == (1, 1000, 500, 5)
+        assert result[1] == (2, 2000, 1000, 0)
+
+    def test_empty_raw_data(self):
+        """Empty input returns empty tuple."""
+        result = _parse_port_statistics({})
+        assert result == ()
+
+    def test_missing_out_octets(self):
+        """Port with in octets but no out octets defaults out to 0."""
+        raw = {
+            "ifHCInOctets": [
+                ("1.3.6.1.2.1.31.1.1.1.6.5", "9999"),
+            ],
+            "ifInErrors": [
+                ("1.3.6.1.2.1.2.2.1.14.5", "3"),
+            ],
+        }
+        result = _parse_port_statistics(raw)
+
+        assert len(result) == 1
+        assert result[0] == (5, 9999, 0, 3)
+
+    def test_missing_in_octets(self):
+        """Port with out octets but no in octets defaults in to 0."""
+        raw = {
+            "ifHCOutOctets": [
+                ("1.3.6.1.2.1.31.1.1.1.10.3", "7777"),
+            ],
+        }
+        result = _parse_port_statistics(raw)
+
+        assert len(result) == 1
+        assert result[0] == (3, 0, 7777, 0)
+
+    def test_missing_errors(self):
+        """Port with octets but no errors defaults errors to 0."""
+        raw = {
+            "ifHCInOctets": [
+                ("1.3.6.1.2.1.31.1.1.1.6.1", "1000"),
+            ],
+            "ifHCOutOctets": [
+                ("1.3.6.1.2.1.31.1.1.1.10.1", "500"),
+            ],
+        }
+        result = _parse_port_statistics(raw)
+
+        assert len(result) == 1
+        assert result[0] == (1, 1000, 500, 0)
+
+    def test_large_counter_values(self):
+        """64-bit counter values are handled correctly."""
+        raw = {
+            "ifHCInOctets": [
+                ("1.3.6.1.2.1.31.1.1.1.6.1", "18446744073709551615"),   # 2^64 - 1
+            ],
+            "ifHCOutOctets": [
+                ("1.3.6.1.2.1.31.1.1.1.10.1", "9223372036854775807"),  # 2^63 - 1
+            ],
+        }
+        result = _parse_port_statistics(raw)
+
+        assert len(result) == 1
+        assert result[0] == (1, 18446744073709551615, 9223372036854775807, 0)
+
+    def test_sorted_by_ifindex(self):
+        """Results are sorted by ifIndex."""
+        raw = {
+            "ifHCInOctets": [
+                ("1.3.6.1.2.1.31.1.1.1.6.10", "100"),
+                ("1.3.6.1.2.1.31.1.1.1.6.3", "300"),
+                ("1.3.6.1.2.1.31.1.1.1.6.7", "700"),
+            ],
+        }
+        result = _parse_port_statistics(raw)
+
+        assert len(result) == 3
+        assert result[0][0] == 3
+        assert result[1][0] == 7
+        assert result[2][0] == 10
 
 
 class TestParsePoeStatus:
@@ -842,3 +947,135 @@ class TestEnrichHostsWithBridgeDataSetsSwitch:
 
         assert host.bridge_data is None
         assert host.switch_data is None
+
+
+class TestBridgeDataPortStatistics:
+    """Tests for port_statistics field in BridgeData."""
+
+    def test_bridge_data_with_port_statistics(self):
+        """BridgeData can store port statistics tuples."""
+        from gdoc2netcfg.models.host import BridgeData
+
+        bridge = BridgeData(
+            port_statistics=((1, 1000, 500, 5), (2, 2000, 1000, 0)),
+        )
+
+        assert len(bridge.port_statistics) == 2
+        assert bridge.port_statistics[0] == (1, 1000, 500, 5)
+        assert bridge.port_statistics[1] == (2, 2000, 1000, 0)
+
+    def test_bridge_data_default_empty_port_statistics(self):
+        """BridgeData defaults to empty port_statistics."""
+        from gdoc2netcfg.models.host import BridgeData
+
+        bridge = BridgeData()
+
+        assert bridge.port_statistics == ()
+
+
+class TestBridgeToSwitchDataWithStats:
+    """Tests for bridge_to_switch_data converting port_statistics to port_stats."""
+
+    def test_converts_port_statistics_to_port_stats(self):
+        """bridge_to_switch_data converts port_statistics to PortTrafficStats."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData(
+            port_statistics=((1, 1000, 500, 5), (2, 2000, 1000, 0)),
+        )
+        result = bridge_to_switch_data(bridge)
+
+        assert len(result.port_stats) == 2
+        assert result.port_stats[0].port_id == 1
+        assert result.port_stats[0].bytes_rx == 1000
+        assert result.port_stats[0].bytes_tx == 500
+        assert result.port_stats[0].errors == 5
+        assert result.port_stats[1].port_id == 2
+        assert result.port_stats[1].bytes_rx == 2000
+        assert result.port_stats[1].bytes_tx == 1000
+        assert result.port_stats[1].errors == 0
+
+    def test_empty_port_statistics_gives_empty_port_stats(self):
+        """Empty port_statistics results in empty port_stats tuple."""
+        from gdoc2netcfg.models.host import BridgeData
+        from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
+
+        bridge = BridgeData()
+        result = bridge_to_switch_data(bridge)
+
+        assert result.port_stats == ()
+
+
+class TestEnrichWithPortStatistics:
+    """Tests for enrich_hosts_with_bridge_data handling port_statistics."""
+
+    def test_enriches_with_port_statistics(self):
+        """enrich_hosts_with_bridge_data includes port_statistics from cache."""
+        host = _make_switch()
+        cache = {
+            "sw-test": {
+                "mac_table": [],
+                "vlan_names": [],
+                "port_pvids": [],
+                "port_names": [],
+                "port_status": [],
+                "lldp_neighbors": [],
+                "vlan_egress_ports": [],
+                "vlan_untagged_ports": [],
+                "poe_status": [],
+                "port_statistics": [[1, 1000, 500, 5], [2, 2000, 1000, 0]],
+            }
+        }
+        enrich_hosts_with_bridge_data([host], cache)
+
+        assert host.bridge_data is not None
+        assert len(host.bridge_data.port_statistics) == 2
+        assert host.bridge_data.port_statistics[0] == (1, 1000, 500, 5)
+
+    def test_enriches_switch_data_with_port_stats(self):
+        """enrich_hosts_with_bridge_data sets switch_data.port_stats from port_statistics."""
+        host = _make_switch()
+        cache = {
+            "sw-test": {
+                "mac_table": [],
+                "vlan_names": [],
+                "port_pvids": [],
+                "port_names": [],
+                "port_status": [],
+                "lldp_neighbors": [],
+                "vlan_egress_ports": [],
+                "vlan_untagged_ports": [],
+                "poe_status": [],
+                "port_statistics": [[1, 1000, 500, 5]],
+            }
+        }
+        enrich_hosts_with_bridge_data([host], cache)
+
+        assert host.switch_data is not None
+        assert len(host.switch_data.port_stats) == 1
+        assert host.switch_data.port_stats[0].port_id == 1
+        assert host.switch_data.port_stats[0].bytes_rx == 1000
+
+    def test_missing_port_statistics_key(self):
+        """Cache entry without port_statistics key defaults to empty."""
+        host = _make_switch()
+        cache = {
+            "sw-test": {
+                "mac_table": [],
+                "vlan_names": [],
+                "port_pvids": [],
+                "port_names": [],
+                "port_status": [],
+                "lldp_neighbors": [],
+                "vlan_egress_ports": [],
+                "vlan_untagged_ports": [],
+                "poe_status": [],
+                # No port_statistics key
+            }
+        }
+        enrich_hosts_with_bridge_data([host], cache)
+
+        assert host.bridge_data is not None
+        assert host.bridge_data.port_statistics == ()
+        assert host.switch_data.port_stats == ()

@@ -22,6 +22,7 @@ from gdoc2netcfg.derivations.hardware import HARDWARE_CISCO_SWITCH, HARDWARE_NET
 from gdoc2netcfg.models.host import BridgeData
 from gdoc2netcfg.models.switch_data import (
     PortLinkStatus,
+    PortTrafficStats,
     SwitchData,
     SwitchDataSource,
     VLANInfo,
@@ -80,6 +81,11 @@ _LLDP_REM_TABLE = "1.0.8802.1.1.2.1.4.1"
 # POWER-ETHERNET-MIB: pethPsePortTable -- PoE status
 _PETH_PSE_PORT_TABLE = "1.3.6.1.2.1.105.1.1"
 
+# IF-MIB: interface statistics (64-bit counters)
+_IF_HC_IN_OCTETS = "1.3.6.1.2.1.31.1.1.1.6"
+_IF_HC_OUT_OCTETS = "1.3.6.1.2.1.31.1.1.1.10"
+_IF_IN_ERRORS = "1.3.6.1.2.1.2.2.1.14"
+
 # All bridge table OIDs for bulk walk
 _BRIDGE_TABLE_OIDS: dict[str, str] = {
     "dot1q_tp_fdb": _DOT1Q_TP_FDB_TABLE,
@@ -93,6 +99,9 @@ _BRIDGE_TABLE_OIDS: dict[str, str] = {
     "if_high_speed": _IF_HIGH_SPEED,
     "lldp_rem": _LLDP_REM_TABLE,
     "poe": _PETH_PSE_PORT_TABLE,
+    "ifHCInOctets": _IF_HC_IN_OCTETS,
+    "ifHCOutOctets": _IF_HC_OUT_OCTETS,
+    "ifInErrors": _IF_IN_ERRORS,
 }
 
 # The base OID prefix for dot1qTpFdbPort entries:
@@ -492,6 +501,72 @@ def parse_poe_status(
     return result
 
 
+def _parse_port_statistics(
+    raw: dict[str, list[tuple[str, str]]],
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Parse interface statistics from SNMP walk results.
+
+    Extracts ifHCInOctets (bytes received), ifHCOutOctets (bytes transmitted),
+    and ifInErrors from the raw SNMP data.
+
+    Args:
+        raw: Dictionary from try_snmp_credentials with walk results.
+            Keys are "ifHCInOctets", "ifHCOutOctets", "ifInErrors".
+            Values are lists of (oid, value) tuples from SNMP walk.
+
+    Returns:
+        Tuple of (ifIndex, bytes_rx, bytes_tx, errors) tuples, sorted by ifIndex.
+    """
+    in_octets: dict[int, int] = {}
+    out_octets: dict[int, int] = {}
+    in_errors: dict[int, int] = {}
+
+    # Parse ifHCInOctets
+    for oid, value in raw.get("ifHCInOctets", []):
+        prefix = _IF_HC_IN_OCTETS + "."
+        if oid.startswith(prefix):
+            suffix = oid[len(prefix):]
+            try:
+                ifidx = int(suffix)
+                in_octets[ifidx] = int(value)
+            except ValueError:
+                continue
+
+    # Parse ifHCOutOctets
+    for oid, value in raw.get("ifHCOutOctets", []):
+        prefix = _IF_HC_OUT_OCTETS + "."
+        if oid.startswith(prefix):
+            suffix = oid[len(prefix):]
+            try:
+                ifidx = int(suffix)
+                out_octets[ifidx] = int(value)
+            except ValueError:
+                continue
+
+    # Parse ifInErrors
+    for oid, value in raw.get("ifInErrors", []):
+        prefix = _IF_IN_ERRORS + "."
+        if oid.startswith(prefix):
+            suffix = oid[len(prefix):]
+            try:
+                ifidx = int(suffix)
+                in_errors[ifidx] = int(value)
+            except ValueError:
+                continue
+
+    # Combine into tuples for all interfaces that have data
+    all_ifidx = set(in_octets.keys()) | set(out_octets.keys())
+    result = []
+    for ifidx in sorted(all_ifidx):
+        result.append((
+            ifidx,
+            in_octets.get(ifidx, 0),
+            out_octets.get(ifidx, 0),
+            in_errors.get(ifidx, 0),
+        ))
+    return tuple(result)
+
+
 # ---------------------------------------------------------------------------
 # BridgeData to SwitchData conversion
 # ---------------------------------------------------------------------------
@@ -578,11 +653,23 @@ def bridge_to_switch_data(bridge: BridgeData, model: str | None = None) -> Switc
     # Handle empty poe_status -> None for consistency
     poe_status = bridge.poe_status if bridge.poe_status else None
 
+    # Convert port statistics (ifIndex, bytes_rx, bytes_tx, errors) -> PortTrafficStats
+    port_stats = tuple(
+        PortTrafficStats(
+            port_id=ifidx,
+            bytes_rx=rx,
+            bytes_tx=tx,
+            errors=err,
+        )
+        for ifidx, rx, tx, err in bridge.port_statistics
+    )
+
     return SwitchData(
         source=SwitchDataSource.SNMP,
         model=model,
         port_status=port_status,
         port_pvids=bridge.port_pvids,
+        port_stats=port_stats,
         vlans=tuple(vlans),
         mac_table=mac_table,
         lldp_neighbors=bridge.lldp_neighbors if bridge.lldp_neighbors else None,
@@ -626,6 +713,7 @@ def _collect_bridge_data(ip: str, host: Host) -> dict | None:
     vlan_egress = parse_vlan_egress_ports(raw.get("vlan_egress", []))
     vlan_untagged = parse_vlan_untagged_ports(raw.get("vlan_untagged", []))
     poe = parse_poe_status(raw.get("poe", []))
+    port_statistics = _parse_port_statistics(raw)
 
     # Port names as list of (ifIndex, name) tuples
     port_names = [(k, v) for k, v in sorted(if_names.items())]
@@ -640,6 +728,7 @@ def _collect_bridge_data(ip: str, host: Host) -> dict | None:
         "vlan_egress_ports": vlan_egress,
         "vlan_untagged_ports": vlan_untagged,
         "poe_status": poe,
+        "port_statistics": port_statistics,
     }
 
 
@@ -775,6 +864,9 @@ def enrich_hosts_with_bridge_data(
             ),
             poe_status=tuple(
                 tuple(entry) for entry in info.get("poe_status", [])
+            ),
+            port_statistics=tuple(
+                tuple(entry) for entry in info.get("port_statistics", [])
             ),
         )
 
