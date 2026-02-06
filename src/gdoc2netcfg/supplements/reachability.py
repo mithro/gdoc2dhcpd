@@ -259,41 +259,61 @@ def check_all_hosts_reachability(
     name_width = max((len(h.hostname) for h in sorted_hosts), default=0)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        # Submit all pings up front.
-        host_futures: list[tuple[Host, list[tuple[str, Future[PingResult]]]]] = []
+        # Submit all pings up front, deduplicating IPs across interfaces.
+        host_futures: list[
+            tuple[Host, list[tuple[int, str, Future[PingResult]]]]
+        ] = []
         for host in sorted_hosts:
-            ip_futures = []
-            for vi in host.virtual_interfaces:
-                ip_str = str(vi.ipv4)
-                future = pool.submit(check_reachable, ip_str)
-                ip_futures.append((ip_str, future))
+            ip_futures: list[tuple[int, str, Future[PingResult]]] = []
+            seen_ips: set[str] = set()
+            for vi_idx, vi in enumerate(host.virtual_interfaces):
+                for ip_str in vi.all_ips:
+                    if ip_str in seen_ips:
+                        continue
+                    seen_ips.add(ip_str)
+                    future = pool.submit(check_reachable, ip_str)
+                    ip_futures.append((vi_idx, ip_str, future))
             host_futures.append((host, ip_futures))
 
         # Collect results in sorted order — blocks on each host's futures
         # while remaining hosts continue pinging in the background.
         for host, ip_futures in host_futures:
-            active_ips = []
-            ip_results: list[tuple[str, PingResult]] = []
-            for ip_str, future in ip_futures:
+            active_ips: list[str] = []
+            # Group ping results by interface index
+            vi_count = len(host.virtual_interfaces)
+            iface_pings: list[list[tuple[str, PingResult]]] = [
+                [] for _ in range(vi_count)
+            ]
+            all_ip_results: list[tuple[str, PingResult]] = []
+
+            for vi_idx, ip_str, future in ip_futures:
                 ping = future.result()
-                ip_results.append((ip_str, ping))
+                all_ip_results.append((ip_str, ping))
+                iface_pings[vi_idx].append((ip_str, ping))
                 if ping:
                     active_ips.append(ip_str)
+
+            iface_reachability = tuple(
+                InterfaceReachability(pings=tuple(pings))
+                for pings in iface_pings
+            )
 
             result[host.hostname] = HostReachability(
                 hostname=host.hostname,
                 active_ips=tuple(active_ips),
+                interfaces=iface_reachability,
             )
 
             if verbose:
+                hr = result[host.hostname]
                 parts = []
-                for ip_str, ping in ip_results:
+                for ip_str, ping in all_ip_results:
                     part = f"{ip_str} {ping.received}/{ping.transmitted}"
                     if ping.rtt_avg_ms is not None:
                         part += f" {ping.rtt_avg_ms:.1f}ms"
                     parts.append(part)
                 detail = ", ".join(parts)
-                label = "up" if result[host.hostname].is_up else "down"
+                label = hr.reachability_mode if hr.is_up else "down"
                 print(
                     f"  {host.hostname:>{name_width}s} {label}({detail})",
                     file=sys.stderr,

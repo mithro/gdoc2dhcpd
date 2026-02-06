@@ -313,7 +313,7 @@ class TestReachabilityCache:
         assert cache_file.exists()
         data = json.loads(cache_file.read_text())
         assert "desktop" in data
-        assert data["desktop"] == ["10.1.10.1"]
+        assert data["desktop"] == ["10.1.10.1", "2001:db8:1:110::1"]
 
     @patch("gdoc2netcfg.supplements.reachability.check_reachable")
     def test_reachability_uses_cache_on_second_run(self, mock_ping, tmp_path, capsys):
