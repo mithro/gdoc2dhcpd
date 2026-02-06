@@ -257,9 +257,9 @@ def check_all_hosts_reachability(
     from concurrent.futures import Future, ThreadPoolExecutor
 
     _MODE_LABELS = {
-        "dual-stack": "up (v4+v6)",
-        "ipv4-only":  "up (ipv4)",
-        "ipv6-only":  "up (ipv6)",
+        "dual-stack": "up (v46)",
+        "ipv4-only":  "up (v4_)",
+        "ipv6-only":  "up (v_6)",
         "unreachable": "down",
     }
     _LABEL_WIDTH = max(len(v) for v in _MODE_LABELS.values())
