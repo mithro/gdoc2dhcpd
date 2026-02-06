@@ -69,6 +69,11 @@ class VirtualInterface:
     ipv6_addresses: tuple[IPv6Address, ...] = ()
     vlan_id: int | None = None
 
+    @property
+    def all_ips(self) -> tuple[str, ...]:
+        """All IP addresses (v4 and v6) as strings."""
+        return (str(self.ipv4),) + tuple(str(a) for a in self.ipv6_addresses)
+
 
 @dataclass(frozen=True)
 class SSLCertInfo:
