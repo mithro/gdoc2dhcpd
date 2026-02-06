@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gdoc2netcfg.config import PipelineConfig
-    from gdoc2netcfg.models.host import Host
+    from gdoc2netcfg.models.host import BridgeData, Host, NSDPData
     from gdoc2netcfg.supplements.reachability import HostReachability
 
 
@@ -889,7 +889,6 @@ def cmd_bridge_scan(args: argparse.Namespace) -> int:
         reachability=reachability,
     )
     enrich_hosts_with_bridge_data(hosts, bridge_data)
-    snmp_count = sum(1 for h in hosts if h.bridge_data is not None)
 
     # NSDP scan
     nsdp_cache = Path(config.cache.directory) / "nsdp.json"
@@ -901,7 +900,6 @@ def cmd_bridge_scan(args: argparse.Namespace) -> int:
         verbose=True,
     )
     enrich_hosts_with_nsdp(hosts, nsdp_data)
-    nsdp_count = sum(1 for h in hosts if h.nsdp_data is not None)
 
     # Run bridge validations
     inventory = build_inventory(hosts, config.site)
@@ -909,13 +907,17 @@ def cmd_bridge_scan(args: argparse.Namespace) -> int:
     mac_result = validate_mac_connectivity(inventory)
     lldp_result = validate_lldp_topology(inventory)
 
-    # Report totals
-    total_switches = sum(
+    # Report totals — count after both scans so a Netgear switch with
+    # both bridge_data and nsdp_data is counted under NSDP (its native
+    # protocol), not double-counted.
+    nsdp_count = sum(1 for h in hosts if h.nsdp_data is not None)
+    snmp_only = sum(
         1 for h in hosts
-        if h.bridge_data is not None or h.nsdp_data is not None
+        if h.bridge_data is not None and h.nsdp_data is None
     )
+    total_switches = snmp_only + nsdp_count
     print(f"\n{total_switches} switch(es) with data "
-          f"({snmp_count} via SNMP, {nsdp_count} via NSDP).")
+          f"({snmp_only} via SNMP, {nsdp_count} via NSDP).")
 
     # Report validation results
     has_errors = False
@@ -986,6 +988,8 @@ def cmd_bridge_show(args: argparse.Namespace) -> int:
     nsdp_count = 0
 
     for host in switches:
+        # NSDP takes priority for Netgear switches — it's the native
+        # protocol and provides more complete data (serial, QoS, etc.).
         if host.nsdp_data is not None:
             source_label = "NSDP"
             nsdp_count += 1
@@ -1009,29 +1013,9 @@ def cmd_bridge_show(args: argparse.Namespace) -> int:
     return 0
 
 
-def _bitmap_to_ports(hex_bitmap: str) -> frozenset[int]:
-    """Convert hex bitmap string to set of 1-based port numbers."""
-    if not hex_bitmap:
-        return frozenset()
-    if hex_bitmap.startswith("0x"):
-        hex_bitmap = hex_bitmap[2:]
-    try:
-        bitmap_bytes = bytes.fromhex(hex_bitmap)
-    except ValueError:
-        return frozenset()
-    ports: set[int] = set()
-    for byte_idx, byte_val in enumerate(bitmap_bytes):
-        for bit in range(8):
-            if byte_val & (0x80 >> bit):
-                ports.add(byte_idx * 8 + bit + 1)
-    return frozenset(ports)
-
-
-def _print_snmp_switch(bridge) -> None:
+def _print_snmp_switch(bridge: BridgeData) -> None:
     """Print SNMP bridge data for a switch."""
-    from gdoc2netcfg.models.host import BridgeData
-
-    assert isinstance(bridge, BridgeData)
+    from gdoc2netcfg.supplements.bridge import _bitmap_to_ports
 
     # Build ifIndex → port name mapping
     port_names = {ifidx: name for ifidx, name in bridge.port_names}
@@ -1123,7 +1107,7 @@ def _print_snmp_switch(bridge) -> None:
             )
 
 
-def _print_nsdp_switch(nsdp) -> None:
+def _print_nsdp_switch(nsdp: NSDPData) -> None:
     """Print NSDP data for a switch."""
     print(f"Model:    {nsdp.model}")
     if nsdp.firmware_version:
