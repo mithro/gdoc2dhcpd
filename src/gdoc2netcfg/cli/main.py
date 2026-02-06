@@ -18,6 +18,7 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -983,8 +984,54 @@ def cmd_bridge_show(args: argparse.Namespace) -> int:
     return 0
 
 
+# Port name prefixes that identify virtual/internal interfaces
+_VIRTUAL_PORT_PREFIXES = ("po", "lag ", "cpu ", "tunnel", "loopback", "logical")
+
+
+def _is_physical_port(port_id: int, port_name: str | None) -> bool:
+    """Return True for physical ports, False for virtual interfaces."""
+    if port_name is not None:
+        name_lower = port_name.lower()
+        if any(name_lower.startswith(p) for p in _VIRTUAL_PORT_PREFIXES):
+            return False
+    # VLAN SVIs on Cisco use ifIndex >= 100000
+    return port_id < 100000
+
+
+def _natural_sort_key(name: str) -> list:
+    """Sort key for names with embedded numbers (gi2 before gi10)."""
+    return [
+        int(part) if part.isdigit() else part.lower()
+        for part in re.split(r"(\d+)", name)
+    ]
+
+
 def _print_switch_data(data: SwitchData) -> None:
     """Print unified switch data, regardless of source."""
+    # Build port_id -> port_name mapping from port_status
+    port_names: dict[int, str] = {
+        ps.port_id: ps.port_name
+        for ps in data.port_status
+        if ps.port_name
+    }
+
+    def label_for(pid: int) -> str:
+        return port_names.get(pid, f"Port {pid}")
+
+    # Filter to physical ports only and sort naturally
+    physical = [
+        ps for ps in data.port_status
+        if _is_physical_port(ps.port_id, ps.port_name)
+    ]
+    physical.sort(
+        key=lambda ps: (
+            _natural_sort_key(ps.port_name) if ps.port_name
+            else [ps.port_id]
+        )
+    )
+    physical_ids = {ps.port_id for ps in physical}
+
+    # Device info
     if data.model:
         print(f"Model:    {data.model}")
     if data.firmware_version:
@@ -995,121 +1042,119 @@ def _print_switch_data(data: SwitchData) -> None:
         print(f"Serial:   {data.serial_number}")
 
     # Ports — combined link status + PVID
-    if data.port_status or data.port_pvids:
+    if physical:
         pvid_map = dict(data.port_pvids)
-        status_map = {ps.port_id: ps for ps in data.port_status}
-        all_port_ids = sorted(
-            {ps.port_id for ps in data.port_status}
-            | {pid for pid, _ in data.port_pvids}
-        )
+        max_lbl = max(len(label_for(ps.port_id)) for ps in physical)
 
         print("\nPorts:")
-        for pid in all_port_ids:
-            ps = status_map.get(pid)
-            pvid = pvid_map.get(pid)
+        for ps in physical:
+            lbl = label_for(ps.port_id)
+            pvid = pvid_map.get(ps.port_id)
 
-            if ps and ps.is_up:
+            if ps.is_up:
                 link_part = f"UP {ps.speed_mbps:>5d} Mbps"
-            elif ps:
-                link_part = "DOWN"
             else:
-                link_part = ""
+                link_part = "DOWN"
 
             pvid_str = f"  VLAN {pvid}" if pvid is not None else ""
-            name_str = (
-                f"  [{ps.port_name}]" if ps and ps.port_name else ""
-            )
-
-            print(
-                f"  Port {pid:2d}: {link_part:<13s}"
-                f"{pvid_str}{name_str}"
-            )
+            print(f"  {lbl:<{max_lbl}}  {link_part:<13s}{pvid_str}")
 
     # VLANs
     if data.vlans:
         print("\nVLANs:")
         for vlan in sorted(data.vlans, key=lambda v: v.vlan_id):
-            members_str = (
-                "members={"
-                + ",".join(str(p) for p in sorted(vlan.member_ports))
-                + "}"
-            )
+            members = ",".join(str(p) for p in sorted(vlan.member_ports))
             if vlan.name:
-                parts = [
-                    f"  VLAN {vlan.vlan_id:3d} {vlan.name!r}: "
-                    f"{members_str}"
-                ]
+                header = f"  VLAN {vlan.vlan_id:3d} {vlan.name!r}"
             else:
-                parts = [f"  VLAN {vlan.vlan_id:3d}: {members_str}"]
+                header = f"  VLAN {vlan.vlan_id:3d}"
+            parts = [f"{header}: members={{{members}}}"]
             if vlan.tagged_ports:
-                parts.append(
-                    "tagged={"
-                    + ",".join(
-                        str(p) for p in sorted(vlan.tagged_ports)
-                    )
-                    + "}"
+                tagged = ",".join(
+                    str(p) for p in sorted(vlan.tagged_ports)
                 )
+                parts.append(f"tagged={{{tagged}}}")
             if vlan.untagged_ports:
-                parts.append(
-                    "untagged={"
-                    + ",".join(
-                        str(p) for p in sorted(vlan.untagged_ports)
-                    )
-                    + "}"
+                untagged = ",".join(
+                    str(p) for p in sorted(vlan.untagged_ports)
                 )
+                parts.append(f"untagged={{{untagged}}}")
             print(" ".join(parts))
 
-    # Port Statistics
+    # Port Statistics — physical ports with traffic only
     if data.port_stats:
-        print("\nPort Statistics:")
-        for ps in sorted(data.port_stats, key=lambda p: p.port_id):
-            print(
-                f"  Port {ps.port_id:2d}: "
-                f"RX={ps.bytes_rx:,} TX={ps.bytes_tx:,} "
-                f"Errors={ps.errors}"
+        active = [
+            ps for ps in data.port_stats
+            if ps.port_id in physical_ids
+            and (ps.bytes_rx > 0 or ps.bytes_tx > 0)
+        ]
+        active.sort(
+            key=lambda ps: (
+                _natural_sort_key(port_names[ps.port_id])
+                if ps.port_id in port_names
+                else [ps.port_id]
             )
+        )
+        if active:
+            max_lbl = max(len(label_for(ps.port_id)) for ps in active)
+            print("\nPort Statistics:")
+            for ps in active:
+                lbl = label_for(ps.port_id)
+                err = f" Errors={ps.errors}" if ps.errors else ""
+                print(
+                    f"  {lbl:<{max_lbl}}  "
+                    f"RX={ps.bytes_rx:>13,} "
+                    f"TX={ps.bytes_tx:>13,}{err}"
+                )
 
-    # MAC Table
+    # MAC Table — show with port names, capped at 50
     if data.mac_table:
-        print("\nMAC Table:")
-        for mac, vlan_id, port_id, port_name in sorted(data.mac_table):
-            pname_str = f" ({port_name})" if port_name else ""
-            print(
-                f"  {mac}  VLAN {vlan_id}  "
-                f"Port {port_id}{pname_str}"
-            )
+        print(f"\nMAC Table ({len(data.mac_table)} entries):")
+        for mac, vlan_id, port_id, port_name in sorted(
+            data.mac_table
+        )[:50]:
+            lbl = port_name or label_for(port_id)
+            print(f"  {mac}  VLAN {vlan_id:3d}  {lbl}")
+        if len(data.mac_table) > 50:
+            print(f"  ... ({len(data.mac_table) - 50} more)")
 
     # LLDP Neighbors
     if data.lldp_neighbors:
-        port_names = {
-            ps.port_id: ps.port_name
-            for ps in data.port_status if ps.port_name
-        }
         print("\nLLDP Neighbors:")
         for port_id, remote_sys, remote_port, remote_mac in sorted(
             data.lldp_neighbors
         ):
-            pname = port_names.get(port_id, str(port_id))
+            lbl = label_for(port_id)
             print(
-                f"  Port {pname}: remote={remote_sys} "
+                f"  {lbl}: remote={remote_sys} "
                 f"port={remote_port} mac={remote_mac}"
             )
 
-    # PoE Status
+    # PoE Status — physical ports only
     if data.poe_status:
         _POE_ADMIN = {1: "enabled", 2: "disabled"}
         _POE_DETECT = {
             1: "disabled", 2: "searching", 3: "delivering",
             4: "fault", 5: "test", 6: "other-fault",
         }
-        print("\nPoE Status:")
-        for port_id, admin, detect in sorted(data.poe_status):
-            admin_str = _POE_ADMIN.get(admin, str(admin))
-            detect_str = _POE_DETECT.get(detect, str(detect))
-            print(
-                f"  Port {port_id:2d}: admin={admin_str} "
-                f"detection={detect_str}"
+        poe_physical = [
+            (pid, admin, detect)
+            for pid, admin, detect in data.poe_status
+            if pid in physical_ids
+        ]
+        if poe_physical:
+            max_lbl = max(
+                len(label_for(pid)) for pid, _, _ in poe_physical
             )
+            print("\nPoE Status:")
+            for pid, admin, detect in sorted(poe_physical):
+                lbl = label_for(pid)
+                admin_str = _POE_ADMIN.get(admin, str(admin))
+                detect_str = _POE_DETECT.get(detect, str(detect))
+                print(
+                    f"  {lbl:<{max_lbl}}  "
+                    f"admin={admin_str} detection={detect_str}"
+                )
 
     # Switch Config (fields available from NSDP)
     config_items: list[tuple[str, str]] = []
