@@ -988,6 +988,23 @@ def cmd_bridge_show(args: argparse.Namespace) -> int:
 _VIRTUAL_PORT_PREFIXES = ("po", "lag ", "cpu ", "tunnel", "loopback", "logical")
 
 
+def _human_bytes(n: int) -> str:
+    """Format byte count as compact human-readable string."""
+    if n < 1_000:
+        return f"{n} B"
+    if n < 10_000:
+        return f"{n / 1_000:.1f} K"
+    if n < 1_000_000:
+        return f"{n / 1_000:.0f} K"
+    if n < 10_000_000:
+        return f"{n / 1_000_000:.1f} M"
+    if n < 1_000_000_000:
+        return f"{n / 1_000_000:.0f} M"
+    if n < 10_000_000_000:
+        return f"{n / 1_000_000_000:.1f} G"
+    return f"{n / 1_000_000_000:.0f} G"
+
+
 def _is_physical_port(port_id: int, port_name: str | None) -> bool:
     """Return True for physical ports, False for virtual interfaces."""
     if port_name is not None:
@@ -1082,16 +1099,17 @@ def _print_switch_data(data: SwitchData) -> None:
             else:
                 link_part = "DOWN"
 
-            pvid_str = f"  VLAN {pvid}" if pvid is not None else ""
+            pvid_str = (
+                f"  VLAN {pvid:4d}" if pvid is not None else ""
+            )
 
-            # Traffic stats inline
+            # Traffic stats inline (human-readable)
             stats = stats_map.get(ps.port_id)
             if stats and (stats.bytes_rx or stats.bytes_tx):
                 err = f"  Err {stats.errors}" if stats.errors else ""
-                stats_str = (
-                    f"  RX {stats.bytes_rx:>13,}"
-                    f"  TX {stats.bytes_tx:>13,}{err}"
-                )
+                rx = _human_bytes(stats.bytes_rx)
+                tx = _human_bytes(stats.bytes_tx)
+                stats_str = f"  RX {rx:>5s}  TX {tx:>5s}{err}"
             else:
                 stats_str = ""
 
@@ -1127,26 +1145,32 @@ def _print_switch_data(data: SwitchData) -> None:
                 else:
                     print(f"{indent}MACs: {n} learned")
 
-    # VLANs (switch-wide)
+    # VLANs (switch-wide) — translate port IDs to names
     if data.vlans:
+
+        def _port_set_str(ports: frozenset[int]) -> str:
+            named = sorted(
+                (label_for(p) for p in ports),
+                key=_natural_sort_key,
+            )
+            return ",".join(named)
+
         print("\nVLANs:")
         for vlan in sorted(data.vlans, key=lambda v: v.vlan_id):
-            members = ",".join(str(p) for p in sorted(vlan.member_ports))
+            members = _port_set_str(vlan.member_ports)
             if vlan.name:
-                header = f"  VLAN {vlan.vlan_id:3d} {vlan.name!r}"
+                header = f"  VLAN {vlan.vlan_id:4d} {vlan.name!r}"
             else:
-                header = f"  VLAN {vlan.vlan_id:3d}"
+                header = f"  VLAN {vlan.vlan_id:4d}"
             parts = [f"{header}: members={{{members}}}"]
             if vlan.tagged_ports:
-                tagged = ",".join(
-                    str(p) for p in sorted(vlan.tagged_ports)
+                parts.append(
+                    f"tagged={{{_port_set_str(vlan.tagged_ports)}}}"
                 )
-                parts.append(f"tagged={{{tagged}}}")
             if vlan.untagged_ports:
-                untagged = ",".join(
-                    str(p) for p in sorted(vlan.untagged_ports)
+                parts.append(
+                    f"untagged={{{_port_set_str(vlan.untagged_ports)}}}"
                 )
-                parts.append(f"untagged={{{untagged}}}")
             print(" ".join(parts))
 
     # Switch Config (fields available from NSDP)
