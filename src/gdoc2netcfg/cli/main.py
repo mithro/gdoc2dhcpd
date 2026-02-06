@@ -24,7 +24,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gdoc2netcfg.config import PipelineConfig
-    from gdoc2netcfg.models.host import BridgeData, Host, NSDPData
+    from gdoc2netcfg.models.host import Host
+    from gdoc2netcfg.models.switch_data import SwitchData
     from gdoc2netcfg.supplements.reachability import HostReachability
 
 
@@ -907,17 +908,8 @@ def cmd_bridge_scan(args: argparse.Namespace) -> int:
     mac_result = validate_mac_connectivity(inventory)
     lldp_result = validate_lldp_topology(inventory)
 
-    # Report totals — count after both scans so a Netgear switch with
-    # both bridge_data and nsdp_data is counted under NSDP (its native
-    # protocol), not double-counted.
-    nsdp_count = sum(1 for h in hosts if h.nsdp_data is not None)
-    snmp_only = sum(
-        1 for h in hosts
-        if h.bridge_data is not None and h.nsdp_data is None
-    )
-    total_switches = snmp_only + nsdp_count
-    print(f"\n{total_switches} switch(es) with data "
-          f"({snmp_only} via SNMP, {nsdp_count} via NSDP).")
+    total = sum(1 for h in hosts if h.switch_data is not None)
+    print(f"\n{total} switch(es) with data.")
 
     # Report validation results
     has_errors = False
@@ -972,11 +964,8 @@ def cmd_bridge_show(args: argparse.Namespace) -> int:
     nsdp_cache = load_nsdp_cache(nsdp_cache_path)
     enrich_hosts_with_nsdp(hosts, nsdp_cache)
 
-    # Collect switches that have data
-    switches = [
-        h for h in hosts
-        if h.bridge_data is not None or h.nsdp_data is not None
-    ]
+    # Collect switches that have unified switch_data
+    switches = [h for h in hosts if h.switch_data is not None]
 
     if not switches:
         print("No switch data cached. Run 'gdoc2netcfg bridge scan' first.")
@@ -984,241 +973,179 @@ def cmd_bridge_show(args: argparse.Namespace) -> int:
 
     switches.sort(key=lambda h: h.hostname)
 
-    snmp_count = 0
-    nsdp_count = 0
-
     for host in switches:
-        # NSDP takes priority for Netgear switches — it's the native
-        # protocol and provides more complete data (serial, QoS, etc.).
-        if host.nsdp_data is not None:
-            source_label = "NSDP"
-            nsdp_count += 1
-        else:
-            source_label = "SNMP"
-            snmp_count += 1
-
         print(f"\n{'='*60}")
-        print(f"{host.hostname} (source: {source_label})")
+        print(host.hostname)
         print("=" * 60)
+        _print_switch_data(host.switch_data)
 
-        if host.nsdp_data is not None:
-            _print_nsdp_switch(host.nsdp_data)
-        elif host.bridge_data is not None:
-            _print_snmp_switch(host.bridge_data)
-
-    print(
-        f"\n{len(switches)} switch(es) "
-        f"({snmp_count} via SNMP, {nsdp_count} via NSDP)."
-    )
+    print(f"\n{len(switches)} switch(es).")
     return 0
 
 
-def _print_snmp_switch(bridge: BridgeData) -> None:
-    """Print SNMP bridge data for a switch."""
-    from gdoc2netcfg.supplements.bridge import _bitmap_to_ports
-
-    # Build ifIndex → port name mapping
-    port_names = {ifidx: name for ifidx, name in bridge.port_names}
+def _print_switch_data(data: SwitchData) -> None:
+    """Print unified switch data, regardless of source."""
+    if data.model:
+        print(f"Model:    {data.model}")
+    if data.firmware_version:
+        print(f"Firmware: {data.firmware_version}")
+    if data.port_count is not None:
+        print(f"Ports:    {data.port_count}")
+    if data.serial_number:
+        print(f"Serial:   {data.serial_number}")
 
     # Port Status
-    if bridge.port_status:
+    if data.port_status:
         print("\nPort Status:")
-        for ifidx, oper_status, speed in sorted(bridge.port_status):
-            status_str = "UP" if oper_status == 1 else "DOWN"
-            pname = port_names.get(ifidx, "")
-            name_suffix = f"  [{pname}]" if pname else ""
-            if oper_status == 1:
+        for ps in sorted(data.port_status, key=lambda p: p.port_id):
+            name_suffix = f"  [{ps.port_name}]" if ps.port_name else ""
+            if ps.is_up:
                 print(
-                    f"  Port {ifidx:2d}: {status_str} "
-                    f"{speed} Mbps{name_suffix}"
+                    f"  Port {ps.port_id:2d}: UP "
+                    f"{ps.speed_mbps} Mbps{name_suffix}"
                 )
             else:
-                print(f"  Port {ifidx:2d}: {status_str}{name_suffix}")
+                print(f"  Port {ps.port_id:2d}: DOWN{name_suffix}")
 
     # Port PVIDs
-    if bridge.port_pvids:
+    if data.port_pvids:
         print("\nPort PVIDs:")
-        for ifidx, pvid in sorted(bridge.port_pvids):
-            print(f"  Port {ifidx:2d}: VLAN {pvid}")
+        for port_id, vlan_id in sorted(data.port_pvids):
+            print(f"  Port {port_id:2d}: VLAN {vlan_id}")
 
-    # VLANs (need to decode bitmaps)
-    if bridge.vlan_names:
-        egress_map = dict(bridge.vlan_egress_ports)
-        untagged_map = dict(bridge.vlan_untagged_ports)
-
+    # VLANs
+    if data.vlans:
         print("\nVLANs:")
-        for vid, name in sorted(bridge.vlan_names):
-            members = _bitmap_to_ports(egress_map.get(vid, ""))
-            untagged = _bitmap_to_ports(untagged_map.get(vid, ""))
-            tagged = members - untagged
+        for vlan in sorted(data.vlans, key=lambda v: v.vlan_id):
             members_str = (
-                f"members={{{','.join(str(p) for p in sorted(members))}}}"
+                "members={"
+                + ",".join(str(p) for p in sorted(vlan.member_ports))
+                + "}"
             )
-            parts = [f"  VLAN {vid:3d} {name!r}: {members_str}"]
-            if tagged:
+            if vlan.name:
+                parts = [
+                    f"  VLAN {vlan.vlan_id:3d} {vlan.name!r}: "
+                    f"{members_str}"
+                ]
+            else:
+                parts = [f"  VLAN {vlan.vlan_id:3d}: {members_str}"]
+            if vlan.tagged_ports:
                 parts.append(
-                    f"tagged={{{','.join(str(p) for p in sorted(tagged))}}}"
+                    "tagged={"
+                    + ",".join(
+                        str(p) for p in sorted(vlan.tagged_ports)
+                    )
+                    + "}"
                 )
-            if untagged:
+            if vlan.untagged_ports:
                 parts.append(
-                    f"untagged="
-                    f"{{{','.join(str(p) for p in sorted(untagged))}}}"
+                    "untagged={"
+                    + ",".join(
+                        str(p) for p in sorted(vlan.untagged_ports)
+                    )
+                    + "}"
                 )
             print(" ".join(parts))
 
+    # Port Statistics
+    if data.port_stats:
+        print("\nPort Statistics:")
+        for ps in sorted(data.port_stats, key=lambda p: p.port_id):
+            print(
+                f"  Port {ps.port_id:2d}: "
+                f"RX={ps.bytes_rx:,} TX={ps.bytes_tx:,} "
+                f"Errors={ps.errors}"
+            )
+
     # MAC Table
-    if bridge.mac_table:
+    if data.mac_table:
         print("\nMAC Table:")
-        for mac, vlan_id, bridge_port, port_name in sorted(
-            bridge.mac_table
-        ):
+        for mac, vlan_id, port_id, port_name in sorted(data.mac_table):
             pname_str = f" ({port_name})" if port_name else ""
             print(
                 f"  {mac}  VLAN {vlan_id}  "
-                f"Port {bridge_port}{pname_str}"
+                f"Port {port_id}{pname_str}"
             )
 
     # LLDP Neighbors
-    if bridge.lldp_neighbors:
+    if data.lldp_neighbors:
+        port_names = {
+            ps.port_id: ps.port_name
+            for ps in data.port_status if ps.port_name
+        }
         print("\nLLDP Neighbors:")
-        for ifidx, remote_sys, remote_port, remote_mac in sorted(
-            bridge.lldp_neighbors
+        for port_id, remote_sys, remote_port, remote_mac in sorted(
+            data.lldp_neighbors
         ):
-            pname = port_names.get(ifidx, str(ifidx))
+            pname = port_names.get(port_id, str(port_id))
             print(
                 f"  Port {pname}: remote={remote_sys} "
                 f"port={remote_port} mac={remote_mac}"
             )
 
     # PoE Status
-    if bridge.poe_status:
+    if data.poe_status:
         _POE_ADMIN = {1: "enabled", 2: "disabled"}
         _POE_DETECT = {
             1: "disabled", 2: "searching", 3: "delivering",
             4: "fault", 5: "test", 6: "other-fault",
         }
         print("\nPoE Status:")
-        for ifidx, admin, detect in sorted(bridge.poe_status):
+        for port_id, admin, detect in sorted(data.poe_status):
             admin_str = _POE_ADMIN.get(admin, str(admin))
             detect_str = _POE_DETECT.get(detect, str(detect))
             print(
-                f"  Port {ifidx:2d}: admin={admin_str} "
+                f"  Port {port_id:2d}: admin={admin_str} "
                 f"detection={detect_str}"
             )
 
-
-def _print_nsdp_switch(nsdp: NSDPData) -> None:
-    """Print NSDP data for a switch."""
-    print(f"Model:    {nsdp.model}")
-    if nsdp.firmware_version:
-        print(f"Firmware: {nsdp.firmware_version}")
-    if nsdp.port_count is not None:
-        print(f"Ports:    {nsdp.port_count}")
-    if nsdp.serial_number:
-        print(f"Serial:   {nsdp.serial_number}")
-
-    # Port Status
-    if nsdp.port_status:
-        # speed_byte: 0=none/down, 1=10M half, 2=10M full, 3=100M half,
-        #             4=100M full, 5=1000M full
-        _SPEED_LABELS = {
-            0: "DOWN", 1: "10 Mbps half", 2: "10 Mbps",
-            3: "100 Mbps half", 4: "100 Mbps", 5: "1000 Mbps",
-        }
-        print("\nPort Status:")
-        for port_id, speed_val in sorted(nsdp.port_status):
-            label = _SPEED_LABELS.get(
-                speed_val, f"unknown({speed_val})"
-            )
-            status = "DOWN" if speed_val == 0 else "UP"
-            if status == "UP":
-                print(f"  Port {port_id:2d}: {status} {label}")
-            else:
-                print(f"  Port {port_id:2d}: {status}")
-
-    # Port PVIDs
-    if nsdp.port_pvids:
-        print("\nPort PVIDs:")
-        for port_id, vlan_id in sorted(nsdp.port_pvids):
-            print(f"  Port {port_id:2d}: VLAN {vlan_id}")
-
-    # VLAN Memberships
-    if nsdp.vlan_members:
-        print("\nVLANs:")
-        for vlan_id, members, tagged in sorted(nsdp.vlan_members):
-            untagged = set(members) - set(tagged)
-            members_str = (
-                f"members={{{','.join(str(p) for p in sorted(members))}}}"
-            )
-            parts = [f"  VLAN {vlan_id:3d}: {members_str}"]
-            if tagged:
-                parts.append(
-                    f"tagged="
-                    f"{{{','.join(str(p) for p in sorted(tagged))}}}"
-                )
-            if untagged:
-                parts.append(
-                    f"untagged="
-                    f"{{{','.join(str(p) for p in sorted(untagged))}}}"
-                )
-            print(" ".join(parts))
-
-    # Port Statistics
-    if nsdp.port_statistics:
-        print("\nPort Statistics:")
-        for port_id, rx, tx, errors in sorted(nsdp.port_statistics):
-            print(
-                f"  Port {port_id:2d}: RX={rx:,} TX={tx:,} "
-                f"Errors={errors}"
-            )
-
-    # NSDP Config section
-    nsdp_config_items = []
-    if nsdp.vlan_engine is not None:
+    # Switch Config (fields available from NSDP)
+    config_items: list[tuple[str, str]] = []
+    if data.vlan_engine is not None:
         _VLAN_ENGINE = {
             0: "Disabled", 1: "Basic Port-Based",
             4: "Advanced 802.1Q",
         }
-        nsdp_config_items.append(
+        config_items.append(
             ("VLAN Engine", _VLAN_ENGINE.get(
-                nsdp.vlan_engine, str(nsdp.vlan_engine)
+                data.vlan_engine, str(data.vlan_engine)
             ))
         )
-    if nsdp.qos_engine is not None:
+    if data.qos_engine is not None:
         _QOS_ENGINE = {
             0: "Disabled", 1: "Port-Based", 2: "802.1p",
         }
-        nsdp_config_items.append(
+        config_items.append(
             ("QoS Engine", _QOS_ENGINE.get(
-                nsdp.qos_engine, str(nsdp.qos_engine)
+                data.qos_engine, str(data.qos_engine)
             ))
         )
-    if nsdp.port_mirroring_dest is not None:
-        if nsdp.port_mirroring_dest == 0:
+    if data.port_mirroring_dest is not None:
+        if data.port_mirroring_dest == 0:
             mirror_str = "Disabled"
         else:
-            mirror_str = f"Port {nsdp.port_mirroring_dest}"
-        nsdp_config_items.append(("Port Mirroring", mirror_str))
-    if nsdp.igmp_snooping_enabled is not None:
-        nsdp_config_items.append(
-            ("IGMP Snooping",
-             "Enabled" if nsdp.igmp_snooping_enabled else "Disabled")
-        )
-    if nsdp.broadcast_filtering is not None:
-        nsdp_config_items.append(
-            ("Broadcast Filtering",
-             "Enabled" if nsdp.broadcast_filtering else "Disabled")
-        )
-    if nsdp.loop_detection is not None:
-        nsdp_config_items.append(
-            ("Loop Detection",
-             "Enabled" if nsdp.loop_detection else "Disabled")
-        )
+            mirror_str = f"Port {data.port_mirroring_dest}"
+        config_items.append(("Port Mirroring", mirror_str))
+    if data.igmp_snooping_enabled is not None:
+        config_items.append((
+            "IGMP Snooping",
+            "Enabled" if data.igmp_snooping_enabled else "Disabled",
+        ))
+    if data.broadcast_filtering is not None:
+        config_items.append((
+            "Broadcast Filtering",
+            "Enabled" if data.broadcast_filtering else "Disabled",
+        ))
+    if data.loop_detection is not None:
+        config_items.append((
+            "Loop Detection",
+            "Enabled" if data.loop_detection else "Disabled",
+        ))
 
-    if nsdp_config_items:
-        print("\nNSDP Config:")
-        max_label = max(len(label) for label, _ in nsdp_config_items)
-        for label, value in nsdp_config_items:
+    if config_items:
+        print("\nSwitch Config:")
+        max_label = max(len(label) for label, _ in config_items)
+        for label, value in config_items:
             print(f"  {label:<{max_label}}  {value}")
 
 
