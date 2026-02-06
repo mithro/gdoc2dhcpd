@@ -1,13 +1,18 @@
 """CLI entry point for gdoc2netcfg.
 
 Subcommands:
-    fetch      Download CSVs from Google Sheets to local cache.
-    generate   Run the pipeline and produce output config files.
-    validate   Run constraint checks on the data.
-    info       Show pipeline configuration.
-    reachability  Ping all hosts and report which are up/down.
-    sshfp      Scan hosts for SSH fingerprints.
-    snmp       Scan hosts for SNMP data.
+    fetch          Download CSVs from Google Sheets to local cache.
+    generate       Run the pipeline and produce output config files.
+    validate       Run constraint checks on the data.
+    info           Show pipeline configuration.
+    reachability   Ping all hosts and report which are up/down.
+    sshfp          Scan hosts for SSH fingerprints.
+    ssl-certs      Scan hosts for SSL/TLS certificates.
+    snmp-host      Scan hosts for SNMP system info and interfaces.
+    bmc-firmware   Scan BMCs for firmware info.
+    snmp-switch    Scan switches for bridge/topology data via SNMP.
+    bridge         Unified switch data (scan, show).
+    nsdp           NSDP switch discovery (scan, show).
 """
 
 from __future__ import annotations
@@ -835,6 +840,405 @@ def cmd_snmp_switch(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: bridge scan
+# ---------------------------------------------------------------------------
+
+def cmd_bridge_scan(args: argparse.Namespace) -> int:
+    """Scan all switches (SNMP + NSDP) and validate."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.constraints.bridge_validation import (
+        validate_lldp_topology,
+        validate_mac_connectivity,
+        validate_vlan_names,
+    )
+    from gdoc2netcfg.derivations.host_builder import build_hosts, build_inventory
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.bridge import (
+        enrich_hosts_with_bridge_data,
+        scan_bridge,
+    )
+    from gdoc2netcfg.supplements.nsdp import (
+        enrich_hosts_with_nsdp,
+        scan_nsdp,
+    )
+
+    # Build hosts from cached CSVs
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    _print_reachability_summary(reachability, hosts)
+
+    # SNMP bridge scan
+    bridge_cache = Path(config.cache.directory) / "bridge.json"
+    print("\nScanning bridge data via SNMP...", file=sys.stderr)
+    bridge_data = scan_bridge(
+        hosts,
+        cache_path=bridge_cache,
+        force=args.force,
+        verbose=True,
+        reachability=reachability,
+    )
+    enrich_hosts_with_bridge_data(hosts, bridge_data)
+    snmp_count = sum(1 for h in hosts if h.bridge_data is not None)
+
+    # NSDP scan
+    nsdp_cache = Path(config.cache.directory) / "nsdp.json"
+    print("\nScanning switches via NSDP...", file=sys.stderr)
+    nsdp_data = scan_nsdp(
+        hosts,
+        cache_path=nsdp_cache,
+        force=args.force,
+        verbose=True,
+    )
+    enrich_hosts_with_nsdp(hosts, nsdp_data)
+    nsdp_count = sum(1 for h in hosts if h.nsdp_data is not None)
+
+    # Run bridge validations
+    inventory = build_inventory(hosts, config.site)
+    vlan_result = validate_vlan_names(hosts, config.site)
+    mac_result = validate_mac_connectivity(inventory)
+    lldp_result = validate_lldp_topology(inventory)
+
+    # Report totals
+    total_switches = sum(
+        1 for h in hosts
+        if h.bridge_data is not None or h.nsdp_data is not None
+    )
+    print(f"\n{total_switches} switch(es) with data "
+          f"({snmp_count} via SNMP, {nsdp_count} via NSDP).")
+
+    # Report validation results
+    has_errors = False
+    validations = [
+        ("VLAN names", vlan_result),
+        ("MAC connectivity", mac_result),
+        ("LLDP topology", lldp_result),
+    ]
+    for name, vr in validations:
+        if vr.violations:
+            print(f"\n{name}:")
+            print(vr.report())
+        if vr.has_errors:
+            has_errors = True
+
+    return 1 if has_errors else 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: bridge show
+# ---------------------------------------------------------------------------
+
+def cmd_bridge_show(args: argparse.Namespace) -> int:
+    """Show cached switch data from all sources."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.bridge import enrich_hosts_with_bridge_data
+    from gdoc2netcfg.supplements.nsdp import enrich_hosts_with_nsdp, load_nsdp_cache
+    from gdoc2netcfg.supplements.snmp_common import load_json_cache
+
+    # Build hosts from cached CSVs
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    # Load SNMP bridge cache
+    bridge_cache_path = Path(config.cache.directory) / "bridge.json"
+    bridge_cache = load_json_cache(bridge_cache_path)
+    enrich_hosts_with_bridge_data(hosts, bridge_cache)
+
+    # Load NSDP cache
+    nsdp_cache_path = Path(config.cache.directory) / "nsdp.json"
+    nsdp_cache = load_nsdp_cache(nsdp_cache_path)
+    enrich_hosts_with_nsdp(hosts, nsdp_cache)
+
+    # Collect switches that have data
+    switches = [
+        h for h in hosts
+        if h.bridge_data is not None or h.nsdp_data is not None
+    ]
+
+    if not switches:
+        print("No switch data cached. Run 'gdoc2netcfg bridge scan' first.")
+        return 1
+
+    switches.sort(key=lambda h: h.hostname)
+
+    snmp_count = 0
+    nsdp_count = 0
+
+    for host in switches:
+        if host.nsdp_data is not None:
+            source_label = "NSDP"
+            nsdp_count += 1
+        else:
+            source_label = "SNMP"
+            snmp_count += 1
+
+        print(f"\n{'='*60}")
+        print(f"{host.hostname} (source: {source_label})")
+        print("=" * 60)
+
+        if host.nsdp_data is not None:
+            _print_nsdp_switch(host.nsdp_data)
+        elif host.bridge_data is not None:
+            _print_snmp_switch(host.bridge_data)
+
+    print(
+        f"\n{len(switches)} switch(es) "
+        f"({snmp_count} via SNMP, {nsdp_count} via NSDP)."
+    )
+    return 0
+
+
+def _bitmap_to_ports(hex_bitmap: str) -> frozenset[int]:
+    """Convert hex bitmap string to set of 1-based port numbers."""
+    if not hex_bitmap:
+        return frozenset()
+    if hex_bitmap.startswith("0x"):
+        hex_bitmap = hex_bitmap[2:]
+    try:
+        bitmap_bytes = bytes.fromhex(hex_bitmap)
+    except ValueError:
+        return frozenset()
+    ports: set[int] = set()
+    for byte_idx, byte_val in enumerate(bitmap_bytes):
+        for bit in range(8):
+            if byte_val & (0x80 >> bit):
+                ports.add(byte_idx * 8 + bit + 1)
+    return frozenset(ports)
+
+
+def _print_snmp_switch(bridge) -> None:
+    """Print SNMP bridge data for a switch."""
+    from gdoc2netcfg.models.host import BridgeData
+
+    assert isinstance(bridge, BridgeData)
+
+    # Build ifIndex → port name mapping
+    port_names = {ifidx: name for ifidx, name in bridge.port_names}
+
+    # Port Status
+    if bridge.port_status:
+        print("\nPort Status:")
+        for ifidx, oper_status, speed in sorted(bridge.port_status):
+            status_str = "UP" if oper_status == 1 else "DOWN"
+            pname = port_names.get(ifidx, "")
+            name_suffix = f"  [{pname}]" if pname else ""
+            if oper_status == 1:
+                print(
+                    f"  Port {ifidx:2d}: {status_str} "
+                    f"{speed} Mbps{name_suffix}"
+                )
+            else:
+                print(f"  Port {ifidx:2d}: {status_str}{name_suffix}")
+
+    # Port PVIDs
+    if bridge.port_pvids:
+        print("\nPort PVIDs:")
+        for ifidx, pvid in sorted(bridge.port_pvids):
+            print(f"  Port {ifidx:2d}: VLAN {pvid}")
+
+    # VLANs (need to decode bitmaps)
+    if bridge.vlan_names:
+        egress_map = dict(bridge.vlan_egress_ports)
+        untagged_map = dict(bridge.vlan_untagged_ports)
+
+        print("\nVLANs:")
+        for vid, name in sorted(bridge.vlan_names):
+            members = _bitmap_to_ports(egress_map.get(vid, ""))
+            untagged = _bitmap_to_ports(untagged_map.get(vid, ""))
+            tagged = members - untagged
+            members_str = (
+                f"members={{{','.join(str(p) for p in sorted(members))}}}"
+            )
+            parts = [f"  VLAN {vid:3d} {name!r}: {members_str}"]
+            if tagged:
+                parts.append(
+                    f"tagged={{{','.join(str(p) for p in sorted(tagged))}}}"
+                )
+            if untagged:
+                parts.append(
+                    f"untagged="
+                    f"{{{','.join(str(p) for p in sorted(untagged))}}}"
+                )
+            print(" ".join(parts))
+
+    # MAC Table
+    if bridge.mac_table:
+        print("\nMAC Table:")
+        for mac, vlan_id, bridge_port, port_name in sorted(
+            bridge.mac_table
+        ):
+            pname_str = f" ({port_name})" if port_name else ""
+            print(
+                f"  {mac}  VLAN {vlan_id}  "
+                f"Port {bridge_port}{pname_str}"
+            )
+
+    # LLDP Neighbors
+    if bridge.lldp_neighbors:
+        print("\nLLDP Neighbors:")
+        for ifidx, remote_sys, remote_port, remote_mac in sorted(
+            bridge.lldp_neighbors
+        ):
+            pname = port_names.get(ifidx, str(ifidx))
+            print(
+                f"  Port {pname}: remote={remote_sys} "
+                f"port={remote_port} mac={remote_mac}"
+            )
+
+    # PoE Status
+    if bridge.poe_status:
+        _POE_ADMIN = {1: "enabled", 2: "disabled"}
+        _POE_DETECT = {
+            1: "disabled", 2: "searching", 3: "delivering",
+            4: "fault", 5: "test", 6: "other-fault",
+        }
+        print("\nPoE Status:")
+        for ifidx, admin, detect in sorted(bridge.poe_status):
+            admin_str = _POE_ADMIN.get(admin, str(admin))
+            detect_str = _POE_DETECT.get(detect, str(detect))
+            print(
+                f"  Port {ifidx:2d}: admin={admin_str} "
+                f"detection={detect_str}"
+            )
+
+
+def _print_nsdp_switch(nsdp) -> None:
+    """Print NSDP data for a switch."""
+    print(f"Model:    {nsdp.model}")
+    if nsdp.firmware_version:
+        print(f"Firmware: {nsdp.firmware_version}")
+    if nsdp.port_count is not None:
+        print(f"Ports:    {nsdp.port_count}")
+    if nsdp.serial_number:
+        print(f"Serial:   {nsdp.serial_number}")
+
+    # Port Status
+    if nsdp.port_status:
+        # speed_byte: 0=none/down, 1=10M half, 2=10M full, 3=100M half,
+        #             4=100M full, 5=1000M full
+        _SPEED_LABELS = {
+            0: "DOWN", 1: "10 Mbps half", 2: "10 Mbps",
+            3: "100 Mbps half", 4: "100 Mbps", 5: "1000 Mbps",
+        }
+        print("\nPort Status:")
+        for port_id, speed_val in sorted(nsdp.port_status):
+            label = _SPEED_LABELS.get(
+                speed_val, f"unknown({speed_val})"
+            )
+            status = "DOWN" if speed_val == 0 else "UP"
+            if status == "UP":
+                print(f"  Port {port_id:2d}: {status} {label}")
+            else:
+                print(f"  Port {port_id:2d}: {status}")
+
+    # Port PVIDs
+    if nsdp.port_pvids:
+        print("\nPort PVIDs:")
+        for port_id, vlan_id in sorted(nsdp.port_pvids):
+            print(f"  Port {port_id:2d}: VLAN {vlan_id}")
+
+    # VLAN Memberships
+    if nsdp.vlan_members:
+        print("\nVLANs:")
+        for vlan_id, members, tagged in sorted(nsdp.vlan_members):
+            untagged = set(members) - set(tagged)
+            members_str = (
+                f"members={{{','.join(str(p) for p in sorted(members))}}}"
+            )
+            parts = [f"  VLAN {vlan_id:3d}: {members_str}"]
+            if tagged:
+                parts.append(
+                    f"tagged="
+                    f"{{{','.join(str(p) for p in sorted(tagged))}}}"
+                )
+            if untagged:
+                parts.append(
+                    f"untagged="
+                    f"{{{','.join(str(p) for p in sorted(untagged))}}}"
+                )
+            print(" ".join(parts))
+
+    # Port Statistics
+    if nsdp.port_statistics:
+        print("\nPort Statistics:")
+        for port_id, rx, tx, errors in sorted(nsdp.port_statistics):
+            print(
+                f"  Port {port_id:2d}: RX={rx:,} TX={tx:,} "
+                f"Errors={errors}"
+            )
+
+    # NSDP Config section
+    nsdp_config_items = []
+    if nsdp.vlan_engine is not None:
+        _VLAN_ENGINE = {
+            0: "Disabled", 1: "Basic Port-Based",
+            4: "Advanced 802.1Q",
+        }
+        nsdp_config_items.append(
+            ("VLAN Engine", _VLAN_ENGINE.get(
+                nsdp.vlan_engine, str(nsdp.vlan_engine)
+            ))
+        )
+    if nsdp.qos_engine is not None:
+        _QOS_ENGINE = {
+            0: "Disabled", 1: "Port-Based", 2: "802.1p",
+        }
+        nsdp_config_items.append(
+            ("QoS Engine", _QOS_ENGINE.get(
+                nsdp.qos_engine, str(nsdp.qos_engine)
+            ))
+        )
+    if nsdp.port_mirroring_dest is not None:
+        if nsdp.port_mirroring_dest == 0:
+            mirror_str = "Disabled"
+        else:
+            mirror_str = f"Port {nsdp.port_mirroring_dest}"
+        nsdp_config_items.append(("Port Mirroring", mirror_str))
+    if nsdp.igmp_snooping_enabled is not None:
+        nsdp_config_items.append(
+            ("IGMP Snooping",
+             "Enabled" if nsdp.igmp_snooping_enabled else "Disabled")
+        )
+    if nsdp.broadcast_filtering is not None:
+        nsdp_config_items.append(
+            ("Broadcast Filtering",
+             "Enabled" if nsdp.broadcast_filtering else "Disabled")
+        )
+    if nsdp.loop_detection is not None:
+        nsdp_config_items.append(
+            ("Loop Detection",
+             "Enabled" if nsdp.loop_detection else "Disabled")
+        )
+
+    if nsdp_config_items:
+        print("\nNSDP Config:")
+        max_label = max(len(label) for label, _ in nsdp_config_items)
+        for label, value in nsdp_config_items:
+            print(f"  {label:<{max_label}}  {value}")
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: nsdp scan
 # ---------------------------------------------------------------------------
 
@@ -1049,11 +1453,31 @@ def main(argv: list[str] | None = None) -> int:
     cron_subparsers.add_parser("install", help="Install cron entries into user's crontab")
     cron_subparsers.add_parser("uninstall", help="Remove gdoc2netcfg cron entries from crontab")
 
+    # bridge (unified switch data: SNMP + NSDP)
+    bridge_parser = subparsers.add_parser(
+        "bridge", help="Unified switch data (SNMP + NSDP)",
+    )
+    bridge_subparsers = bridge_parser.add_subparsers(dest="bridge_command")
+
+    bridge_scan_parser = bridge_subparsers.add_parser(
+        "scan", help="Scan all switches and validate",
+    )
+    bridge_scan_parser.add_argument(
+        "--force", action="store_true",
+        help="Force re-scan even if cache is fresh",
+    )
+
+    bridge_subparsers.add_parser("show", help="Show cached switch data")
+
     # nsdp (with subcommands)
-    nsdp_parser = subparsers.add_parser("nsdp", help="NSDP switch discovery and info")
+    nsdp_parser = subparsers.add_parser(
+        "nsdp", help="NSDP switch discovery and info",
+    )
     nsdp_subparsers = nsdp_parser.add_subparsers(dest="nsdp_command")
 
-    nsdp_scan_parser = nsdp_subparsers.add_parser("scan", help="Scan Netgear switches via NSDP")
+    nsdp_scan_parser = nsdp_subparsers.add_parser(
+        "scan", help="Scan Netgear switches via NSDP",
+    )
     nsdp_scan_parser.add_argument(
         "--force", action="store_true",
         help="Force re-scan even if cache is fresh",
@@ -1068,6 +1492,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     from gdoc2netcfg.cli.cron import cmd_cron
+
+    # Handle bridge subcommands
+    if args.command == "bridge":
+        if args.bridge_command == "scan":
+            return cmd_bridge_scan(args)
+        elif args.bridge_command == "show":
+            return cmd_bridge_show(args)
+        else:
+            bridge_parser.print_help()
+            return 0
 
     # Handle nsdp subcommands
     if args.command == "nsdp":
