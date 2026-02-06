@@ -994,24 +994,36 @@ def _print_switch_data(data: SwitchData) -> None:
     if data.serial_number:
         print(f"Serial:   {data.serial_number}")
 
-    # Port Status
-    if data.port_status:
-        print("\nPort Status:")
-        for ps in sorted(data.port_status, key=lambda p: p.port_id):
-            name_suffix = f"  [{ps.port_name}]" if ps.port_name else ""
-            if ps.is_up:
-                print(
-                    f"  Port {ps.port_id:2d}: UP "
-                    f"{ps.speed_mbps} Mbps{name_suffix}"
-                )
-            else:
-                print(f"  Port {ps.port_id:2d}: DOWN{name_suffix}")
+    # Ports — combined link status + PVID
+    if data.port_status or data.port_pvids:
+        pvid_map = dict(data.port_pvids)
+        status_map = {ps.port_id: ps for ps in data.port_status}
+        all_port_ids = sorted(
+            {ps.port_id for ps in data.port_status}
+            | {pid for pid, _ in data.port_pvids}
+        )
 
-    # Port PVIDs
-    if data.port_pvids:
-        print("\nPort PVIDs:")
-        for port_id, vlan_id in sorted(data.port_pvids):
-            print(f"  Port {port_id:2d}: VLAN {vlan_id}")
+        print("\nPorts:")
+        for pid in all_port_ids:
+            ps = status_map.get(pid)
+            pvid = pvid_map.get(pid)
+
+            if ps and ps.is_up:
+                link_part = f"UP {ps.speed_mbps:>5d} Mbps"
+            elif ps:
+                link_part = "DOWN"
+            else:
+                link_part = ""
+
+            pvid_str = f"  VLAN {pvid}" if pvid is not None else ""
+            name_str = (
+                f"  [{ps.port_name}]" if ps and ps.port_name else ""
+            )
+
+            print(
+                f"  Port {pid:2d}: {link_part:<13s}"
+                f"{pvid_str}{name_str}"
+            )
 
     # VLANs
     if data.vlans:
