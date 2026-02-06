@@ -445,11 +445,11 @@ def _print_reachability_summary(
     v6only = sum(1 for r in reachability.values() if r.reachability_mode == "ipv6-only")
     parts = []
     if dual:
-        parts.append(f"{dual} dual-stack")
+        parts.append(f"{dual} v4+v6")
     if v4only:
-        parts.append(f"{v4only} IPv4-only")
+        parts.append(f"{v4only} ipv4")
     if v6only:
-        parts.append(f"{v6only} IPv6-only")
+        parts.append(f"{v6only} ipv6")
     breakdown = f" ({', '.join(parts)})" if parts else ""
     print(
         f"{hosts_up} up{breakdown}, {hosts_down} down, {len(hosts)} total.",

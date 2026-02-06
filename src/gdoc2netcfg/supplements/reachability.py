@@ -256,6 +256,14 @@ def check_all_hosts_reachability(
     import sys
     from concurrent.futures import Future, ThreadPoolExecutor
 
+    _MODE_LABELS = {
+        "dual-stack": "up (v4+v6)",
+        "ipv4-only":  "up (ipv4)",
+        "ipv6-only":  "up (ipv6)",
+        "unreachable": "down",
+    }
+    _LABEL_WIDTH = max(len(v) for v in _MODE_LABELS.values())
+
     result: dict[str, HostReachability] = {}
     sorted_hosts = sorted(hosts, key=lambda h: h.hostname.split(".")[::-1])
     name_width = max((len(h.hostname) for h in sorted_hosts), default=0)
@@ -279,6 +287,9 @@ def check_all_hosts_reachability(
 
         # Collect results in sorted order — blocks on each host's futures
         # while remaining hosts continue pinging in the background.
+        if verbose:
+            print(file=sys.stderr)
+
         for host, ip_futures in host_futures:
             active_ips: list[str] = []
             # Group ping results by interface index
@@ -315,10 +326,15 @@ def check_all_hosts_reachability(
                         part += f" {ping.rtt_avg_ms:.1f}ms"
                     parts.append(part)
                 detail = ", ".join(parts)
-                label = hr.reachability_mode if hr.is_up else "down"
+                label = _MODE_LABELS.get(hr.reachability_mode, "down")
                 print(
-                    f"  {host.hostname:>{name_width}s} {label}({detail})",
+                    f"  {host.hostname:>{name_width}s}"
+                    f" {label:<{_LABEL_WIDTH}s}"
+                    f"  {detail}",
                     file=sys.stderr,
                 )
+
+        if verbose:
+            print(file=sys.stderr)
 
     return result
