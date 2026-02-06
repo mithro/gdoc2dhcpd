@@ -201,32 +201,34 @@ def scan_bmc_firmware(
             continue
         active_ips = list(host_reach.active_ips)
 
-        ip = active_ips[0]
         if verbose:
             print(
-                f"  {host.hostname:>{name_width}s} ipmitool({ip}) ",
+                f"  {host.hostname:>{name_width}s} ipmitool({','.join(active_ips)}) ",
                 end="", flush=True, file=sys.stderr,
             )
 
-        mc_info = _try_ipmi_credentials(ip, host)
-        if mc_info is not None:
-            product_name = mc_info.get("Product Name", "")
-            firmware_rev = mc_info.get("Firmware Revision", "")
-            ipmi_version = mc_info.get("IPMI Version", "")
-            series = _extract_series(product_name)
+        # Try IPMI on each reachable IP until one succeeds
+        for ip in active_ips:
+            mc_info = _try_ipmi_credentials(ip, host)
+            if mc_info is not None:
+                product_name = mc_info.get("Product Name", "")
+                firmware_rev = mc_info.get("Firmware Revision", "")
+                ipmi_version = mc_info.get("IPMI Version", "")
+                series = _extract_series(product_name)
 
-            fw_data[host.hostname] = {
-                "product_name": product_name,
-                "firmware_revision": firmware_rev,
-                "ipmi_version": ipmi_version,
-                "series": series,
-                "snmp_capable": _is_snmp_capable(series),
-            }
-            if verbose:
-                print(
-                    f"ok ({product_name}, series=X{series or '?'})",
-                    file=sys.stderr,
-                )
+                fw_data[host.hostname] = {
+                    "product_name": product_name,
+                    "firmware_revision": firmware_rev,
+                    "ipmi_version": ipmi_version,
+                    "series": series,
+                    "snmp_capable": _is_snmp_capable(series),
+                }
+                if verbose:
+                    print(
+                        f"ok ({product_name}, series=X{series or '?'})",
+                        file=sys.stderr,
+                    )
+                break
         else:
             if verbose:
                 print("no-ipmi", file=sys.stderr)
