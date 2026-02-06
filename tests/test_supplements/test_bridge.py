@@ -780,10 +780,11 @@ class TestBridgeToSwitchData:
             vlan_names=((1, "default"), (10, "mgmt")),
             # VLAN 1: ports 1-8 egress (0xff = 11111111)
             # VLAN 10: ports 1,2 egress (0xc0 = 11000000)
-            vlan_egress_ports=((1, "ff"), (10, "c0")),
+            # Raw byte strings as stored from SNMP OctetStrings via JSON
+            vlan_egress_ports=((1, "\xff"), (10, "\xc0")),
             # VLAN 1: ports 3-8 untagged (0x3f = 00111111)
             # VLAN 10: ports 1,2 untagged (0xc0 = 11000000)
-            vlan_untagged_ports=((1, "3f"), (10, "c0")),
+            vlan_untagged_ports=((1, "\x3f"), (10, "\xc0")),
         )
         result = bridge_to_switch_data(bridge)
 
@@ -889,29 +890,30 @@ class TestBridgeToSwitchData:
         assert result.lldp_neighbors == ()
         assert result.poe_status == ()
 
-    def test_hex_bitmap_with_0x_prefix(self):
-        """Handle hex bitmap strings with 0x prefix."""
+    def test_multi_byte_bitmap(self):
+        """Handle multi-byte bitmaps spanning multiple octets."""
         from gdoc2netcfg.models.host import BridgeData
         from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
 
+        # 2-byte bitmap: 0xc0 0x80 = ports 1,2 (from byte 0) + port 9 (from byte 1)
         bridge = BridgeData(
             vlan_names=((5, "test"),),
-            vlan_egress_ports=((5, "0xc0"),),
-            vlan_untagged_ports=((5, "0xc0"),),
+            vlan_egress_ports=((5, "\xc0\x80"),),
+            vlan_untagged_ports=((5, "\xc0\x80"),),
         )
         result = bridge_to_switch_data(bridge)
 
         vlan5 = result.vlans[0]
-        assert vlan5.member_ports == frozenset({1, 2})
+        assert vlan5.member_ports == frozenset({1, 2, 9})
 
-    def test_invalid_hex_bitmap(self):
-        """Invalid hex bitmap results in empty port set."""
+    def test_empty_bitmap(self):
+        """Empty bitmap string results in empty port set."""
         from gdoc2netcfg.models.host import BridgeData
         from gdoc2netcfg.supplements.bridge import bridge_to_switch_data
 
         bridge = BridgeData(
             vlan_names=((5, "test"),),
-            vlan_egress_ports=((5, "not-hex"),),
+            vlan_egress_ports=((5, ""),),
             vlan_untagged_ports=((5, ""),),
         )
         result = bridge_to_switch_data(bridge)

@@ -572,26 +572,24 @@ def _parse_port_statistics(
 # ---------------------------------------------------------------------------
 
 
-def _bitmap_to_ports(hex_bitmap: str) -> frozenset[int]:
-    """Convert hex bitmap string to set of port numbers.
+def _bitmap_to_ports(bitmap: str) -> frozenset[int]:
+    """Convert SNMP VLAN port bitmap to set of port numbers.
 
-    SNMP VLAN port bitmaps are stored as hex strings where each bit
-    represents a port. Bit 7 of byte 0 = port 1, bit 6 = port 2, etc.
+    SNMP OctetString bitmaps are stored in JSON as raw character strings
+    where each character's codepoint represents a byte value (0-255).
+    Bit 7 of byte 0 = port 1, bit 6 = port 2, etc.
 
     Args:
-        hex_bitmap: Hex string like "ff" or "0xc0" or "ffc00000".
+        bitmap: Raw byte string from SNMP OctetString via JSON.
 
     Returns:
         Set of 1-based port numbers that are set in the bitmap.
     """
-    if not hex_bitmap:
+    if not bitmap:
         return frozenset()
-    # Strip 0x prefix if present
-    if hex_bitmap.startswith("0x"):
-        hex_bitmap = hex_bitmap[2:]
     try:
-        bitmap_bytes = bytes.fromhex(hex_bitmap)
-    except ValueError:
+        bitmap_bytes = bitmap.encode("latin-1")
+    except UnicodeEncodeError:
         return frozenset()
     ports = set()
     for byte_idx, byte_val in enumerate(bitmap_bytes):
