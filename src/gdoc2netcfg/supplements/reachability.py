@@ -287,54 +287,91 @@ def check_all_hosts_reachability(
 
         # Collect results in sorted order — blocks on each host's futures
         # while remaining hosts continue pinging in the background.
-        if verbose:
-            print(file=sys.stderr)
+        # First pass: collect all results and find max IP width for alignment.
+        host_results: list[
+            tuple[
+                Host,
+                list[list[tuple[str, PingResult]]],
+                HostReachability,
+            ]
+        ] = []
+        all_ip_widths: list[int] = []
 
         for host, ip_futures in host_futures:
             active_ips: list[str] = []
-            # Group ping results by interface index
             vi_count = len(host.virtual_interfaces)
             iface_pings: list[list[tuple[str, PingResult]]] = [
                 [] for _ in range(vi_count)
             ]
-            all_ip_results: list[tuple[str, PingResult]] = []
 
             for vi_idx, ip_str, future in ip_futures:
                 ping = future.result()
-                all_ip_results.append((ip_str, ping))
                 iface_pings[vi_idx].append((ip_str, ping))
                 if ping:
                     active_ips.append(ip_str)
+                all_ip_widths.append(len(ip_str))
 
             iface_reachability = tuple(
                 InterfaceReachability(pings=tuple(pings))
                 for pings in iface_pings
             )
 
-            result[host.hostname] = HostReachability(
+            hr = HostReachability(
                 hostname=host.hostname,
                 active_ips=tuple(active_ips),
                 interfaces=iface_reachability,
             )
+            result[host.hostname] = hr
+            host_results.append((host, iface_pings, hr))
 
-            if verbose:
-                hr = result[host.hostname]
-                parts = []
-                for ip_str, ping in all_ip_results:
-                    part = f"{ip_str} {ping.received}/{ping.transmitted}"
-                    if ping.rtt_avg_ms is not None:
-                        part += f" {ping.rtt_avg_ms:.1f}ms"
-                    parts.append(part)
-                detail = ", ".join(parts)
-                label = _MODE_LABELS.get(hr.reachability_mode, "down")
-                print(
-                    f"  {host.hostname:>{name_width}s}"
-                    f" {label:<{_LABEL_WIDTH}s}"
-                    f"  {detail}",
-                    file=sys.stderr,
-                )
-
+        # Second pass: print aligned output grouped by interface.
         if verbose:
+            import shutil
+
+            ip_width = max(all_ip_widths, default=1)
+            prefix_width = 2 + name_width + 1 + _LABEL_WIDTH + 2
+            prefix = " " * prefix_width
+            rtt_width = 8  # e.g. " 489.2ms"
+            cell_width = ip_width + 2 + 5 + 2 + rtt_width
+            cell_gap = 2
+            term_width = shutil.get_terminal_size().columns
+            avail = term_width - prefix_width
+            cols = max(1, avail // (cell_width + cell_gap))
+
+            print(file=sys.stderr)
+
+            for host, per_iface, hr in host_results:
+                label = _MODE_LABELS.get(hr.reachability_mode, "down")
+                first_row = True
+                for iface_ips in per_iface:
+                    cells = []
+                    for ip_str, ping in iface_ips:
+                        pkt = f"{ping.received:>2}/{ping.transmitted}"
+                        if ping.rtt_avg_ms is not None:
+                            rtt = f"{ping.rtt_avg_ms:>5.1f}ms"
+                        else:
+                            rtt = " " * rtt_width
+                        cells.append(
+                            f"{ip_str:<{ip_width}s}  {pkt}  {rtt}"
+                        )
+                    for row_start in range(0, len(cells), cols):
+                        row = "  ".join(
+                            cells[row_start:row_start + cols]
+                        )
+                        if first_row:
+                            print(
+                                f"  {host.hostname:>{name_width}s}"
+                                f" {label:<{_LABEL_WIDTH}s}"
+                                f"  {row}",
+                                file=sys.stderr,
+                            )
+                            first_row = False
+                        else:
+                            print(
+                                f"{prefix}{row}",
+                                file=sys.stderr,
+                            )
+
             print(file=sys.stderr)
 
     return result
