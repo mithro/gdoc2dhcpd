@@ -332,6 +332,29 @@ def check_all_hosts_reachability(
     sorted_hosts = sorted(hosts, key=lambda h: h.hostname.split(".")[::-1])
     name_width = max((len(h.hostname) for h in sorted_hosts), default=0)
 
+    # Pre-compute alignment widths from the known IP strings so we can
+    # print each host progressively as its pings complete, rather than
+    # waiting for all hosts to finish before displaying anything.
+    all_known_ips: list[str] = []
+    for host in sorted_hosts:
+        for vi in host.virtual_interfaces:
+            all_known_ips.extend(vi.all_ips)
+    ip_width = max((len(ip) for ip in all_known_ips), default=1)
+
+    if verbose:
+        import shutil
+
+        prefix_width = 2 + name_width + 1 + _LABEL_WIDTH + 2
+        prefix = " " * prefix_width
+        rtt_width = 8  # e.g. " 489.2ms"
+        cell_width = ip_width + 2 + 5 + 2 + rtt_width
+        cell_gap = 2
+        term_width = shutil.get_terminal_size().columns
+        avail = term_width - prefix_width
+        cols = max(1, avail // (cell_width + cell_gap))
+
+        print(file=sys.stderr)
+
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         # Submit all pings up front, deduplicating IPs across interfaces.
         host_futures: list[
@@ -351,16 +374,7 @@ def check_all_hosts_reachability(
 
         # Collect results in sorted order — blocks on each host's futures
         # while remaining hosts continue pinging in the background.
-        # First pass: collect all results and find max IP width for alignment.
-        host_results: list[
-            tuple[
-                Host,
-                list[list[tuple[str, PingResult]]],
-                HostReachability,
-            ]
-        ] = []
-        all_ip_widths: list[int] = []
-
+        # Prints each host as soon as its pings complete.
         for host, ip_futures in host_futures:
             active_ips: list[str] = []
             vi_count = len(host.virtual_interfaces)
@@ -373,7 +387,6 @@ def check_all_hosts_reachability(
                 iface_pings[vi_idx].append((ip_str, ping))
                 if ping:
                     active_ips.append(ip_str)
-                all_ip_widths.append(len(ip_str))
 
             iface_reachability = tuple(
                 InterfaceReachability(pings=tuple(pings))
@@ -386,30 +399,14 @@ def check_all_hosts_reachability(
                 interfaces=iface_reachability,
             )
             result[host.hostname] = hr
-            host_results.append((host, iface_pings, hr))
 
-        # Second pass: print aligned output grouped by interface.
-        if verbose:
-            import shutil
-
-            ip_width = max(all_ip_widths, default=1)
-            prefix_width = 2 + name_width + 1 + _LABEL_WIDTH + 2
-            prefix = " " * prefix_width
-            rtt_width = 8  # e.g. " 489.2ms"
-            cell_width = ip_width + 2 + 5 + 2 + rtt_width
-            cell_gap = 2
-            term_width = shutil.get_terminal_size().columns
-            avail = term_width - prefix_width
-            cols = max(1, avail // (cell_width + cell_gap))
-
-            print(file=sys.stderr)
-
-            for host, per_iface, hr in host_results:
+            # Print this host immediately.
+            if verbose:
                 label = _MODE_LABELS.get(hr.reachability_mode, "down")
                 first_row = True
-                for iface_ips in per_iface:
+                for pings in iface_pings:
                     cells = []
-                    for ip_str, ping in iface_ips:
+                    for ip_str, ping in pings:
                         pkt = f"{ping.received:>2}/{ping.transmitted}"
                         if ping.rtt_avg_ms is not None:
                             rtt = f"{ping.rtt_avg_ms:>6.1f}ms"
@@ -436,6 +433,7 @@ def check_all_hosts_reachability(
                                 file=sys.stderr,
                             )
 
-            print(file=sys.stderr)
+    if verbose:
+        print(file=sys.stderr)
 
     return result
