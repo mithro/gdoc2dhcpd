@@ -348,7 +348,7 @@ def check_all_hosts_reachability(
                     for ip_str, ping in iface_ips:
                         pkt = f"{ping.received:>2}/{ping.transmitted}"
                         if ping.rtt_avg_ms is not None:
-                            rtt = f"{ping.rtt_avg_ms:>5.1f}ms"
+                            rtt = f"{ping.rtt_avg_ms:>6.1f}ms"
                         else:
                             rtt = " " * rtt_width
                         cells.append(
