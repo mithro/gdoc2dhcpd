@@ -611,11 +611,11 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: snmp
+# Subcommand: snmp-host
 # ---------------------------------------------------------------------------
 
-def cmd_snmp(args: argparse.Namespace) -> int:
-    """Scan hosts for SNMP data."""
+def cmd_snmp_host(args: argparse.Namespace) -> int:
+    """Scan hosts for SNMP system info and interfaces."""
     config = _load_config(args)
 
     from gdoc2netcfg.constraints.snmp_validation import validate_snmp_availability
@@ -754,11 +754,11 @@ def cmd_bmc_firmware(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: bridge
+# Subcommand: snmp-switch
 # ---------------------------------------------------------------------------
 
-def cmd_bridge(args: argparse.Namespace) -> int:
-    """Scan switches for bridge/topology data."""
+def cmd_snmp_switch(args: argparse.Namespace) -> int:
+    """Scan switches for bridge/topology data via SNMP."""
     config = _load_config(args)
 
     from gdoc2netcfg.derivations.host_builder import build_hosts
@@ -1017,8 +1017,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Force re-scan even if cache is fresh",
     )
 
-    # snmp
-    snmp_parser = subparsers.add_parser("snmp", help="Scan hosts for SNMP data")
+    # snmp-host
+    snmp_parser = subparsers.add_parser(
+        "snmp-host", help="Scan hosts for SNMP system info and interfaces",
+    )
     snmp_parser.add_argument(
         "--force", action="store_true",
         help="Force re-scan even if cache is fresh",
@@ -1031,9 +1033,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Force re-scan even if cache is fresh",
     )
 
-    # bridge
-    bridge_parser = subparsers.add_parser("bridge", help="Scan switches for bridge/topology data")
-    bridge_parser.add_argument(
+    # snmp-switch
+    snmp_switch_parser = subparsers.add_parser(
+        "snmp-switch", help="Scan switches for bridge/topology data via SNMP",
+    )
+    snmp_switch_parser.add_argument(
         "--force", action="store_true",
         help="Force re-scan even if cache is fresh",
     )
@@ -1083,9 +1087,9 @@ def main(argv: list[str] | None = None) -> int:
         "reachability": cmd_reachability,
         "sshfp": cmd_sshfp,
         "ssl-certs": cmd_ssl_certs,
-        "snmp": cmd_snmp,
+        "snmp-host": cmd_snmp_host,
         "bmc-firmware": cmd_bmc_firmware,
-        "bridge": cmd_bridge,
+        "snmp-switch": cmd_snmp_switch,
         "cron": cmd_cron,
     }
 
