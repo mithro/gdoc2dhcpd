@@ -192,6 +192,78 @@ class HostReachability:
         return "unreachable"
 
 
+_MODE_LABELS = {
+    "dual-stack": "up (v46)",
+    "ipv4-only":  "up (v4_)",
+    "ipv6-only":  "up (v_6)",
+    "unreachable": "down",
+}
+_LABEL_WIDTH = max(len(v) for v in _MODE_LABELS.values())
+
+
+def print_reachability_status(
+    reachability: dict[str, HostReachability],
+) -> None:
+    """Print per-host reachability status to stderr.
+
+    Works with both live scan results and cached data.  When the cache
+    is loaded, per-IP packet counts and RTT are not available so only
+    the active IPs are shown.
+    """
+    import shutil
+    import sys
+
+    if not reachability:
+        return
+
+    sorted_hosts = sorted(
+        reachability.values(),
+        key=lambda hr: hr.hostname.split(".")[::-1],
+    )
+    name_width = max(len(hr.hostname) for hr in sorted_hosts)
+
+    all_ips: list[str] = []
+    for hr in sorted_hosts:
+        all_ips.extend(hr.active_ips)
+    ip_width = max((len(ip) for ip in all_ips), default=1)
+
+    prefix_width = 2 + name_width + 1 + _LABEL_WIDTH + 2
+    prefix = " " * prefix_width
+    cell_width = ip_width
+    cell_gap = 2
+    term_width = shutil.get_terminal_size().columns
+    avail = term_width - prefix_width
+    cols = max(1, avail // (cell_width + cell_gap))
+
+    print(file=sys.stderr)
+
+    for hr in sorted_hosts:
+        label = _MODE_LABELS.get(hr.reachability_mode, "down")
+        cells = [f"{ip:<{ip_width}s}" for ip in hr.active_ips]
+        if not cells:
+            print(
+                f"  {hr.hostname:>{name_width}s}"
+                f" {label:<{_LABEL_WIDTH}s}",
+                file=sys.stderr,
+            )
+            continue
+        first_row = True
+        for row_start in range(0, len(cells), cols):
+            row = "  ".join(cells[row_start:row_start + cols])
+            if first_row:
+                print(
+                    f"  {hr.hostname:>{name_width}s}"
+                    f" {label:<{_LABEL_WIDTH}s}"
+                    f"  {row}",
+                    file=sys.stderr,
+                )
+                first_row = False
+            else:
+                print(f"{prefix}{row}", file=sys.stderr)
+
+    print(file=sys.stderr)
+
+
 def save_reachability_cache(
     cache_path: Path,
     reachability: dict[str, HostReachability],
@@ -255,14 +327,6 @@ def check_all_hosts_reachability(
     """
     import sys
     from concurrent.futures import Future, ThreadPoolExecutor
-
-    _MODE_LABELS = {
-        "dual-stack": "up (v46)",
-        "ipv4-only":  "up (v4_)",
-        "ipv6-only":  "up (v_6)",
-        "unreachable": "down",
-    }
-    _LABEL_WIDTH = max(len(v) for v in _MODE_LABELS.values())
 
     result: dict[str, HostReachability] = {}
     sorted_hosts = sorted(hosts, key=lambda h: h.hostname.split(".")[::-1])

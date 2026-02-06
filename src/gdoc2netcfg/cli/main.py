@@ -407,8 +407,12 @@ def _load_or_run_reachability(
     config: PipelineConfig,
     hosts: list[Host],
     force: bool = False,
-) -> dict[str, HostReachability]:
-    """Load cached reachability or run a fresh scan."""
+) -> tuple[dict[str, HostReachability], bool]:
+    """Load cached reachability or run a fresh scan.
+
+    Returns (reachability_dict, from_cache) so callers know whether the
+    verbose per-host output was already printed by the live scan.
+    """
     from gdoc2netcfg.supplements.reachability import (
         check_all_hosts_reachability,
         load_reachability_cache,
@@ -425,12 +429,12 @@ def _load_or_run_reachability(
                 f"Using cached reachability ({age:.0f}s old).",
                 file=sys.stderr,
             )
-            return cached
+            return cached, True
 
     print("Checking host reachability...", file=sys.stderr)
     reachability = check_all_hosts_reachability(hosts, verbose=True)
     save_reachability_cache(cache_path, reachability)
-    return reachability
+    return reachability, False
 
 
 def _print_reachability_summary(
@@ -479,7 +483,14 @@ def cmd_reachability(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    reachability, from_cache = _load_or_run_reachability(
+        config, hosts, force=args.force,
+    )
+
+    if from_cache:
+        from gdoc2netcfg.supplements.reachability import print_reachability_status
+        print_reachability_status(reachability)
+
     _print_reachability_summary(reachability, hosts)
 
     return 0
@@ -512,7 +523,7 @@ def cmd_sshfp(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    reachability, _ = _load_or_run_reachability(config, hosts, force=args.force)
     _print_reachability_summary(reachability, hosts)
 
     cache_path = Path(config.cache.directory) / "sshfp.json"
@@ -569,7 +580,7 @@ def cmd_ssl_certs(args: argparse.Namespace) -> int:
     for host in hosts:
         derive_all_dns_names(host, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    reachability, _ = _load_or_run_reachability(config, hosts, force=args.force)
     _print_reachability_summary(reachability, hosts)
 
     cache_path = Path(config.cache.directory) / "ssl_certs.json"
@@ -629,7 +640,7 @@ def cmd_snmp(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    reachability, _ = _load_or_run_reachability(config, hosts, force=args.force)
     _print_reachability_summary(reachability, hosts)
 
     # Scan BMC firmware and reclassify legacy BMCs before SNMP
@@ -704,7 +715,7 @@ def cmd_bmc_firmware(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    reachability, _ = _load_or_run_reachability(config, hosts, force=args.force)
     _print_reachability_summary(reachability, hosts)
 
     # Scan BMC firmware
@@ -766,7 +777,7 @@ def cmd_bridge(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    reachability, _ = _load_or_run_reachability(config, hosts, force=args.force)
     _print_reachability_summary(reachability, hosts)
 
     cache_path = Path(config.cache.directory) / "bridge.json"
