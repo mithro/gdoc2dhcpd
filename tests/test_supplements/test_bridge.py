@@ -592,3 +592,47 @@ class TestScanBridge:
         result = scan_bridge([host], cache_path, force=True, reachability=reachability)
         assert result == {}
         mock_collect.assert_not_called()
+
+
+class TestScanBridgeMultiIP:
+    @patch("gdoc2netcfg.supplements.bridge._collect_bridge_data")
+    def test_tries_all_ips_until_success(self, mock_collect, tmp_path):
+        """Should try SNMP bridge on each reachable IP until one succeeds."""
+        mock_collect.side_effect = [
+            None,
+            {"mac_table": [], "vlan_names": []},
+        ]
+        host = _make_switch()
+        reachability = {
+            "sw-test": HostReachability(
+                hostname="sw-test",
+                active_ips=("10.1.5.10", "2001:db8::10"),
+            ),
+        }
+        cache_path = tmp_path / "bridge.json"
+        result = scan_bridge(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        assert "sw-test" in result
+        # Both IPs tried
+        assert mock_collect.call_count == 2
+
+    @patch("gdoc2netcfg.supplements.bridge._collect_bridge_data")
+    def test_stops_on_first_success(self, mock_collect, tmp_path):
+        """Should stop trying IPs after first SNMP success."""
+        mock_collect.return_value = {"mac_table": [], "vlan_names": []}
+        host = _make_switch()
+        reachability = {
+            "sw-test": HostReachability(
+                hostname="sw-test",
+                active_ips=("10.1.5.10", "2001:db8::10"),
+            ),
+        }
+        cache_path = tmp_path / "bridge.json"
+        scan_bridge(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        # Should only try first IP since it succeeded
+        mock_collect.assert_called_once()
