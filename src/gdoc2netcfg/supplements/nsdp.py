@@ -21,10 +21,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from gdoc2netcfg.derivations.hardware import (
-    HARDWARE_NETGEAR_SWITCH,
-    HARDWARE_NETGEAR_SWITCH_PLUS,
-)
+from gdoc2netcfg.derivations.hardware import HARDWARE_NETGEAR_SWITCH_PLUS
 from gdoc2netcfg.models.host import NSDPData
 from gdoc2netcfg.models.switch_data import (
     PortLinkStatus,
@@ -38,7 +35,7 @@ from nsdp.types import LinkSpeed
 if TYPE_CHECKING:
     from gdoc2netcfg.models.host import Host
 
-NSDP_HARDWARE_TYPES = frozenset({HARDWARE_NETGEAR_SWITCH, HARDWARE_NETGEAR_SWITCH_PLUS})
+NSDP_HARDWARE_TYPES = frozenset({HARDWARE_NETGEAR_SWITCH_PLUS})
 
 
 def nsdp_to_switch_data(nsdp: NSDPData) -> SwitchData:
