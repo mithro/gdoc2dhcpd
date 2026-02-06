@@ -440,7 +440,21 @@ def _print_reachability_summary(
     """Print a one-line reachability summary to stderr."""
     hosts_up = sum(1 for r in reachability.values() if r.is_up)
     hosts_down = sum(1 for r in reachability.values() if not r.is_up)
-    print(f"{hosts_up} up, {hosts_down} down, {len(hosts)} total.", file=sys.stderr)
+    dual = sum(1 for r in reachability.values() if r.reachability_mode == "dual-stack")
+    v4only = sum(1 for r in reachability.values() if r.reachability_mode == "ipv4-only")
+    v6only = sum(1 for r in reachability.values() if r.reachability_mode == "ipv6-only")
+    parts = []
+    if dual:
+        parts.append(f"{dual} dual-stack")
+    if v4only:
+        parts.append(f"{v4only} IPv4-only")
+    if v6only:
+        parts.append(f"{v6only} IPv6-only")
+    breakdown = f" ({', '.join(parts)})" if parts else ""
+    print(
+        f"{hosts_up} up{breakdown}, {hosts_down} down, {len(hosts)} total.",
+        file=sys.stderr,
+    )
 
 
 # ---------------------------------------------------------------------------
