@@ -97,6 +97,51 @@ def check_port_open(ip: str, port: int, timeout: float = 0.5) -> bool:
 
 
 @dataclass(frozen=True)
+class InterfaceReachability:
+    """Reachability state for a single VirtualInterface."""
+
+    pings: tuple[tuple[str, PingResult], ...] = ()
+
+    @property
+    def active_ips(self) -> tuple[str, ...]:
+        """IPs that responded to ping."""
+        return tuple(addr for addr, pr in self.pings if pr)
+
+    @property
+    def active_ipv4(self) -> tuple[str, ...]:
+        """Reachable IPv4 addresses."""
+        return tuple(addr for addr in self.active_ips if _detect_ip_version(addr) == 4)
+
+    @property
+    def active_ipv6(self) -> tuple[str, ...]:
+        """Reachable IPv6 addresses."""
+        return tuple(addr for addr in self.active_ips if _detect_ip_version(addr) == 6)
+
+    @property
+    def has_ipv4(self) -> bool:
+        """True if any IPv4 address is reachable."""
+        return len(self.active_ipv4) > 0
+
+    @property
+    def has_ipv6(self) -> bool:
+        """True if any IPv6 address is reachable."""
+        return len(self.active_ipv6) > 0
+
+    @property
+    def reachability_mode(self) -> str:
+        """'unreachable', 'ipv4-only', 'ipv6-only', or 'dual-stack'."""
+        v4 = self.has_ipv4
+        v6 = self.has_ipv6
+        if v4 and v6:
+            return "dual-stack"
+        if v4:
+            return "ipv4-only"
+        if v6:
+            return "ipv6-only"
+        return "unreachable"
+
+
+@dataclass(frozen=True)
 class HostReachability:
     """Pre-computed reachability state for a single host.
 
