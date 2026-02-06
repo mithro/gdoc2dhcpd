@@ -40,7 +40,7 @@ def check_reachable(ip: str, packets: int = 10) -> PingResult:
     """Check if a host responds to ICMP ping.
 
     Args:
-        ip: IPv4 address string to ping.
+        ip: IPv4 or IPv6 address string to ping.
         packets: Number of ping packets to send.
 
     Returns:
@@ -225,6 +225,8 @@ def load_reachability_cache(
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
+    # Cache only persists host-level active_ips; per-interface detail
+    # (the `interfaces` field) is not saved and will be empty on load.
     reachability = {
         hostname: HostReachability(hostname=hostname, active_ips=tuple(ips))
         for hostname, ips in data.items()
