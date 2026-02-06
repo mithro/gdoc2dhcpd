@@ -37,7 +37,7 @@ def _iface(name=None, mac="aa:bb:cc:dd:ee:ff", ip="10.1.10.1", dhcp_name="test")
     return NetworkInterface(
         name=name,
         mac=MACAddress.parse(mac),
-        ipv4=IPv4Address(ip),
+        ip_addresses=(IPv4Address(ip),),
         dhcp_name=dhcp_name,
     )
 

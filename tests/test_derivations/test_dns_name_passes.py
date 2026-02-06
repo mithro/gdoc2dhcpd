@@ -49,8 +49,7 @@ def _make_host(
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=ipv4,
-                ipv6_addresses=[ipv6],
+                ip_addresses=(ipv4, ipv6),
                 dhcp_name=hostname,
             )
         ]
@@ -78,15 +77,13 @@ def _make_multi_iface_host():
             NetworkInterface(
                 name="eth0",
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:01"),
-                ipv4=ipv4_eth0,
-                ipv6_addresses=[ipv6_eth0],
+                ip_addresses=(ipv4_eth0, ipv6_eth0),
                 dhcp_name="eth0-ten64",
             ),
             NetworkInterface(
                 name="eth1",
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:02"),
-                ipv4=ipv4_eth1,
-                ipv6_addresses=[ipv6_eth1],
+                ip_addresses=(ipv4_eth1, ipv6_eth1),
                 dhcp_name="eth1-ten64",
             ),
         ],
@@ -257,8 +254,7 @@ class TestPass4IpPrefix:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                    ipv4=ipv4,
-                    ipv6_addresses=[],
+                    ip_addresses=(ipv4,),
                     dhcp_name="printer",
                 )
             ],

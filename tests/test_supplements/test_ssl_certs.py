@@ -24,8 +24,7 @@ def _make_host(hostname="desktop", ip="10.1.10.100"):
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=IPv4Address(ip),
-                ipv6_addresses=[],
+                ip_addresses=(IPv4Address(ip),),
                 dhcp_name=hostname,
             ),
         ],

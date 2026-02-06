@@ -39,8 +39,7 @@ def _make_host(hostname="desktop", ip="10.1.10.100", ssl_cert_info=None):
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=ipv4,
-                ipv6_addresses=[ipv6],
+                ip_addresses=(ipv4, ipv6),
                 dhcp_name=hostname,
             ),
         ],
@@ -132,8 +131,7 @@ class TestNginxFileStructure:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                    ipv4=IPv4Address("192.168.1.1"),
-                    ipv6_addresses=[],
+                    ip_addresses=(IPv4Address("192.168.1.1"),),
                     dhcp_name="local",
                 ),
             ],
@@ -396,8 +394,7 @@ def _make_multi_iface_host(
             NetworkInterface(
                 name=iface_name,
                 mac=MACAddress.parse(f"aa:bb:cc:dd:ee:{i:02x}"),
-                ipv4=ipv4,
-                ipv6_addresses=[ipv6],
+                ip_addresses=(ipv4, ipv6),
                 dhcp_name=f"{iface_name}-{hostname}",
             ),
         )

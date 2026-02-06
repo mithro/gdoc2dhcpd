@@ -145,8 +145,10 @@ def _make_host(hostname, ip, ipv6_addrs=None):
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=IPv4Address(ip),
-                ipv6_addresses=[_make_ipv6(a) for a in (ipv6_addrs or [])],
+                ip_addresses=(
+                    IPv4Address(ip),
+                    *[_make_ipv6(a) for a in (ipv6_addrs or [])],
+                ),
             )
         ],
         default_ipv4=IPv4Address(ip),
@@ -158,10 +160,10 @@ def _make_multi_iface_host(hostname, ips, ipv6_per_iface=None):
         NetworkInterface(
             name=f"eth{i}",
             mac=MACAddress.parse(f"aa:bb:cc:dd:ee:{i:02x}"),
-            ipv4=IPv4Address(ip),
-            ipv6_addresses=[
-                _make_ipv6(a) for a in (ipv6_per_iface or {}).get(i, [])
-            ],
+            ip_addresses=(
+                IPv4Address(ip),
+                *[_make_ipv6(a) for a in (ipv6_per_iface or {}).get(i, [])],
+            ),
         )
         for i, ip in enumerate(ips)
     ]

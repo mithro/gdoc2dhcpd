@@ -45,8 +45,7 @@ def _make_host(
             NetworkInterface(
                 name=iface_name,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=ipv4,
-                ipv6_addresses=[ipv6],
+                ip_addresses=(ipv4, ipv6),
                 dhcp_name=hostname,
             ),
         ],
@@ -203,8 +202,7 @@ class TestCertScripts:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                    ipv4=IPv4Address("192.168.1.1"),
-                    ipv6_addresses=[],
+                    ip_addresses=(IPv4Address("192.168.1.1"),),
                     dhcp_name="local",
                 ),
             ],

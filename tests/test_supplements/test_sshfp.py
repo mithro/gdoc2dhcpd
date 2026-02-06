@@ -21,7 +21,7 @@ def _make_host(hostname, ip):
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=IPv4Address(ip),
+                ip_addresses=(IPv4Address(ip),),
             )
         ],
         default_ipv4=IPv4Address(ip),

@@ -17,7 +17,7 @@ def _iface(mac="AA:BB:CC:DD:EE:01", ip="10.1.5.1", name=None):
     return NetworkInterface(
         name=name,
         mac=MACAddress.parse(mac),
-        ipv4=IPv4Address(ip),
+        ip_addresses=(IPv4Address(ip),),
     )
 
 

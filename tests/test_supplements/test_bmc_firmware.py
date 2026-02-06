@@ -36,7 +36,7 @@ def _make_host(
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("ac:1f:6b:00:11:22"),
-                ipv4=IPv4Address(ip),
+                ip_addresses=(IPv4Address(ip),),
                 dhcp_name=hostname,
             ),
         ],

@@ -12,16 +12,27 @@ from gdoc2netcfg.models.network import Site
 class DNSName:
     """A DNS name with its associated IP addresses.
 
-    Each DNS name maps to a specific IPv4 address and zero or more
-    IPv6 addresses. The is_fqdn flag distinguishes full domain names
-    (e.g. 'big-storage.welland.mithis.com') from short names
-    (e.g. 'big-storage').
+    Each DNS name maps to zero or more IP addresses. The is_fqdn flag
+    distinguishes full domain names (e.g. 'big-storage.welland.mithis.com')
+    from short names (e.g. 'big-storage').
     """
 
     name: str
-    ipv4: IPv4Address | None = None
-    ipv6_addresses: tuple[IPv6Address, ...] = ()
+    ip_addresses: tuple[IPv4Address | IPv6Address, ...] = ()
     is_fqdn: bool = False
+
+    @property
+    def ipv4(self) -> IPv4Address | None:
+        """The IPv4 address for this name, or None."""
+        for ip in self.ip_addresses:
+            if isinstance(ip, IPv4Address):
+                return ip
+        return None
+
+    @property
+    def ipv6_addresses(self) -> tuple[IPv6Address, ...]:
+        """All IPv6 addresses for this name."""
+        return tuple(ip for ip in self.ip_addresses if isinstance(ip, IPv6Address))
 
 
 @dataclass(frozen=True)
@@ -31,18 +42,29 @@ class NetworkInterface:
     Attributes:
         name: Interface name (e.g. 'eth0', 'bmc'), or None for the default/only interface
         mac: Ethernet MAC address
-        ipv4: IPv4 address
-        ipv6_addresses: IPv6 addresses generated from the IPv4
+        ip_addresses: All IP addresses (IPv4 and IPv6) for this interface
         vlan_id: VLAN this interface belongs to (derived from IP)
         dhcp_name: Name used for DHCP registration
     """
 
     name: str | None
     mac: MACAddress
-    ipv4: IPv4Address
-    ipv6_addresses: list[IPv6Address] = field(default_factory=list)
+    ip_addresses: tuple[IPv4Address | IPv6Address, ...] = ()
     vlan_id: int | None = None
     dhcp_name: str = ""
+
+    @property
+    def ipv4(self) -> IPv4Address:
+        """The IPv4 address for this interface (first IPv4 in ip_addresses)."""
+        for ip in self.ip_addresses:
+            if isinstance(ip, IPv4Address):
+                return ip
+        raise ValueError("NetworkInterface has no IPv4 address")
+
+    @property
+    def ipv6_addresses(self) -> tuple[IPv6Address, ...]:
+        """All IPv6 addresses for this interface."""
+        return tuple(ip for ip in self.ip_addresses if isinstance(ip, IPv6Address))
 
 
 @dataclass(frozen=True)
@@ -55,24 +77,35 @@ class VirtualInterface:
 
     Attributes:
         name: Interface name from the first physical NIC (None for default).
-        ipv4: The shared IPv4 address.
+        ip_addresses: All IP addresses (IPv4 and IPv6) for this endpoint.
         macs: All MAC addresses for this IP (tuple for immutability).
         dhcp_names: DHCP names from all physical NICs (tuple for immutability).
-        ipv6_addresses: IPv6 addresses (from the first physical NIC).
         vlan_id: VLAN ID (from the first physical NIC).
     """
 
     name: str | None
-    ipv4: IPv4Address
+    ip_addresses: tuple[IPv4Address | IPv6Address, ...]
     macs: tuple[MACAddress, ...]
     dhcp_names: tuple[str, ...] = ()
-    ipv6_addresses: tuple[IPv6Address, ...] = ()
     vlan_id: int | None = None
+
+    @property
+    def ipv4(self) -> IPv4Address:
+        """The shared IPv4 address."""
+        for ip in self.ip_addresses:
+            if isinstance(ip, IPv4Address):
+                return ip
+        raise ValueError("VirtualInterface has no IPv4 address")
+
+    @property
+    def ipv6_addresses(self) -> tuple[IPv6Address, ...]:
+        """IPv6 addresses for this endpoint."""
+        return tuple(ip for ip in self.ip_addresses if isinstance(ip, IPv6Address))
 
     @property
     def all_ips(self) -> tuple[str, ...]:
         """All IP addresses (v4 and v6) as strings."""
-        return (str(self.ipv4),) + tuple(str(a) for a in self.ipv6_addresses)
+        return tuple(str(a) for a in self.ip_addresses)
 
 
 @dataclass(frozen=True)
@@ -238,12 +271,14 @@ class Host:
         result = []
         for ifaces in groups.values():
             first = ifaces[0]
+            # Combine IPv4 + IPv6 into unified ip_addresses
+            ip_addrs: list[IPv4Address | IPv6Address] = [first.ipv4]
+            ip_addrs.extend(first.ipv6_addresses)
             result.append(VirtualInterface(
                 name=first.name,
-                ipv4=first.ipv4,
+                ip_addresses=tuple(ip_addrs),
                 macs=tuple(i.mac for i in ifaces),
                 dhcp_names=tuple(i.dhcp_name for i in ifaces),
-                ipv6_addresses=tuple(first.ipv6_addresses),
                 vlan_id=first.vlan_id,
             ))
         return result

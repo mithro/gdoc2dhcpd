@@ -48,8 +48,7 @@ def _host_with_iface(hostname, mac, ip, interface_name=None, dhcp_name="test"):
     iface = NetworkInterface(
         name=interface_name,
         mac=MACAddress.parse(mac),
-        ipv4=ipv4,
-        ipv6_addresses=ipv6s,
+        ip_addresses=(ipv4, *ipv6s),
         dhcp_name=dhcp_name,
     )
     host = Host(
@@ -124,15 +123,19 @@ class TestDnsmasqExternalGenerator:
         iface1 = NetworkInterface(
             name=None,
             mac=MACAddress.parse("aa:bb:cc:dd:ee:01"),
-            ipv4=IPv4Address("10.1.10.1"),
-            ipv6_addresses=[IPv6Address("2404:e80:a137:110::1", "2404:e80:a137:")],
+            ip_addresses=(
+                IPv4Address("10.1.10.1"),
+                IPv6Address("2404:e80:a137:110::1", "2404:e80:a137:"),
+            ),
             dhcp_name="server",
         )
         iface2 = NetworkInterface(
             name="eth0",
             mac=MACAddress.parse("aa:bb:cc:dd:ee:02"),
-            ipv4=IPv4Address("10.1.10.2"),
-            ipv6_addresses=[IPv6Address("2404:e80:a137:110::2", "2404:e80:a137:")],
+            ip_addresses=(
+                IPv4Address("10.1.10.2"),
+                IPv6Address("2404:e80:a137:110::2", "2404:e80:a137:"),
+            ),
             dhcp_name="eth0-server",
         )
         host = Host(
@@ -238,15 +241,16 @@ class TestDnsmasqExternalGenerator:
         iface1 = NetworkInterface(
             name=None,
             mac=MACAddress.parse("aa:bb:cc:dd:ee:01"),
-            ipv4=IPv4Address("10.1.10.1"),
-            ipv6_addresses=[IPv6Address("2404:e80:a137:110::1", "2404:e80:a137:")],
+            ip_addresses=(
+                IPv4Address("10.1.10.1"),
+                IPv6Address("2404:e80:a137:110::1", "2404:e80:a137:"),
+            ),
             dhcp_name="server",
         )
         iface2 = NetworkInterface(
             name="eth0",
             mac=MACAddress.parse("aa:bb:cc:dd:ee:02"),
-            ipv4=ipv4,
-            ipv6_addresses=ipv6s,
+            ip_addresses=(ipv4, *ipv6s),
             dhcp_name="eth0-server",
         )
         host = Host(

@@ -15,7 +15,7 @@ def _make_interface(name=None, mac='aa:bb:cc:dd:ee:ff', ip='10.1.10.1', dhcp_nam
     return NetworkInterface(
         name=name,
         mac=MACAddress.parse(mac),
-        ipv4=IPv4Address(ip),
+        ip_addresses=(IPv4Address(ip),),
         dhcp_name=dhcp_name,
     )
 
@@ -26,7 +26,7 @@ class TestNetworkInterface:
         assert iface.name == 'eth0'
         assert str(iface.ipv4) == '10.1.10.1'
         assert str(iface.mac) == 'aa:bb:cc:dd:ee:ff'
-        assert iface.ipv6_addresses == []
+        assert iface.ipv6_addresses == ()
         assert iface.vlan_id is None
 
     def test_none_name_for_default(self):
@@ -201,15 +201,13 @@ class TestVirtualInterface:
         wired = NetworkInterface(
             name='eth0',
             mac=MACAddress.parse('aa:bb:cc:dd:ee:01'),
-            ipv4=IPv4Address('10.1.10.1'),
-            ipv6_addresses=[ipv6],
+            ip_addresses=(IPv4Address('10.1.10.1'), ipv6),
             vlan_id=10,
         )
         wifi = NetworkInterface(
             name='wlan0',
             mac=MACAddress.parse('aa:bb:cc:dd:ee:02'),
-            ipv4=IPv4Address('10.1.10.1'),
-            ipv6_addresses=[],
+            ip_addresses=(IPv4Address('10.1.10.1'),),
             vlan_id=10,
         )
         host = Host(
@@ -224,7 +222,7 @@ class TestVirtualInterface:
     def test_frozen(self):
         vi = VirtualInterface(
             name=None,
-            ipv4=IPv4Address('10.1.10.1'),
+            ip_addresses=(IPv4Address('10.1.10.1'),),
             macs=(MACAddress.parse('aa:bb:cc:dd:ee:ff'),),
         )
         try:

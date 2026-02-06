@@ -40,8 +40,7 @@ def _host_with_iface(hostname, mac, ip, interface_name=None, dhcp_name="test"):
     iface = NetworkInterface(
         name=interface_name,
         mac=MACAddress.parse(mac),
-        ipv4=ipv4,
-        ipv6_addresses=ipv6s,
+        ip_addresses=(ipv4, *ipv6s),
         dhcp_name=dhcp_name,
     )
     host = Host(
@@ -276,8 +275,7 @@ def _shared_ip_host(hostname, ip, macs, dhcp_name="test"):
         NetworkInterface(
             name=f"eth{i}",
             mac=MACAddress.parse(mac),
-            ipv4=ipv4,
-            ipv6_addresses=ipv6s if i == 0 else [],
+            ip_addresses=(ipv4, *ipv6s) if i == 0 else (ipv4,),
             dhcp_name=dhcp_name,
         )
         for i, mac in enumerate(macs)

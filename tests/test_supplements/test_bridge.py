@@ -34,7 +34,7 @@ def _make_switch(hostname="sw-test", ip="10.1.5.10"):
             NetworkInterface(
                 name="manage",
                 mac=MACAddress.parse("08:bd:43:6b:b8:d8"),
-                ipv4=IPv4Address(ip),
+                ip_addresses=(IPv4Address(ip),),
                 dhcp_name=hostname,
             ),
         ],
@@ -457,7 +457,7 @@ class TestScanBridge:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                    ipv4=IPv4Address("10.1.10.5"),
+                    ip_addresses=(IPv4Address("10.1.10.5"),),
                 ),
             ],
             hardware_type=None,
@@ -538,7 +538,7 @@ class TestScanBridge:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("00:25:90:aa:bb:cc"),
-                    ipv4=IPv4Address("10.1.5.20"),
+                    ip_addresses=(IPv4Address("10.1.5.20"),),
                     dhcp_name="bmc-server",
                 ),
             ],
@@ -578,7 +578,7 @@ class TestScanBridge:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("08:bd:43:aa:bb:cc"),
-                    ipv4=IPv4Address("10.1.5.30"),
+                    ip_addresses=(IPv4Address("10.1.5.30"),),
                 ),
             ],
             hardware_type="netgear-switch-plus",
