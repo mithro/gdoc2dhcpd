@@ -1145,12 +1145,13 @@ def _print_switch_data(data: SwitchData) -> None:
                 else:
                     print(f"{indent}MACs: {n} learned")
 
-    # VLANs (switch-wide) — translate port IDs to names
+    # VLANs (switch-wide) — translate port IDs to names, filter virtual
+    physical_ids = {ps.port_id for ps in physical}
     if data.vlans:
 
         def _port_set_str(ports: frozenset[int]) -> str:
             named = sorted(
-                (label_for(p) for p in ports),
+                (label_for(p) for p in ports if p in physical_ids),
                 key=_natural_sort_key,
             )
             return ",".join(named)
