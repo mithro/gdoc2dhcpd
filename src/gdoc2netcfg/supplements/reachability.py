@@ -6,6 +6,7 @@ Provides ping and port-check utilities used by multiple supplements
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import socket
@@ -70,18 +71,24 @@ def check_reachable(ip: str, packets: int = 10) -> PingResult:
         return PingResult(0, 0)
 
 
+def _detect_ip_version(ip: str) -> int:
+    """Return 4 or 6 based on the IP string format."""
+    return ipaddress.ip_address(ip).version
+
+
 def check_port_open(ip: str, port: int, timeout: float = 0.5) -> bool:
     """Check if a TCP port is open on the host.
 
     Args:
-        ip: IPv4 address string.
+        ip: IPv4 or IPv6 address string.
         port: TCP port number to check.
         timeout: Connection timeout in seconds.
 
     Returns:
         True if the port is open and accepting connections.
     """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    family = socket.AF_INET6 if _detect_ip_version(ip) == 6 else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:
         return sock.connect_ex((ip, port)) == 0
