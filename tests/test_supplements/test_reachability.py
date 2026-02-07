@@ -262,12 +262,38 @@ class TestCheckAllHostsReachability:
         assert "alpha.example.com" in result
 
 
+def _make_hr(hostname, pings_per_iface):
+    """Build a HostReachability with properly populated interfaces.
+
+    Args:
+        hostname: Host name.
+        pings_per_iface: List of lists of (ip, PingResult) tuples, one
+            inner list per interface.
+    """
+    ifaces = tuple(
+        InterfaceReachability(pings=tuple(pings))
+        for pings in pings_per_iface
+    )
+    active: list[str] = []
+    for ir in ifaces:
+        active.extend(ir.active_ips)
+    return HostReachability(
+        hostname=hostname,
+        active_ips=tuple(active),
+        interfaces=ifaces,
+    )
+
+
 class TestReachabilityCache:
     def test_save_and_load_roundtrip(self, tmp_path):
         cache_path = tmp_path / "reachability.json"
         data = {
-            "server": HostReachability(hostname="server", active_ips=("10.1.10.1",)),
-            "desktop": HostReachability(hostname="desktop", active_ips=()),
+            "server": _make_hr("server", [
+                [("10.1.10.1", PingResult(10, 10, 0.3))],
+            ]),
+            "desktop": _make_hr("desktop", [
+                [("10.1.10.2", PingResult(10, 0))],
+            ]),
         }
 
         save_reachability_cache(cache_path, data)
@@ -290,7 +316,9 @@ class TestReachabilityCache:
     def test_load_stale_file_returns_none(self, tmp_path):
         cache_path = tmp_path / "reachability.json"
         data = {
-            "server": HostReachability(hostname="server", active_ips=("10.1.10.1",)),
+            "server": _make_hr("server", [
+                [("10.1.10.1", PingResult(10, 10, 0.3))],
+            ]),
         }
         save_reachability_cache(cache_path, data)
 
@@ -303,7 +331,9 @@ class TestReachabilityCache:
     def test_fresh_file_within_max_age(self, tmp_path):
         cache_path = tmp_path / "reachability.json"
         data = {
-            "server": HostReachability(hostname="server", active_ips=("10.1.10.1",)),
+            "server": _make_hr("server", [
+                [("10.1.10.1", PingResult(10, 10, 0.3))],
+            ]),
         }
         save_reachability_cache(cache_path, data)
 
@@ -327,7 +357,9 @@ class TestReachabilityCache:
 
     def test_creates_parent_directories(self, tmp_path):
         cache_path = tmp_path / "deep" / "nested" / "reachability.json"
-        data = {"server": HostReachability(hostname="server", active_ips=())}
+        data = {"server": _make_hr("server", [
+            [("10.1.10.1", PingResult(10, 0))],
+        ])}
 
         save_reachability_cache(cache_path, data)
 
@@ -336,13 +368,71 @@ class TestReachabilityCache:
     def test_json_format_is_sorted(self, tmp_path):
         cache_path = tmp_path / "reachability.json"
         data = {
-            "zebra": HostReachability(hostname="zebra", active_ips=("10.1.10.3",)),
-            "alpha": HostReachability(hostname="alpha", active_ips=("10.1.10.1",)),
+            "zebra": _make_hr("zebra", [
+                [("10.1.10.3", PingResult(10, 10, 0.5))],
+            ]),
+            "alpha": _make_hr("alpha", [
+                [("10.1.10.1", PingResult(10, 10, 0.3))],
+            ]),
         }
         save_reachability_cache(cache_path, data)
 
         raw = json.loads(cache_path.read_text())
-        assert list(raw.keys()) == ["alpha", "zebra"]
+        assert list(raw["hosts"].keys()) == ["alpha", "zebra"]
+
+    def test_roundtrip_preserves_ping_stats(self, tmp_path):
+        """transmitted, received, and rtt_avg_ms survive save→load."""
+        cache_path = tmp_path / "reachability.json"
+        data = {
+            "server": _make_hr("server", [
+                [
+                    ("10.1.10.1", PingResult(10, 8, 1.234)),
+                    ("10.1.20.1", PingResult(10, 0)),
+                ],
+            ]),
+        }
+
+        save_reachability_cache(cache_path, data)
+        loaded, _ = load_reachability_cache(cache_path)
+
+        pings = loaded["server"].interfaces[0].pings
+        assert pings[0] == ("10.1.10.1", PingResult(10, 8, 1.234))
+        assert pings[1] == ("10.1.20.1", PingResult(10, 0, None))
+
+    def test_old_v1_format_returns_none(self, tmp_path):
+        """v1 cache format (flat {hostname: [ips]}) is rejected."""
+        cache_path = tmp_path / "reachability.json"
+        cache_path.write_text(json.dumps({
+            "server": ["10.1.10.1"],
+            "desktop": [],
+        }))
+
+        assert load_reachability_cache(cache_path) is None
+
+    def test_corrupt_v2_structure_returns_none(self, tmp_path):
+        """Malformed v2 JSON is rejected gracefully."""
+        cache_path = tmp_path / "reachability.json"
+
+        # version=2 but hosts has wrong structure
+        cache_path.write_text(json.dumps({
+            "version": 2,
+            "hosts": {"server": "not-a-dict"},
+        }))
+        assert load_reachability_cache(cache_path) is None
+
+        # version=2, missing "interfaces" key
+        cache_path.write_text(json.dumps({
+            "version": 2,
+            "hosts": {"server": {}},
+        }))
+        assert load_reachability_cache(cache_path) is None
+
+        # version=2, interfaces entry missing "ip"
+        cache_path.write_text(json.dumps({
+            "version": 2,
+            "hosts": {"server": {"interfaces": [[{"transmitted": 10}]]}},
+        }))
+        assert load_reachability_cache(cache_path) is None
 
 
 class TestSharedIPReachability:
@@ -606,10 +696,12 @@ class TestReachabilityCacheDualStack:
         """Cache roundtrip with both IPv4 and IPv6 addresses."""
         cache_path = tmp_path / "reachability.json"
         data = {
-            "server": HostReachability(
-                hostname="server",
-                active_ips=("10.1.10.1", "2001:db8::1"),
-            ),
+            "server": _make_hr("server", [
+                [
+                    ("10.1.10.1", PingResult(10, 10, 0.3)),
+                    ("2001:db8::1", PingResult(10, 10, 0.4)),
+                ],
+            ]),
         }
 
         save_reachability_cache(cache_path, data)
@@ -624,10 +716,12 @@ class TestReachabilityCacheDualStack:
         """Cache roundtrip with IPv6-only host."""
         cache_path = tmp_path / "reachability.json"
         data = {
-            "server": HostReachability(
-                hostname="server",
-                active_ips=("2001:db8::1",),
-            ),
+            "server": _make_hr("server", [
+                [
+                    ("10.1.10.1", PingResult(10, 0)),
+                    ("2001:db8::1", PingResult(10, 10, 0.5)),
+                ],
+            ]),
         }
 
         save_reachability_cache(cache_path, data)

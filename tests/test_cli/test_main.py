@@ -312,8 +312,14 @@ class TestReachabilityCache:
         cache_file = cache_dir / "reachability.json"
         assert cache_file.exists()
         data = json.loads(cache_file.read_text())
-        assert "desktop" in data
-        assert data["desktop"] == ["10.1.10.1", "2001:db8:1:110::1"]
+        assert data["version"] == 2
+        assert "desktop" in data["hosts"]
+        ifaces = data["hosts"]["desktop"]["interfaces"]
+        # Single interface with IPv4 + IPv6 pings
+        assert len(ifaces) == 1
+        ips = [p["ip"] for p in ifaces[0]]
+        assert "10.1.10.1" in ips
+        assert "2001:db8:1:110::1" in ips
 
     @patch("gdoc2netcfg.supplements.reachability.check_reachable")
     def test_reachability_uses_cache_on_second_run(self, mock_ping, tmp_path, capsys):
