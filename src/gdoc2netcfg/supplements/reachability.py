@@ -268,12 +268,27 @@ def save_reachability_cache(
     cache_path: Path,
     reachability: dict[str, HostReachability],
 ) -> None:
-    """Save reachability data to disk cache."""
+    """Save reachability data to disk cache (v2 format).
+
+    The v2 format stores full ping data per interface so that cached
+    output is identical to live output.
+    """
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    data = {
-        hostname: list(hr.active_ips)
-        for hostname, hr in reachability.items()
-    }
+    hosts: dict[str, dict] = {}
+    for hostname, hr in reachability.items():
+        ifaces: list[list[dict]] = []
+        for ir in hr.interfaces:
+            pings: list[dict] = []
+            for ip_str, pr in ir.pings:
+                pings.append({
+                    "ip": ip_str,
+                    "transmitted": pr.transmitted,
+                    "received": pr.received,
+                    "rtt_avg_ms": pr.rtt_avg_ms,
+                })
+            ifaces.append(pings)
+        hosts[hostname] = {"interfaces": ifaces}
+    data = {"version": 2, "hosts": hosts}
     with open(cache_path, "w") as f:
         json.dump(data, f, indent="  ", sort_keys=True)
 
