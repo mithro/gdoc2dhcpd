@@ -449,14 +449,12 @@ def _print_reachability_summary(
     dual = sum(1 for r in reachability.values() if r.reachability_mode == "dual-stack")
     v4only = sum(1 for r in reachability.values() if r.reachability_mode == "ipv4-only")
     v6only = sum(1 for r in reachability.values() if r.reachability_mode == "ipv6-only")
-    parts = []
-    if dual:
-        parts.append(f"{dual} v46 - dual-stack")
-    if v4only:
-        parts.append(f"{v4only} v4_ - IPv4 only")
-    if v6only:
-        parts.append(f"{v6only} v_6 - IPv6 only")
-    breakdown = f" ({', '.join(parts)})" if parts else ""
+    parts = [
+        f"{dual} v46 - dual-stack",
+        f"{v4only} v4_ - IPv4 only",
+        f"{v6only} v_6 - IPv6 only",
+    ]
+    breakdown = f" ({', '.join(parts)})"
     print(
         f"{hosts_up} up{breakdown}, {hosts_down} down, {len(hosts)} total.",
         file=sys.stderr,
