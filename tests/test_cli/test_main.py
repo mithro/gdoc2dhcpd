@@ -312,8 +312,14 @@ class TestReachabilityCache:
         cache_file = cache_dir / "reachability.json"
         assert cache_file.exists()
         data = json.loads(cache_file.read_text())
-        assert "desktop" in data
-        assert data["desktop"] == ["10.1.10.1"]
+        assert data["version"] == 2
+        assert "desktop" in data["hosts"]
+        ifaces = data["hosts"]["desktop"]["interfaces"]
+        # Single interface with IPv4 + IPv6 pings
+        assert len(ifaces) == 1
+        ips = [p["ip"] for p in ifaces[0]]
+        assert "10.1.10.1" in ips
+        assert "2001:db8:1:110::1" in ips
 
     @patch("gdoc2netcfg.supplements.reachability.check_reachable")
     def test_reachability_uses_cache_on_second_run(self, mock_ping, tmp_path, capsys):
@@ -366,3 +372,34 @@ class TestReachabilityCache:
         main(["-c", str(config), "reachability"])
 
         assert mock_ping.call_count > first_call_count
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_cached_and_live_output_differ_by_one_line(self, mock_ping, tmp_path, capsys):
+        """Cached and live stderr output should differ only in the header line."""
+        mock_ping.return_value = PingResult(10, 10, 0.5)
+        config, cache_dir = _make_config_with_csv(tmp_path)
+
+        # Live run (--force)
+        main(["-c", str(config), "reachability", "--force"])
+        live_err = capsys.readouterr().err
+
+        # Cached run (no --force, cache is fresh)
+        main(["-c", str(config), "reachability"])
+        cached_err = capsys.readouterr().err
+
+        live_lines = live_err.strip().splitlines()
+        cached_lines = cached_err.strip().splitlines()
+
+        # Find the reachability header lines (skip any earlier warnings).
+        live_header_idx = next(
+            i for i, line in enumerate(live_lines)
+            if line == "Checking host reachability..."
+        )
+        cached_header_idx = next(
+            i for i, line in enumerate(cached_lines)
+            if line.startswith("Using cached reachability (")
+        )
+
+        # Everything after the header line should be identical —
+        # the per-host detail lines and the summary line.
+        assert live_lines[live_header_idx + 1:] == cached_lines[cached_header_idx + 1:]

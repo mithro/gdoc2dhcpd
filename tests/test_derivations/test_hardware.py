@@ -25,7 +25,7 @@ def _make_host(hostname, mac, is_bmc_hostname=False):
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse(mac),
-                ipv4=ipv4,
+                ip_addresses=(ipv4,),
                 dhcp_name=hostname,
             )
         ],
@@ -77,7 +77,7 @@ class TestDetectHardwareType:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("ac:1f:6b:12:34:56"),
-                    ipv4=IPv4Address("10.1.10.100"),
+                    ip_addresses=(IPv4Address("10.1.10.100"),),
                     dhcp_name="bmc.server",
                 )
             ],

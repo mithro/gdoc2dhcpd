@@ -604,24 +604,25 @@ def scan_bridge(
             continue
         active_ips = list(host_reach.active_ips)
 
-        # Try SNMP on the first active IP
-        ip = active_ips[0]
         if verbose:
             print(
-                f"  {host.hostname:>{name_width}s} bridge({ip}) ",
+                f"  {host.hostname:>{name_width}s} bridge({','.join(active_ips)}) ",
                 end="", flush=True, file=sys.stderr,
             )
 
-        data = _collect_bridge_data(ip, host)
-        if data is not None:
-            bridge_data[host.hostname] = data
-            mac_count = len(data.get("mac_table", []))
-            vlan_count = len(data.get("vlan_names", []))
-            if verbose:
-                print(
-                    f"ok ({mac_count} MACs, {vlan_count} VLANs)",
-                    file=sys.stderr,
-                )
+        # Try SNMP bridge data on each reachable IP until one succeeds
+        for ip in active_ips:
+            data = _collect_bridge_data(ip, host)
+            if data is not None:
+                bridge_data[host.hostname] = data
+                mac_count = len(data.get("mac_table", []))
+                vlan_count = len(data.get("vlan_names", []))
+                if verbose:
+                    print(
+                        f"ok ({mac_count} MACs, {vlan_count} VLANs)",
+                        file=sys.stderr,
+                    )
+                break
         else:
             if verbose:
                 print("no-snmp", file=sys.stderr)

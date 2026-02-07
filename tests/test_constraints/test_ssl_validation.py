@@ -23,8 +23,7 @@ def _make_host(
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=IPv4Address("10.1.10.100"),
-                ipv6_addresses=[],
+                ip_addresses=(IPv4Address("10.1.10.100"),),
                 dhcp_name=hostname,
             ),
         ],

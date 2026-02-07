@@ -184,30 +184,35 @@ def scan_ssl_certs(
         host_reach = reachability.get(host.hostname) if reachability else None
         if host_reach is None or not host_reach.is_up:
             continue
-        active_ip = host_reach.active_ips[0]
+        active_ips = list(host_reach.active_ips)
 
         if verbose:
             print(
-                f"  {host.hostname:>{name_width}s} up({active_ip}) ",
+                f"  {host.hostname:>{name_width}s} up({','.join(active_ips)}) ",
                 end="", flush=True, file=sys.stderr,
             )
 
-        # Check HTTPS availability
-        if not check_port_open(active_ip, 443):
+        # Check HTTPS availability on all reachable IPs
+        https_ips = [ip for ip in active_ips if check_port_open(ip, 443)]
+
+        if not https_ips:
             if verbose:
                 print("no-https", file=sys.stderr)
             continue
 
         if verbose:
-            print("with-https ", end="", flush=True, file=sys.stderr)
+            print(f"with-https({','.join(https_ips)}) ", end="", flush=True, file=sys.stderr)
 
-        cert_info = _fetch_cert(active_ip)
-        if cert_info is not None:
-            certs[host.hostname] = cert_info
-            if verbose:
-                status = "valid" if cert_info["valid"] else "invalid"
-                issuer = cert_info["issuer"]
-                print(f"{status} ({issuer})", file=sys.stderr)
+        # Fetch cert from first IP that succeeds
+        for https_ip in https_ips:
+            cert_info = _fetch_cert(https_ip)
+            if cert_info is not None:
+                certs[host.hostname] = cert_info
+                if verbose:
+                    status = "valid" if cert_info["valid"] else "invalid"
+                    issuer = cert_info["issuer"]
+                    print(f"{status} ({issuer})", file=sys.stderr)
+                break
         else:
             if verbose:
                 print("fetch-failed", file=sys.stderr)

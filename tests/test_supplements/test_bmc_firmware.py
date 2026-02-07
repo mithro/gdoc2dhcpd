@@ -36,7 +36,7 @@ def _make_host(
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("ac:1f:6b:00:11:22"),
-                ipv4=IPv4Address(ip),
+                ip_addresses=(IPv4Address(ip),),
                 dhcp_name=hostname,
             ),
         ],
@@ -477,3 +477,51 @@ class TestScanBMCFirmware:
         )
 
         assert "bmc.server" not in result
+
+
+class TestScanBMCFirmwareMultiIP:
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_tries_all_ips_until_success(self, mock_try, tmp_path):
+        """Should try ipmitool on each reachable IP until one succeeds."""
+        mock_try.side_effect = [
+            None,
+            {"Product Name": "X11SPM-T(P)F", "Firmware Revision": "1.74", "IPMI Version": "2.0"},
+        ]
+        reachability = {
+            "bmc.server": HostReachability(
+                hostname="bmc.server",
+                active_ips=("10.1.5.10", "2001:db8::10"),
+            ),
+        }
+        host = _make_host()
+        cache_path = tmp_path / "bmc_firmware.json"
+        result = scan_bmc_firmware(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        assert "bmc.server" in result
+        # Both IPs tried
+        assert mock_try.call_count == 2
+
+    @patch("gdoc2netcfg.supplements.bmc_firmware._try_ipmi_credentials")
+    def test_stops_on_first_success(self, mock_try, tmp_path):
+        """Should stop trying IPs after first ipmitool success."""
+        mock_try.return_value = {
+            "Product Name": "X11SPM-T(P)F",
+            "Firmware Revision": "1.74",
+            "IPMI Version": "2.0",
+        }
+        reachability = {
+            "bmc.server": HostReachability(
+                hostname="bmc.server",
+                active_ips=("10.1.5.10", "2001:db8::10"),
+            ),
+        }
+        host = _make_host()
+        cache_path = tmp_path / "bmc_firmware.json"
+        scan_bmc_firmware(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        # Should only try first IP since it succeeded
+        mock_try.assert_called_once()

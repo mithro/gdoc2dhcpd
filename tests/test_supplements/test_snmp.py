@@ -25,7 +25,7 @@ def _make_host(hostname="switch", ip="10.1.10.1", extra=None):
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=IPv4Address(ip),
+                ip_addresses=(IPv4Address(ip),),
                 dhcp_name=hostname,
             ),
         ],
@@ -336,3 +336,53 @@ class TestTrySNMPCredentials:
         assert result is None
         # Should only try once — "public" custom == "public" default
         assert mock_collect.call_count == 1
+
+
+class TestScanSNMPMultiIP:
+    @patch("gdoc2netcfg.supplements.snmp._try_snmp_credentials")
+    def test_tries_all_ips_until_success(self, mock_try, tmp_path):
+        """Should try SNMP on each reachable IP until one succeeds."""
+        # First IP fails, second succeeds
+        mock_try.side_effect = [
+            None,
+            {"snmp_version": "v2c", "system_info": {"sysName": "switch"}},
+        ]
+        reachability = {
+            "switch": HostReachability(
+                hostname="switch",
+                active_ips=("10.1.10.1", "2001:db8::1"),
+            ),
+        }
+        host = _make_host("switch", "10.1.10.1")
+        cache_path = tmp_path / "snmp.json"
+        result = scan_snmp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        assert "switch" in result
+        # Both IPs tried
+        assert mock_try.call_count == 2
+        assert mock_try.call_args_list[0].args[0] == "10.1.10.1"
+        assert mock_try.call_args_list[1].args[0] == "2001:db8::1"
+
+    @patch("gdoc2netcfg.supplements.snmp._try_snmp_credentials")
+    def test_stops_on_first_success(self, mock_try, tmp_path):
+        """Should stop trying IPs after the first SNMP success."""
+        mock_try.return_value = {
+            "snmp_version": "v2c",
+            "system_info": {"sysName": "switch"},
+        }
+        reachability = {
+            "switch": HostReachability(
+                hostname="switch",
+                active_ips=("10.1.10.1", "2001:db8::1"),
+            ),
+        }
+        host = _make_host("switch", "10.1.10.1")
+        cache_path = tmp_path / "snmp.json"
+        scan_snmp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        # Should only try first IP since it succeeded
+        mock_try.assert_called_once()

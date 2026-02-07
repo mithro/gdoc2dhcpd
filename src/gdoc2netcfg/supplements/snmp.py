@@ -188,20 +188,21 @@ def scan_snmp(
             continue
         active_ips = list(host_reach.active_ips)
 
-        # Try SNMP on the first active IP
-        ip = active_ips[0]
         if verbose:
             print(
-                f"  {host.hostname:>{name_width}s} snmp({ip}) ",
+                f"  {host.hostname:>{name_width}s} snmp({','.join(active_ips)}) ",
                 end="", flush=True, file=sys.stderr,
             )
 
-        data = _try_snmp_credentials(ip, host)
-        if data is not None:
-            snmp_data[host.hostname] = data
-            sys_name = data.get("system_info", {}).get("sysName", "?")
-            if verbose:
-                print(f"ok (sysName={sys_name})", file=sys.stderr)
+        # Try SNMP on each reachable IP until one succeeds
+        for ip in active_ips:
+            data = _try_snmp_credentials(ip, host)
+            if data is not None:
+                snmp_data[host.hostname] = data
+                sys_name = data.get("system_info", {}).get("sysName", "?")
+                if verbose:
+                    print(f"ok (sysName={sys_name})", file=sys.stderr)
+                break
         else:
             if verbose:
                 print("no-snmp", file=sys.stderr)

@@ -34,7 +34,7 @@ class TestBridgeData:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                    ipv4=IPv4Address("10.1.5.10"),
+                    ip_addresses=(IPv4Address("10.1.5.10"),),
                 ),
             ],
         )

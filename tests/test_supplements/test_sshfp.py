@@ -21,7 +21,7 @@ def _make_host(hostname, ip):
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=IPv4Address(ip),
+                ip_addresses=(IPv4Address(ip),),
             )
         ],
         default_ipv4=IPv4Address(ip),
@@ -173,3 +173,52 @@ class TestScanSSHFP:
         import json
         loaded = json.loads(cache_path.read_text())
         assert "server" in loaded
+
+    @patch("gdoc2netcfg.supplements.sshfp.check_port_open")
+    @patch("gdoc2netcfg.supplements.sshfp._keyscan")
+    def test_scan_all_reachable_ips(self, mock_keyscan, mock_port, tmp_path):
+        """SSH should be checked on all reachable IPs, not just the first."""
+        # Port 22 open on both v4 and v6
+        mock_port.return_value = True
+        mock_keyscan.return_value = ["server IN SSHFP 1 2 abc123"]
+        reachability = {
+            "server": HostReachability(
+                hostname="server",
+                active_ips=("10.1.10.1", "2001:db8::1"),
+            ),
+        }
+        host = _make_host("server", "10.1.10.1")
+        cache_path = tmp_path / "sshfp.json"
+        scan_sshfp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        # check_port_open should be called for both IPs
+        assert mock_port.call_count == 2
+        port_ips = sorted(call.args[0] for call in mock_port.call_args_list)
+        assert port_ips == ["10.1.10.1", "2001:db8::1"]
+
+        # keyscan should be called for both IPs with SSH
+        assert mock_keyscan.call_count == 2
+
+    @patch("gdoc2netcfg.supplements.sshfp.check_port_open")
+    @patch("gdoc2netcfg.supplements.sshfp._keyscan")
+    def test_scan_only_ips_with_ssh(self, mock_keyscan, mock_port, tmp_path):
+        """Only IPs with port 22 open should be keyscanned."""
+        # Port 22 open only on v4
+        mock_port.side_effect = lambda ip, port: ip == "10.1.10.1"
+        mock_keyscan.return_value = ["server IN SSHFP 1 2 abc123"]
+        reachability = {
+            "server": HostReachability(
+                hostname="server",
+                active_ips=("10.1.10.1", "2001:db8::1"),
+            ),
+        }
+        host = _make_host("server", "10.1.10.1")
+        cache_path = tmp_path / "sshfp.json"
+        scan_sshfp(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        # keyscan only called for the IP with SSH
+        mock_keyscan.assert_called_once_with("10.1.10.1", "server")

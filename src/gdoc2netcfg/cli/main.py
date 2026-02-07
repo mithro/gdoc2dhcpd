@@ -408,10 +408,15 @@ def _load_or_run_reachability(
     hosts: list[Host],
     force: bool = False,
 ) -> dict[str, HostReachability]:
-    """Load cached reachability or run a fresh scan."""
+    """Load cached reachability or run a fresh scan.
+
+    Per-host status is always printed to stderr — either progressively
+    during the live scan or from cached data after loading.
+    """
     from gdoc2netcfg.supplements.reachability import (
         check_all_hosts_reachability,
         load_reachability_cache,
+        print_reachability_status,
         save_reachability_cache,
     )
 
@@ -425,6 +430,7 @@ def _load_or_run_reachability(
                 f"Using cached reachability ({age:.0f}s old).",
                 file=sys.stderr,
             )
+            print_reachability_status(cached)
             return cached
 
     print("Checking host reachability...", file=sys.stderr)
@@ -440,7 +446,19 @@ def _print_reachability_summary(
     """Print a one-line reachability summary to stderr."""
     hosts_up = sum(1 for r in reachability.values() if r.is_up)
     hosts_down = sum(1 for r in reachability.values() if not r.is_up)
-    print(f"{hosts_up} up, {hosts_down} down, {len(hosts)} total.", file=sys.stderr)
+    dual = sum(1 for r in reachability.values() if r.reachability_mode == "dual-stack")
+    v4only = sum(1 for r in reachability.values() if r.reachability_mode == "ipv4-only")
+    v6only = sum(1 for r in reachability.values() if r.reachability_mode == "ipv6-only")
+    parts = [
+        f"{dual} v46 - dual-stack",
+        f"{v4only} v4_ - IPv4 only",
+        f"{v6only} v_6 - IPv6 only",
+    ]
+    breakdown = f" ({', '.join(parts)})"
+    print(
+        f"{hosts_up} up{breakdown}, {hosts_down} down, {len(hosts)} total.",
+        file=sys.stderr,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +483,10 @@ def cmd_reachability(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    reachability = _load_or_run_reachability(config, hosts, force=args.force)
+    reachability = _load_or_run_reachability(
+        config, hosts, force=args.force,
+    )
+
     _print_reachability_summary(reachability, hosts)
 
     return 0

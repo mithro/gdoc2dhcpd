@@ -36,7 +36,7 @@ def _make_switch_with_bridge(hostname, vlan_names, **kwargs):
             NetworkInterface(
                 name="manage",
                 mac=MACAddress.parse("08:bd:43:6b:b8:d8"),
-                ipv4=IPv4Address("10.1.5.11"),
+                ip_addresses=(IPv4Address("10.1.5.11"),),
             ),
         ],
         hardware_type="netgear-switch",
@@ -83,7 +83,7 @@ class TestValidateVlanNames:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                    ipv4=IPv4Address("10.1.10.5"),
+                    ip_addresses=(IPv4Address("10.1.10.5"),),
                 ),
             ],
         )
@@ -154,7 +154,7 @@ class TestValidateMacConnectivity:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                    ipv4=IPv4Address("10.1.10.5"),
+                    ip_addresses=(IPv4Address("10.1.10.5"),),
                     vlan_id=10,
                 ),
             ],
@@ -220,7 +220,7 @@ class TestValidateMacConnectivity:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("Aa:Bb:Cc:Dd:Ee:Ff"),
-                    ipv4=IPv4Address("10.1.10.5"),
+                    ip_addresses=(IPv4Address("10.1.10.5"),),
                 ),
             ],
         )
@@ -257,7 +257,7 @@ class TestValidateMacConnectivity:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                    ipv4=IPv4Address("10.1.10.5"),
+                    ip_addresses=(IPv4Address("10.1.10.5"),),
                 ),
             ],
         )
@@ -305,7 +305,7 @@ class TestValidateLldpTopology:
                 NetworkInterface(
                     name="manage",
                     mac=MACAddress.parse("c8:00:84:89:71:70"),
-                    ipv4=IPv4Address("10.1.5.35"),
+                    ip_addresses=(IPv4Address("10.1.5.35"),),
                 ),
             ],
             hardware_type="netgear-switch",
@@ -358,7 +358,7 @@ class TestValidateLldpTopology:
                 NetworkInterface(
                     name="manage",
                     mac=MACAddress.parse("aa:bb:cc:00:11:22"),
-                    ipv4=IPv4Address("10.1.5.50"),
+                    ip_addresses=(IPv4Address("10.1.5.50"),),
                 ),
             ],
         )
@@ -395,7 +395,7 @@ class TestValidateLldpTopology:
                 NetworkInterface(
                     name=None,
                     mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                    ipv4=IPv4Address("10.1.10.5"),
+                    ip_addresses=(IPv4Address("10.1.10.5"),),
                 ),
             ],
         )
@@ -414,7 +414,7 @@ class TestValidateLldpTopology:
                 NetworkInterface(
                     name="manage",
                     mac=MACAddress.parse("c8:00:84:89:71:70"),
-                    ipv4=IPv4Address("10.1.5.35"),
+                    ip_addresses=(IPv4Address("10.1.5.35"),),
                 ),
             ],
         )

@@ -29,6 +29,10 @@ generate: $(VENV)/.stamp ## Generate configs into out/ (use ARGS= for specific g
 fetch: $(VENV)/.stamp ## Download CSVs from Google Sheets
 	$(VENV_BIN)/gdoc2netcfg fetch
 
+.PHONY: reachability
+reachability: $(VENV)/.stamp ## Ping all hosts and report which are up/down
+	$(VENV_BIN)/gdoc2netcfg reachability $(ARGS)
+
 .PHONY: scan
 scan: $(VENV)/.stamp ## Run reachability check then all network scans
 	@echo "=== reachability ==="

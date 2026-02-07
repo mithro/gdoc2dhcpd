@@ -2,14 +2,17 @@
 
 import json
 import os
+import socket
 import time
 from unittest.mock import patch
 
-from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
+from gdoc2netcfg.models.addressing import IPv4Address, IPv6Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface
 from gdoc2netcfg.supplements.reachability import (
     HostReachability,
+    InterfaceReachability,
     PingResult,
+    _detect_ip_version,
     check_all_hosts_reachability,
     check_port_open,
     check_reachable,
@@ -129,7 +132,12 @@ class TestCheckPortOpen:
         mock_sock.close.assert_called_once()
 
 
-def _make_host(hostname, ip):
+def _make_ipv6(addr):
+    """Create an IPv6Address with a dummy prefix (for test convenience)."""
+    return IPv6Address(addr, prefix="2001:db8:1:")
+
+
+def _make_host(hostname, ip, ipv6_addrs=None):
     return Host(
         machine_name=hostname,
         hostname=hostname,
@@ -137,19 +145,25 @@ def _make_host(hostname, ip):
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=IPv4Address(ip),
+                ip_addresses=(
+                    IPv4Address(ip),
+                    *[_make_ipv6(a) for a in (ipv6_addrs or [])],
+                ),
             )
         ],
         default_ipv4=IPv4Address(ip),
     )
 
 
-def _make_multi_iface_host(hostname, ips):
+def _make_multi_iface_host(hostname, ips, ipv6_per_iface=None):
     ifaces = [
         NetworkInterface(
             name=f"eth{i}",
             mac=MACAddress.parse(f"aa:bb:cc:dd:ee:{i:02x}"),
-            ipv4=IPv4Address(ip),
+            ip_addresses=(
+                IPv4Address(ip),
+                *[_make_ipv6(a) for a in (ipv6_per_iface or {}).get(i, [])],
+            ),
         )
         for i, ip in enumerate(ips)
     ]
@@ -248,12 +262,38 @@ class TestCheckAllHostsReachability:
         assert "alpha.example.com" in result
 
 
+def _make_hr(hostname, pings_per_iface):
+    """Build a HostReachability with properly populated interfaces.
+
+    Args:
+        hostname: Host name.
+        pings_per_iface: List of lists of (ip, PingResult) tuples, one
+            inner list per interface.
+    """
+    ifaces = tuple(
+        InterfaceReachability(pings=tuple(pings))
+        for pings in pings_per_iface
+    )
+    active: list[str] = []
+    for ir in ifaces:
+        active.extend(ir.active_ips)
+    return HostReachability(
+        hostname=hostname,
+        active_ips=tuple(active),
+        interfaces=ifaces,
+    )
+
+
 class TestReachabilityCache:
     def test_save_and_load_roundtrip(self, tmp_path):
         cache_path = tmp_path / "reachability.json"
         data = {
-            "server": HostReachability(hostname="server", active_ips=("10.1.10.1",)),
-            "desktop": HostReachability(hostname="desktop", active_ips=()),
+            "server": _make_hr("server", [
+                [("10.1.10.1", PingResult(10, 10, 0.3))],
+            ]),
+            "desktop": _make_hr("desktop", [
+                [("10.1.10.2", PingResult(10, 0))],
+            ]),
         }
 
         save_reachability_cache(cache_path, data)
@@ -276,7 +316,9 @@ class TestReachabilityCache:
     def test_load_stale_file_returns_none(self, tmp_path):
         cache_path = tmp_path / "reachability.json"
         data = {
-            "server": HostReachability(hostname="server", active_ips=("10.1.10.1",)),
+            "server": _make_hr("server", [
+                [("10.1.10.1", PingResult(10, 10, 0.3))],
+            ]),
         }
         save_reachability_cache(cache_path, data)
 
@@ -289,7 +331,9 @@ class TestReachabilityCache:
     def test_fresh_file_within_max_age(self, tmp_path):
         cache_path = tmp_path / "reachability.json"
         data = {
-            "server": HostReachability(hostname="server", active_ips=("10.1.10.1",)),
+            "server": _make_hr("server", [
+                [("10.1.10.1", PingResult(10, 10, 0.3))],
+            ]),
         }
         save_reachability_cache(cache_path, data)
 
@@ -313,7 +357,9 @@ class TestReachabilityCache:
 
     def test_creates_parent_directories(self, tmp_path):
         cache_path = tmp_path / "deep" / "nested" / "reachability.json"
-        data = {"server": HostReachability(hostname="server", active_ips=())}
+        data = {"server": _make_hr("server", [
+            [("10.1.10.1", PingResult(10, 0))],
+        ])}
 
         save_reachability_cache(cache_path, data)
 
@@ -322,13 +368,82 @@ class TestReachabilityCache:
     def test_json_format_is_sorted(self, tmp_path):
         cache_path = tmp_path / "reachability.json"
         data = {
-            "zebra": HostReachability(hostname="zebra", active_ips=("10.1.10.3",)),
-            "alpha": HostReachability(hostname="alpha", active_ips=("10.1.10.1",)),
+            "zebra": _make_hr("zebra", [
+                [("10.1.10.3", PingResult(10, 10, 0.5))],
+            ]),
+            "alpha": _make_hr("alpha", [
+                [("10.1.10.1", PingResult(10, 10, 0.3))],
+            ]),
         }
         save_reachability_cache(cache_path, data)
 
         raw = json.loads(cache_path.read_text())
-        assert list(raw.keys()) == ["alpha", "zebra"]
+        assert list(raw["hosts"].keys()) == ["alpha", "zebra"]
+
+    def test_roundtrip_preserves_ping_stats(self, tmp_path):
+        """transmitted, received, and rtt_avg_ms survive save→load."""
+        cache_path = tmp_path / "reachability.json"
+        data = {
+            "server": _make_hr("server", [
+                [
+                    ("10.1.10.1", PingResult(10, 8, 1.234)),
+                    ("10.1.20.1", PingResult(10, 0)),
+                ],
+            ]),
+        }
+
+        save_reachability_cache(cache_path, data)
+        loaded, _ = load_reachability_cache(cache_path)
+
+        pings = loaded["server"].interfaces[0].pings
+        assert pings[0] == ("10.1.10.1", PingResult(10, 8, 1.234))
+        assert pings[1] == ("10.1.20.1", PingResult(10, 0, None))
+
+    def test_old_v1_format_returns_none(self, tmp_path):
+        """v1 cache format (flat {hostname: [ips]}) is rejected."""
+        cache_path = tmp_path / "reachability.json"
+        cache_path.write_text(json.dumps({
+            "server": ["10.1.10.1"],
+            "desktop": [],
+        }))
+
+        assert load_reachability_cache(cache_path) is None
+
+    def test_corrupt_v2_structure_returns_none(self, tmp_path):
+        """Malformed v2 JSON is rejected gracefully."""
+        cache_path = tmp_path / "reachability.json"
+
+        # version=2 but hosts has wrong structure
+        cache_path.write_text(json.dumps({
+            "version": 2,
+            "hosts": {"server": "not-a-dict"},
+        }))
+        assert load_reachability_cache(cache_path) is None
+
+        # version=2, missing "interfaces" key
+        cache_path.write_text(json.dumps({
+            "version": 2,
+            "hosts": {"server": {}},
+        }))
+        assert load_reachability_cache(cache_path) is None
+
+        # version=2, interfaces entry missing "ip"
+        cache_path.write_text(json.dumps({
+            "version": 2,
+            "hosts": {"server": {"interfaces": [[{"transmitted": 10}]]}},
+        }))
+        assert load_reachability_cache(cache_path) is None
+
+        # version=2, missing "hosts" key entirely
+        cache_path.write_text(json.dumps({"version": 2}))
+        assert load_reachability_cache(cache_path) is None
+
+        # version=2, interfaces is not a list
+        cache_path.write_text(json.dumps({
+            "version": 2,
+            "hosts": {"server": {"interfaces": "not-a-list"}},
+        }))
+        assert load_reachability_cache(cache_path) is None
 
 
 class TestSharedIPReachability:
@@ -345,3 +460,285 @@ class TestSharedIPReachability:
         assert result["roku"].active_ips == ("10.1.10.50",)
         # Should ping once, not twice
         mock_reachable.assert_called_once_with("10.1.10.50")
+
+
+# ---------------------------------------------------------------------------
+# New dual-stack tests
+# ---------------------------------------------------------------------------
+
+
+class TestIPVersionDetection:
+    def test_ipv4(self):
+        assert _detect_ip_version("10.1.10.1") == 4
+        assert _detect_ip_version("192.168.0.1") == 4
+
+    def test_ipv6(self):
+        assert _detect_ip_version("2001:db8::1") == 6
+        assert _detect_ip_version("::1") == 6
+        assert _detect_ip_version("2404:e80:a137:110::1") == 6
+
+    def test_invalid_raises(self):
+        import pytest
+        with pytest.raises(ValueError):
+            _detect_ip_version("not-an-ip")
+
+
+class TestCheckPortOpenDualStack:
+    @patch("gdoc2netcfg.supplements.reachability.socket.socket")
+    def test_ipv4_uses_af_inet(self, mock_socket_cls):
+        mock_sock = mock_socket_cls.return_value
+        mock_sock.connect_ex.return_value = 0
+        check_port_open("10.1.10.1", 22)
+        mock_socket_cls.assert_called_once_with(socket.AF_INET, socket.SOCK_STREAM)
+
+    @patch("gdoc2netcfg.supplements.reachability.socket.socket")
+    def test_ipv6_uses_af_inet6(self, mock_socket_cls):
+        mock_sock = mock_socket_cls.return_value
+        mock_sock.connect_ex.return_value = 0
+        check_port_open("2001:db8::1", 22)
+        mock_socket_cls.assert_called_once_with(socket.AF_INET6, socket.SOCK_STREAM)
+
+
+class TestInterfaceReachability:
+    def test_dual_stack(self):
+        ir = InterfaceReachability(pings=(
+            ("10.1.10.1", PingResult(10, 10, 1.0)),
+            ("2001:db8::1", PingResult(10, 10, 0.5)),
+        ))
+        assert ir.active_ips == ("10.1.10.1", "2001:db8::1")
+        assert ir.active_ipv4 == ("10.1.10.1",)
+        assert ir.active_ipv6 == ("2001:db8::1",)
+        assert ir.has_ipv4 is True
+        assert ir.has_ipv6 is True
+        assert ir.reachability_mode == "dual-stack"
+
+    def test_ipv4_only(self):
+        ir = InterfaceReachability(pings=(
+            ("10.1.10.1", PingResult(10, 10, 1.0)),
+            ("2001:db8::1", PingResult(10, 0)),
+        ))
+        assert ir.active_ips == ("10.1.10.1",)
+        assert ir.active_ipv4 == ("10.1.10.1",)
+        assert ir.active_ipv6 == ()
+        assert ir.has_ipv4 is True
+        assert ir.has_ipv6 is False
+        assert ir.reachability_mode == "ipv4-only"
+
+    def test_ipv6_only(self):
+        ir = InterfaceReachability(pings=(
+            ("10.1.10.1", PingResult(10, 0)),
+            ("2001:db8::1", PingResult(10, 10, 0.5)),
+        ))
+        assert ir.reachability_mode == "ipv6-only"
+        assert ir.has_ipv4 is False
+        assert ir.has_ipv6 is True
+
+    def test_unreachable(self):
+        ir = InterfaceReachability(pings=(
+            ("10.1.10.1", PingResult(10, 0)),
+            ("2001:db8::1", PingResult(10, 0)),
+        ))
+        assert ir.active_ips == ()
+        assert ir.reachability_mode == "unreachable"
+
+    def test_empty_pings(self):
+        ir = InterfaceReachability()
+        assert ir.active_ips == ()
+        assert ir.reachability_mode == "unreachable"
+
+    def test_immutable(self):
+        ir = InterfaceReachability(pings=(("10.1.10.1", PingResult(10, 10)),))
+        try:
+            ir.pings = ()
+            assert False, "Should have raised FrozenInstanceError"
+        except AttributeError:
+            pass
+
+
+class TestHostReachabilityDualStack:
+    def test_dual_stack(self):
+        hr = HostReachability(
+            hostname="server",
+            active_ips=("10.1.10.1", "2001:db8::1"),
+        )
+        assert hr.is_up is True
+        assert hr.active_ipv4 == ("10.1.10.1",)
+        assert hr.active_ipv6 == ("2001:db8::1",)
+        assert hr.has_ipv4 is True
+        assert hr.has_ipv6 is True
+        assert hr.reachability_mode == "dual-stack"
+
+    def test_ipv4_only(self):
+        hr = HostReachability(
+            hostname="server",
+            active_ips=("10.1.10.1",),
+        )
+        assert hr.reachability_mode == "ipv4-only"
+        assert hr.has_ipv4 is True
+        assert hr.has_ipv6 is False
+
+    def test_ipv6_only(self):
+        hr = HostReachability(
+            hostname="server",
+            active_ips=("2001:db8::1",),
+        )
+        assert hr.reachability_mode == "ipv6-only"
+        assert hr.has_ipv4 is False
+        assert hr.has_ipv6 is True
+
+    def test_unreachable(self):
+        hr = HostReachability(hostname="server")
+        assert hr.reachability_mode == "unreachable"
+        assert hr.has_ipv4 is False
+        assert hr.has_ipv6 is False
+
+    def test_multiple_ipv4_and_ipv6(self):
+        hr = HostReachability(
+            hostname="server",
+            active_ips=("10.1.10.1", "10.1.20.1", "2001:db8::1", "2001:db8::2"),
+        )
+        assert hr.active_ipv4 == ("10.1.10.1", "10.1.20.1")
+        assert hr.active_ipv6 == ("2001:db8::1", "2001:db8::2")
+        assert hr.reachability_mode == "dual-stack"
+
+    def test_interfaces_field(self):
+        ir = InterfaceReachability(pings=(("10.1.10.1", PingResult(10, 10)),))
+        hr = HostReachability(
+            hostname="server",
+            active_ips=("10.1.10.1",),
+            interfaces=(ir,),
+        )
+        assert len(hr.interfaces) == 1
+        assert hr.interfaces[0].active_ips == ("10.1.10.1",)
+
+
+class TestCheckAllHostsDualStack:
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_both_v4_and_v6_pinged(self, mock_reachable):
+        """Host with IPv6 should have both v4 and v6 pinged."""
+        mock_reachable.return_value = PingResult(10, 10, 1.0)
+        host = _make_host("server", "10.1.10.1", ipv6_addrs=["2001:db8::1"])
+
+        result = check_all_hosts_reachability([host])
+
+        assert result["server"].is_up is True
+        assert "10.1.10.1" in result["server"].active_ips
+        assert "2001:db8::1" in result["server"].active_ips
+        # Should have been called for both IPs
+        assert mock_reachable.call_count == 2
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_v4_up_v6_down(self, mock_reachable):
+        """IPv4 reachable but IPv6 not — should be ipv4-only."""
+        def side_effect(ip):
+            if ":" in ip:
+                return PingResult(10, 0)
+            return PingResult(10, 10, 1.0)
+
+        mock_reachable.side_effect = side_effect
+        host = _make_host("server", "10.1.10.1", ipv6_addrs=["2001:db8::1"])
+
+        result = check_all_hosts_reachability([host])
+
+        assert result["server"].is_up is True
+        assert result["server"].active_ips == ("10.1.10.1",)
+        assert result["server"].reachability_mode == "ipv4-only"
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_v6_up_v4_down(self, mock_reachable):
+        """IPv6 reachable but IPv4 not — should be ipv6-only."""
+        def side_effect(ip):
+            if ":" in ip:
+                return PingResult(10, 10, 0.5)
+            return PingResult(10, 0)
+
+        mock_reachable.side_effect = side_effect
+        host = _make_host("server", "10.1.10.1", ipv6_addrs=["2001:db8::1"])
+
+        result = check_all_hosts_reachability([host])
+
+        assert result["server"].is_up is True
+        assert result["server"].active_ips == ("2001:db8::1",)
+        assert result["server"].reachability_mode == "ipv6-only"
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_no_ipv6_only_v4_pinged(self, mock_reachable):
+        """Host without IPv6 addresses should only have IPv4 pinged."""
+        mock_reachable.return_value = PingResult(10, 10, 1.0)
+        host = _make_host("server", "10.1.10.1")
+
+        result = check_all_hosts_reachability([host])
+
+        assert result["server"].active_ips == ("10.1.10.1",)
+        mock_reachable.assert_called_once_with("10.1.10.1")
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_deduplication_across_v4_and_v6(self, mock_reachable):
+        """Same IP on multiple interfaces should only be pinged once."""
+        mock_reachable.return_value = PingResult(10, 10, 1.0)
+        # Two interfaces with same IPv4 but different IPv6
+        host = _make_multi_iface_host(
+            "server",
+            ["10.1.10.1", "10.1.10.1"],
+            ipv6_per_iface={0: ["2001:db8::1"], 1: ["2001:db8::1"]},
+        )
+
+        check_all_hosts_reachability([host])
+
+        # IPv4 and IPv6 each pinged once despite two interfaces
+        pinged_ips = sorted(call.args[0] for call in mock_reachable.call_args_list)
+        assert pinged_ips == ["10.1.10.1", "2001:db8::1"]
+
+    @patch("gdoc2netcfg.supplements.reachability.check_reachable")
+    def test_interface_reachability_populated(self, mock_reachable):
+        """check_all_hosts_reachability should populate interfaces field."""
+        mock_reachable.return_value = PingResult(10, 10, 1.0)
+        host = _make_host("server", "10.1.10.1", ipv6_addrs=["2001:db8::1"])
+
+        result = check_all_hosts_reachability([host])
+
+        hr = result["server"]
+        assert len(hr.interfaces) == 1
+        assert len(hr.interfaces[0].pings) == 2
+
+
+class TestReachabilityCacheDualStack:
+    def test_roundtrip_with_mixed_ips(self, tmp_path):
+        """Cache roundtrip with both IPv4 and IPv6 addresses."""
+        cache_path = tmp_path / "reachability.json"
+        data = {
+            "server": _make_hr("server", [
+                [
+                    ("10.1.10.1", PingResult(10, 10, 0.3)),
+                    ("2001:db8::1", PingResult(10, 10, 0.4)),
+                ],
+            ]),
+        }
+
+        save_reachability_cache(cache_path, data)
+        result = load_reachability_cache(cache_path)
+
+        assert result is not None
+        loaded, _ = result
+        assert loaded["server"].active_ips == ("10.1.10.1", "2001:db8::1")
+        assert loaded["server"].reachability_mode == "dual-stack"
+
+    def test_roundtrip_ipv6_only(self, tmp_path):
+        """Cache roundtrip with IPv6-only host."""
+        cache_path = tmp_path / "reachability.json"
+        data = {
+            "server": _make_hr("server", [
+                [
+                    ("10.1.10.1", PingResult(10, 0)),
+                    ("2001:db8::1", PingResult(10, 10, 0.5)),
+                ],
+            ]),
+        }
+
+        save_reachability_cache(cache_path, data)
+        result = load_reachability_cache(cache_path)
+
+        assert result is not None
+        loaded, _ = result
+        assert loaded["server"].active_ips == ("2001:db8::1",)
+        assert loaded["server"].reachability_mode == "ipv6-only"

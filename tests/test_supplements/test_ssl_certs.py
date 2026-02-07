@@ -24,8 +24,7 @@ def _make_host(hostname="desktop", ip="10.1.10.100"):
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("aa:bb:cc:dd:ee:ff"),
-                ipv4=IPv4Address(ip),
-                ipv6_addresses=[],
+                ip_addresses=(IPv4Address(ip),),
                 dhcp_name=hostname,
             ),
         ],
@@ -577,3 +576,67 @@ class TestCertificateFormats:
         today = date.today()
         assert result["expiry"] >= (today + timedelta(days=6)).isoformat()
         assert result["expiry"] <= (today + timedelta(days=8)).isoformat()
+
+
+class TestScanSSLCertsMultiIP:
+    @patch("gdoc2netcfg.supplements.ssl_certs._fetch_cert")
+    @patch("gdoc2netcfg.supplements.ssl_certs.check_port_open")
+    def test_checks_all_ips_for_https(self, mock_port, mock_fetch, tmp_path):
+        """Port 443 should be checked on all reachable IPs."""
+        mock_port.return_value = True
+        mock_fetch.return_value = {
+            "issuer": "Test CA",
+            "self_signed": False,
+            "valid": True,
+            "expiry": "2027-01-01",
+            "sans": ["server.example.com"],
+        }
+        reachability = {
+            "server": HostReachability(
+                hostname="server",
+                active_ips=("10.1.10.1", "2001:db8::1"),
+            ),
+        }
+        host = _make_host("server", "10.1.10.1")
+        cache_path = tmp_path / "ssl.json"
+        scan_ssl_certs(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        # check_port_open should be called for both IPs
+        assert mock_port.call_count == 2
+        port_ips = sorted(call.args[0] for call in mock_port.call_args_list)
+        assert port_ips == ["10.1.10.1", "2001:db8::1"]
+
+    @patch("gdoc2netcfg.supplements.ssl_certs._fetch_cert")
+    @patch("gdoc2netcfg.supplements.ssl_certs.check_port_open")
+    def test_first_successful_cert_wins(self, mock_port, mock_fetch, tmp_path):
+        """Should use cert from first IP where fetch succeeds."""
+        mock_port.return_value = True
+        # First IP fails, second succeeds
+        mock_fetch.side_effect = [
+            None,
+            {
+                "issuer": "Test CA",
+                "self_signed": False,
+                "valid": True,
+                "expiry": "2027-01-01",
+                "sans": ["server.example.com"],
+            },
+        ]
+        reachability = {
+            "server": HostReachability(
+                hostname="server",
+                active_ips=("10.1.10.1", "2001:db8::1"),
+            ),
+        }
+        host = _make_host("server", "10.1.10.1")
+        cache_path = tmp_path / "ssl.json"
+        result = scan_ssl_certs(
+            [host], cache_path, force=True, reachability=reachability,
+        )
+
+        assert "server" in result
+        assert result["server"]["issuer"] == "Test CA"
+        # Both IPs should have been tried
+        assert mock_fetch.call_count == 2

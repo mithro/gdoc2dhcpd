@@ -114,11 +114,14 @@ def _make_dns_name(
     ipv6_addresses: "tuple[IPv6Address, ...] | list[IPv6Address]",
     is_fqdn: bool,
 ) -> DNSName:
-    """Create a DNSName with immutable IPv6 tuple."""
+    """Create a DNSName with unified ip_addresses tuple."""
+    ips: list["IPv4Address | IPv6Address"] = []
+    if ipv4 is not None:
+        ips.append(ipv4)
+    ips.extend(ipv6_addresses)
     return DNSName(
         name=name,
-        ipv4=ipv4,
-        ipv6_addresses=tuple(ipv6_addresses),
+        ip_addresses=tuple(ips),
         is_fqdn=is_fqdn,
     )
 

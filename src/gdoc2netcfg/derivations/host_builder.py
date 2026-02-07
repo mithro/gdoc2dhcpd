@@ -17,7 +17,7 @@ from gdoc2netcfg.derivations.hardware import detect_hardware_type
 from gdoc2netcfg.derivations.ip_remap import filter_and_resolve_records
 from gdoc2netcfg.derivations.ipv6 import ipv4_to_ipv6_list
 from gdoc2netcfg.derivations.vlan import ip_to_subdomain, ip_to_vlan_id
-from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
+from gdoc2netcfg.models.addressing import IPv4Address, IPv6Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface, NetworkInventory
 from gdoc2netcfg.models.network import Site
 from gdoc2netcfg.sources.parser import DeviceRecord
@@ -40,11 +40,12 @@ def _build_interface(record: DeviceRecord, site: Site) -> NetworkInterface:
 
     dhcp_name = compute_dhcp_name(record.machine, record.interface, sheet_type)
 
+    ip_addresses: list[IPv4Address | IPv6Address] = [ipv4]
+    ip_addresses.extend(ipv6_addrs)
     return NetworkInterface(
         name=interface_name,
         mac=mac,
-        ipv4=ipv4,
-        ipv6_addresses=ipv6_addrs,
+        ip_addresses=tuple(ip_addresses),
         vlan_id=vlan_id,
         dhcp_name=dhcp_name,
     )
@@ -125,8 +126,7 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
                 iface = NetworkInterface(
                     name=None,
                     mac=iface.mac,
-                    ipv4=iface.ipv4,
-                    ipv6_addresses=iface.ipv6_addresses,
+                    ip_addresses=iface.ip_addresses,
                     vlan_id=iface.vlan_id,
                     dhcp_name=iface.dhcp_name,
                 )

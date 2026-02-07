@@ -106,24 +106,25 @@ def scan_sshfp(
                 end="", flush=True, file=sys.stderr,
             )
 
-        # Check SSH availability
-        ssh_ip = None
-        for ip in active_ips:
-            if check_port_open(ip, 22):
-                ssh_ip = ip
-                break
+        # Check SSH availability on all reachable IPs
+        ssh_ips = [ip for ip in active_ips if check_port_open(ip, 22)]
 
-        if ssh_ip is None:
+        if not ssh_ips:
             if verbose:
                 print("no-ssh", file=sys.stderr)
             continue
 
         if verbose:
-            print("with-ssh", file=sys.stderr)
+            print(f"with-ssh({','.join(ssh_ips)})", file=sys.stderr)
 
-        records = _keyscan(ssh_ip, host.hostname)
-        if records:
-            sshfp[host.hostname] = records
+        # Keyscan all IPs with SSH and merge records (deduplicated)
+        all_records: set[str] = set()
+        for ssh_ip in ssh_ips:
+            records = _keyscan(ssh_ip, host.hostname)
+            all_records.update(records)
+
+        if all_records:
+            sshfp[host.hostname] = sorted(all_records)
 
     save_sshfp_cache(cache_path, sshfp)
     return sshfp
