@@ -297,10 +297,11 @@ def load_reachability_cache(
     cache_path: Path,
     max_age: float = 300,
 ) -> tuple[dict[str, HostReachability], float] | None:
-    """Load cached reachability data from disk.
+    """Load cached reachability data from disk (v2 format).
 
     Returns (data, age_seconds) tuple if cache is fresh, or None if the
-    cache file is missing, older than max_age seconds, or corrupted.
+    cache file is missing, older than max_age seconds, corrupted, or
+    uses the old v1 format.
     """
     if not cache_path.exists():
         return None
@@ -312,13 +313,39 @@ def load_reachability_cache(
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
-    # Cache only persists host-level active_ips; per-interface detail
-    # (the `interfaces` field) is not saved and will be empty on load.
-    reachability = {
-        hostname: HostReachability(hostname=hostname, active_ips=tuple(ips))
-        for hostname, ips in data.items()
-    }
-    return (reachability, age)
+
+    # Reject old v1 format (flat {hostname: [ips]}) — triggers fresh scan.
+    if not isinstance(data, dict) or data.get("version") != 2:
+        return None
+
+    try:
+        reachability: dict[str, HostReachability] = {}
+        for hostname, host_data in data["hosts"].items():
+            ifaces: list[InterfaceReachability] = []
+            for iface_pings in host_data["interfaces"]:
+                pings: list[tuple[str, PingResult]] = []
+                for entry in iface_pings:
+                    pings.append((
+                        entry["ip"],
+                        PingResult(
+                            transmitted=entry["transmitted"],
+                            received=entry["received"],
+                            rtt_avg_ms=entry.get("rtt_avg_ms"),
+                        ),
+                    ))
+                ifaces.append(InterfaceReachability(pings=tuple(pings)))
+            # Derive active_ips from the reconstructed interfaces.
+            all_active: list[str] = []
+            for ir in ifaces:
+                all_active.extend(ir.active_ips)
+            reachability[hostname] = HostReachability(
+                hostname=hostname,
+                active_ips=tuple(all_active),
+                interfaces=tuple(ifaces),
+            )
+        return (reachability, age)
+    except (KeyError, TypeError, AttributeError):
+        return None
 
 
 def check_all_hosts_reachability(
