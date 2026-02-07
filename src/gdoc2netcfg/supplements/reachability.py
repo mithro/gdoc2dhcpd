@@ -201,7 +201,8 @@ _MODE_LABELS = {
 _LABEL_WIDTH = max(len(v) for v in _MODE_LABELS.values())
 
 
-_RTT_WIDTH = 8  # e.g. " 489.2ms"
+_PKT_WIDTH = 5   # e.g. "10/10" — assumes check_reachable(packets=10)
+_RTT_WIDTH = 8   # e.g. " 489.2ms"
 
 
 def _print_host_reachability(
@@ -285,7 +286,7 @@ def print_reachability_status(
 
     prefix_width = 2 + name_width + 1 + _LABEL_WIDTH + 2
     prefix = " " * prefix_width
-    cell_width = ip_width + 2 + 5 + 2 + _RTT_WIDTH
+    cell_width = ip_width + 2 + _PKT_WIDTH + 2 + _RTT_WIDTH
     cell_gap = 2
     term_width = shutil.get_terminal_size().columns
     avail = term_width - prefix_width
@@ -429,7 +430,7 @@ def check_all_hosts_reachability(
 
         prefix_width = 2 + name_width + 1 + _LABEL_WIDTH + 2
         prefix = " " * prefix_width
-        cell_width = ip_width + 2 + 5 + 2 + _RTT_WIDTH
+        cell_width = ip_width + 2 + _PKT_WIDTH + 2 + _RTT_WIDTH
         cell_gap = 2
         term_width = shutil.get_terminal_size().columns
         avail = term_width - prefix_width
