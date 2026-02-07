@@ -204,6 +204,20 @@ _LABEL_WIDTH = max(len(v) for v in _MODE_LABELS.values())
 _PKT_WIDTH = 5   # e.g. "10/10" — assumes check_reachable(packets=10)
 _RTT_WIDTH = 8   # e.g. " 489.2ms"
 
+# ANSI color codes for reachability display
+_CLR_HOST = {
+    "dual-stack": "92",    # bright green
+    "ipv4-only":  "32",    # green
+    "ipv6-only":  "33",    # yellow
+    "unreachable": "31",   # red
+}
+_CLR_RTT_GOOD = "32"       # green  (<10ms)
+_CLR_RTT_WARN = "33"       # yellow (10-100ms)
+_CLR_RTT_BAD  = "91"       # bright red (>100ms)
+_CLR_PKT_FULL = "32"       # green  (100%)
+_CLR_PKT_ZERO = "31"       # red    (0%)
+_CLR_PKT_PARTIAL = "33"    # yellow (partial)
+
 
 def _print_host_reachability(
     hr: HostReachability,
@@ -212,6 +226,7 @@ def _print_host_reachability(
     ip_width: int,
     cols: int,
     prefix: str,
+    use_color: bool = False,
 ) -> None:
     """Print one host's reachability line(s) to stderr.
 
@@ -220,23 +235,42 @@ def _print_host_reachability(
     """
     import sys
 
+    from gdoc2netcfg.utils.terminal import colorize
+
     label = _MODE_LABELS.get(hr.reachability_mode, "down")
+    host_clr = _CLR_HOST.get(hr.reachability_mode, "31")
+
+    # Pad hostname and label first, then wrap in color.
+    name_str = colorize(f"{hr.hostname:>{name_width}s}", host_clr, use_color)
+    label_str = colorize(f"{label:<{_LABEL_WIDTH}s}", host_clr, use_color)
 
     # Build cells from interface ping data.
     all_cells: list[str] = []
     for ir in hr.interfaces:
         for ip_str, ping in ir.pings:
             pkt = f"{ping.received:>2}/{ping.transmitted}"
+            if ping.received == ping.transmitted:
+                pkt = colorize(pkt, _CLR_PKT_FULL, use_color)
+            elif ping.received == 0:
+                pkt = colorize(pkt, _CLR_PKT_ZERO, use_color)
+            else:
+                pkt = colorize(pkt, _CLR_PKT_PARTIAL, use_color)
             if ping.rtt_avg_ms is not None:
                 rtt = f"{ping.rtt_avg_ms:>6.1f}ms"
+                if ping.rtt_avg_ms < 10:
+                    rtt = colorize(rtt, _CLR_RTT_GOOD, use_color)
+                elif ping.rtt_avg_ms < 100:
+                    rtt = colorize(rtt, _CLR_RTT_WARN, use_color)
+                else:
+                    rtt = colorize(rtt, _CLR_RTT_BAD, use_color)
             else:
                 rtt = " " * _RTT_WIDTH
             all_cells.append(f"{ip_str:<{ip_width}s}  {pkt}  {rtt}")
 
     if not all_cells:
         print(
-            f"  {hr.hostname:>{name_width}s}"
-            f" {label:<{_LABEL_WIDTH}s}",
+            f"  {name_str}"
+            f" {label_str}",
             file=sys.stderr,
         )
         return
@@ -246,8 +280,8 @@ def _print_host_reachability(
         row = "  ".join(all_cells[row_start:row_start + cols])
         if first_row:
             print(
-                f"  {hr.hostname:>{name_width}s}"
-                f" {label:<{_LABEL_WIDTH}s}"
+                f"  {name_str}"
+                f" {label_str}"
                 f"  {row}",
                 file=sys.stderr,
             )
@@ -267,8 +301,12 @@ def print_reachability_status(
     import shutil
     import sys
 
+    from gdoc2netcfg.utils.terminal import use_color as _use_color
+
     if not reachability:
         return
+
+    color = _use_color()
 
     sorted_hosts = sorted(
         reachability.values(),
@@ -301,6 +339,7 @@ def print_reachability_status(
             ip_width=ip_width,
             cols=cols,
             prefix=prefix,
+            use_color=color,
         )
 
     print(file=sys.stderr)
@@ -428,6 +467,9 @@ def check_all_hosts_reachability(
     if verbose:
         import shutil
 
+        from gdoc2netcfg.utils.terminal import use_color as _use_color
+
+        color = _use_color()
         prefix_width = 2 + name_width + 1 + _LABEL_WIDTH + 2
         prefix = " " * prefix_width
         cell_width = ip_width + 2 + _PKT_WIDTH + 2 + _RTT_WIDTH
@@ -491,6 +533,7 @@ def check_all_hosts_reachability(
                     ip_width=ip_width,
                     cols=cols,
                     prefix=prefix,
+                    use_color=color,
                 )
 
     if verbose:
