@@ -15,7 +15,11 @@ def use_color(stream: TextIO = sys.stderr) -> bool:
     """True if the given stream is an interactive terminal and NO_COLOR is not set."""
     if os.environ.get("NO_COLOR"):
         return False
-    return hasattr(stream, "isatty") and stream.isatty()
+    try:
+        return hasattr(stream, "isatty") and stream.isatty()
+    except ValueError:
+        # Stream is closed (e.g. captured stderr in tests).
+        return False
 
 
 def colorize(text: str, code: str, enabled: bool) -> str:

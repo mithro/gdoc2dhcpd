@@ -38,6 +38,12 @@ class TestUseColor:
 
         assert use_color(FakeStream()) is False
 
+    def test_closed_stream_returns_false(self):
+        """Closed streams (e.g. captured stderr in tests) should not crash."""
+        stream = StringIO()
+        stream.close()
+        assert use_color(stream) is False
+
 
 class TestColorize:
     def test_wraps_text_when_enabled(self):
