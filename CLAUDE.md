@@ -24,6 +24,17 @@ Always use `uv run` to execute Python commands. Never use bare `python` or `pip`
 
 Make small, discrete commits as you work. Each logical unit of change (adding a helper function, wiring a parameter through the call chain, adding tests, updating docs) should be its own commit. Don't batch all changes into a single commit at the end.
 
+### Fail Loud, Never Fabricate
+
+**Never make up data.** If a value can't be resolved, computed, or looked up — raise an error. Don't generate synthetic placeholders, fallback names, or default values that hide the problem. Examples of things to never do:
+- Generating a fake port name like `f"port{bridge_port}"` when an ifIndex lookup fails
+- Substituting a default value when a required field is missing
+- Silently returning `None` or an empty result when something unexpected happens
+
+**Never silently discard data.** If a record, entry, or value can't be processed — raise an error. Don't skip it with `continue` or filter it out. Every piece of input data matters and unexpected data indicates a bug or a gap in our understanding that needs investigation.
+
+**Fail early and loud** so problems surface immediately and get fixed at the root cause. Silent fallbacks and graceful degradation turn small bugs into hard-to-diagnose data quality issues.
+
 ## Architecture
 
 `gdoc2netcfg` reads network device data from a Google Spreadsheet and generates configuration files for network infrastructure services (dnsmasq, Nagios, nginx).
