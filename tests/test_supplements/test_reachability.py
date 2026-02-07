@@ -434,6 +434,17 @@ class TestReachabilityCache:
         }))
         assert load_reachability_cache(cache_path) is None
 
+        # version=2, missing "hosts" key entirely
+        cache_path.write_text(json.dumps({"version": 2}))
+        assert load_reachability_cache(cache_path) is None
+
+        # version=2, interfaces is not a list
+        cache_path.write_text(json.dumps({
+            "version": 2,
+            "hosts": {"server": {"interfaces": "not-a-list"}},
+        }))
+        assert load_reachability_cache(cache_path) is None
+
 
 class TestSharedIPReachability:
     @patch("gdoc2netcfg.supplements.reachability.check_reachable")
