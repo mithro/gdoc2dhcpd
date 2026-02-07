@@ -344,7 +344,7 @@ def load_reachability_cache(
                 interfaces=tuple(ifaces),
             )
         return (reachability, age)
-    except (KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError, ValueError):
         return None
 
 
