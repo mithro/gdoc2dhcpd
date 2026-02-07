@@ -328,7 +328,7 @@ def print_reachability_status(
     cell_gap = 2
     term_width = shutil.get_terminal_size().columns
     avail = term_width - prefix_width
-    cols = max(1, avail // (cell_width + cell_gap))
+    cols = max(2, avail // (cell_width + cell_gap) & ~1)
 
     print(file=sys.stderr)
 
@@ -476,7 +476,7 @@ def check_all_hosts_reachability(
         cell_gap = 2
         term_width = shutil.get_terminal_size().columns
         avail = term_width - prefix_width
-        cols = max(1, avail // (cell_width + cell_gap))
+        cols = max(2, avail // (cell_width + cell_gap) & ~1)
 
         print(file=sys.stderr)
 
