@@ -429,8 +429,7 @@ def check_all_hosts_reachability(
 
         prefix_width = 2 + name_width + 1 + _LABEL_WIDTH + 2
         prefix = " " * prefix_width
-        rtt_width = 8  # e.g. " 489.2ms"
-        cell_width = ip_width + 2 + 5 + 2 + rtt_width
+        cell_width = ip_width + 2 + 5 + 2 + _RTT_WIDTH
         cell_gap = 2
         term_width = shutil.get_terminal_size().columns
         avail = term_width - prefix_width
@@ -485,36 +484,13 @@ def check_all_hosts_reachability(
 
             # Print this host immediately.
             if verbose:
-                label = _MODE_LABELS.get(hr.reachability_mode, "down")
-                first_row = True
-                for pings in iface_pings:
-                    cells = []
-                    for ip_str, ping in pings:
-                        pkt = f"{ping.received:>2}/{ping.transmitted}"
-                        if ping.rtt_avg_ms is not None:
-                            rtt = f"{ping.rtt_avg_ms:>6.1f}ms"
-                        else:
-                            rtt = " " * rtt_width
-                        cells.append(
-                            f"{ip_str:<{ip_width}s}  {pkt}  {rtt}"
-                        )
-                    for row_start in range(0, len(cells), cols):
-                        row = "  ".join(
-                            cells[row_start:row_start + cols]
-                        )
-                        if first_row:
-                            print(
-                                f"  {host.hostname:>{name_width}s}"
-                                f" {label:<{_LABEL_WIDTH}s}"
-                                f"  {row}",
-                                file=sys.stderr,
-                            )
-                            first_row = False
-                        else:
-                            print(
-                                f"{prefix}{row}",
-                                file=sys.stderr,
-                            )
+                _print_host_reachability(
+                    hr,
+                    name_width=name_width,
+                    ip_width=ip_width,
+                    cols=cols,
+                    prefix=prefix,
+                )
 
     if verbose:
         print(file=sys.stderr)
