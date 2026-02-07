@@ -201,14 +201,67 @@ _MODE_LABELS = {
 _LABEL_WIDTH = max(len(v) for v in _MODE_LABELS.values())
 
 
+_RTT_WIDTH = 8  # e.g. " 489.2ms"
+
+
+def _print_host_reachability(
+    hr: HostReachability,
+    *,
+    name_width: int,
+    ip_width: int,
+    cols: int,
+    prefix: str,
+) -> None:
+    """Print one host's reachability line(s) to stderr.
+
+    Shared by both the cached display path and the live progressive
+    scan so that the output is identical regardless of source.
+    """
+    import sys
+
+    label = _MODE_LABELS.get(hr.reachability_mode, "down")
+
+    # Build cells from interface ping data.
+    all_cells: list[str] = []
+    for ir in hr.interfaces:
+        for ip_str, ping in ir.pings:
+            pkt = f"{ping.received:>2}/{ping.transmitted}"
+            if ping.rtt_avg_ms is not None:
+                rtt = f"{ping.rtt_avg_ms:>6.1f}ms"
+            else:
+                rtt = " " * _RTT_WIDTH
+            all_cells.append(f"{ip_str:<{ip_width}s}  {pkt}  {rtt}")
+
+    if not all_cells:
+        print(
+            f"  {hr.hostname:>{name_width}s}"
+            f" {label:<{_LABEL_WIDTH}s}",
+            file=sys.stderr,
+        )
+        return
+
+    first_row = True
+    for row_start in range(0, len(all_cells), cols):
+        row = "  ".join(all_cells[row_start:row_start + cols])
+        if first_row:
+            print(
+                f"  {hr.hostname:>{name_width}s}"
+                f" {label:<{_LABEL_WIDTH}s}"
+                f"  {row}",
+                file=sys.stderr,
+            )
+            first_row = False
+        else:
+            print(f"{prefix}{row}", file=sys.stderr)
+
+
 def print_reachability_status(
     reachability: dict[str, HostReachability],
 ) -> None:
     """Print per-host reachability status to stderr.
 
-    Works with both live scan results and cached data.  When the cache
-    is loaded, per-IP packet counts and RTT are not available so only
-    the active IPs are shown.
+    Uses full ping data from the v2 cache (or live scan) to show
+    packet counts and RTT for every IP, identical to live output.
     """
     import shutil
     import sys
@@ -222,14 +275,17 @@ def print_reachability_status(
     )
     name_width = max(len(hr.hostname) for hr in sorted_hosts)
 
+    # Gather all IPs from interface ping data for width calculation.
     all_ips: list[str] = []
     for hr in sorted_hosts:
-        all_ips.extend(hr.active_ips)
+        for ir in hr.interfaces:
+            for ip_str, _pr in ir.pings:
+                all_ips.append(ip_str)
     ip_width = max((len(ip) for ip in all_ips), default=1)
 
     prefix_width = 2 + name_width + 1 + _LABEL_WIDTH + 2
     prefix = " " * prefix_width
-    cell_width = ip_width
+    cell_width = ip_width + 2 + 5 + 2 + _RTT_WIDTH
     cell_gap = 2
     term_width = shutil.get_terminal_size().columns
     avail = term_width - prefix_width
@@ -238,28 +294,13 @@ def print_reachability_status(
     print(file=sys.stderr)
 
     for hr in sorted_hosts:
-        label = _MODE_LABELS.get(hr.reachability_mode, "down")
-        cells = [f"{ip:<{ip_width}s}" for ip in hr.active_ips]
-        if not cells:
-            print(
-                f"  {hr.hostname:>{name_width}s}"
-                f" {label:<{_LABEL_WIDTH}s}",
-                file=sys.stderr,
-            )
-            continue
-        first_row = True
-        for row_start in range(0, len(cells), cols):
-            row = "  ".join(cells[row_start:row_start + cols])
-            if first_row:
-                print(
-                    f"  {hr.hostname:>{name_width}s}"
-                    f" {label:<{_LABEL_WIDTH}s}"
-                    f"  {row}",
-                    file=sys.stderr,
-                )
-                first_row = False
-            else:
-                print(f"{prefix}{row}", file=sys.stderr)
+        _print_host_reachability(
+            hr,
+            name_width=name_width,
+            ip_width=ip_width,
+            cols=cols,
+            prefix=prefix,
+        )
 
     print(file=sys.stderr)
 
