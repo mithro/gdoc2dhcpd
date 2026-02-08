@@ -32,7 +32,7 @@ def test_host_nsdp_data_default_none():
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("00:09:5b:aa:bb:cc"),
-                ipv4=IPv4Address("10.1.20.1"),
+                ip_addresses=(IPv4Address("10.1.20.1"),),
                 dhcp_name="switch",
             ),
         ],
@@ -48,7 +48,7 @@ def test_host_nsdp_data_set():
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("00:09:5b:aa:bb:cc"),
-                ipv4=IPv4Address("10.1.20.1"),
+                ip_addresses=(IPv4Address("10.1.20.1"),),
                 dhcp_name="switch",
             ),
         ],

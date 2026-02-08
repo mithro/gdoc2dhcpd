@@ -35,7 +35,7 @@ def _make_host(hostname="gs110emx", ip="10.1.20.1", hardware_type="netgear-switc
             NetworkInterface(
                 name=None,
                 mac=MACAddress.parse("00:09:5b:aa:bb:cc"),
-                ipv4=IPv4Address(ip),
+                ip_addresses=(IPv4Address(ip),),
                 dhcp_name=hostname,
             ),
         ],
