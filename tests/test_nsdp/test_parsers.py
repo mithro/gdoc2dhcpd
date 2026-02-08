@@ -2,6 +2,8 @@
 
 import struct
 
+import pytest
+
 from nsdp.parsers import (
     parse_discovery_response,
     parse_igmp_snooping,
@@ -26,7 +28,8 @@ class TestParseIPv4:
         assert parse_ipv4(b"\x0a\x01\x14\x01") == "10.1.20.1"
 
     def test_wrong_length(self):
-        assert parse_ipv4(b"\x0a\x01") is None
+        with pytest.raises(ValueError, match="4 bytes"):
+            parse_ipv4(b"\x0a\x01")
 
 
 class TestParseMAC:
@@ -34,24 +37,24 @@ class TestParseMAC:
         assert parse_mac(b"\x00\x09\x5b\xaa\xbb\xcc") == "00:09:5b:aa:bb:cc"
 
     def test_wrong_length(self):
-        assert parse_mac(b"\x00\x09") is None
+        with pytest.raises(ValueError, match="6 bytes"):
+            parse_mac(b"\x00\x09")
 
 
 class TestParsePortStatus:
     def test_gigabit(self):
         ps = parse_port_status(b"\x01\x05\x01")
-        assert ps is not None
         assert ps.port_id == 1
         assert ps.speed is LinkSpeed.GIGABIT
 
     def test_down(self):
         ps = parse_port_status(b"\x03\x00\x01")
-        assert ps is not None
         assert ps.port_id == 3
         assert ps.speed is LinkSpeed.DOWN
 
     def test_wrong_length(self):
-        assert parse_port_status(b"\x01\x05") is None
+        with pytest.raises(ValueError, match="3 bytes"):
+            parse_port_status(b"\x01\x05")
 
 
 class TestParsePortStatistics:
@@ -62,25 +65,25 @@ class TestParsePortStatistics:
         data += struct.pack(">Q", 0)     # crc_errors
         data += b"\x00" * 24             # 6 unknown uint64 fields
         ps = parse_port_statistics(data)
-        assert ps is not None
         assert ps.port_id == 1
         assert ps.bytes_received == 1000
         assert ps.bytes_sent == 500
         assert ps.crc_errors == 0
 
     def test_wrong_length(self):
-        assert parse_port_statistics(b"\x01\x02") is None
+        with pytest.raises(ValueError, match="49 bytes"):
+            parse_port_statistics(b"\x01\x02")
 
 
 class TestParsePortPVID:
     def test_basic(self):
         pp = parse_port_pvid(b"\x05\x00\x64")  # port=5, vlan=100
-        assert pp is not None
         assert pp.port_id == 5
         assert pp.vlan_id == 100
 
     def test_wrong_length(self):
-        assert parse_port_pvid(b"\x05") is None
+        with pytest.raises(ValueError, match="3 bytes"):
+            parse_port_pvid(b"\x05")
 
 
 class TestParseVLANMembers:
@@ -90,13 +93,13 @@ class TestParseVLANMembers:
         data += bytes([0b11110000])    # ports 1-4 are members
         data += bytes([0b00010000])    # port 4 is tagged
         vm = parse_vlan_members(data, port_count=8)
-        assert vm is not None
         assert vm.vlan_id == 100
         assert vm.member_ports == frozenset({1, 2, 3, 4})
         assert vm.tagged_ports == frozenset({4})
 
     def test_wrong_length(self):
-        assert parse_vlan_members(b"\x00", port_count=8) is None
+        with pytest.raises(ValueError, match="4 bytes"):
+            parse_vlan_members(b"\x00", port_count=8)
 
 
 class TestParseDiscoveryResponse:
@@ -137,85 +140,80 @@ class TestParseDiscoveryResponse:
 class TestParsePortQoS:
     def test_valid(self):
         result = parse_port_qos(b"\x01\x08")
-        assert result is not None
         assert result.port_id == 1
         assert result.priority == 8
 
     def test_port_2_priority_3(self):
         result = parse_port_qos(b"\x02\x03")
-        assert result is not None
         assert result.port_id == 2
         assert result.priority == 3
 
     def test_invalid_length_too_short(self):
-        assert parse_port_qos(b"\x01") is None
+        with pytest.raises(ValueError, match="2 bytes"):
+            parse_port_qos(b"\x01")
 
     def test_invalid_length_too_long(self):
-        assert parse_port_qos(b"\x01\x02\x03") is None
+        with pytest.raises(ValueError, match="2 bytes"):
+            parse_port_qos(b"\x01\x02\x03")
 
 
 class TestParsePortMirroring:
     def test_disabled(self):
         result = parse_port_mirroring(b"\x00\x00\x00\x00")
-        assert result is not None
         assert result.destination_port == 0
         assert result.source_ports == frozenset()
 
     def test_enabled_single_source(self):
         # Dest port 10, source port 1 (bitmap 0x80 = 10000000)
         result = parse_port_mirroring(b"\x0a\x80\x00\x00")
-        assert result is not None
         assert result.destination_port == 10
         assert result.source_ports == frozenset({1})
 
     def test_enabled_multiple_sources(self):
         # Dest port 10, source ports 1,2 (bitmap 0xC0 = 11000000)
         result = parse_port_mirroring(b"\x0a\xc0\x00\x00")
-        assert result is not None
         assert result.destination_port == 10
         assert result.source_ports == frozenset({1, 2})
 
     def test_enabled_many_sources(self):
         # Dest port 5, source ports 1,2,3,4,5,6,7,8 (bitmap 0xFF 0x00 0x00)
         result = parse_port_mirroring(b"\x05\xff\x00\x00")
-        assert result is not None
         assert result.destination_port == 5
         assert result.source_ports == frozenset({1, 2, 3, 4, 5, 6, 7, 8})
 
     def test_invalid_length_too_short(self):
-        assert parse_port_mirroring(b"\x0a\xc0") is None
+        with pytest.raises(ValueError, match="4 bytes"):
+            parse_port_mirroring(b"\x0a\xc0")
 
     def test_invalid_length_too_long(self):
-        assert parse_port_mirroring(b"\x0a\xc0\x00\x00\x00") is None
+        with pytest.raises(ValueError, match="4 bytes"):
+            parse_port_mirroring(b"\x0a\xc0\x00\x00\x00")
 
 
 class TestParseIGMPSnooping:
     def test_enabled(self):
         result = parse_igmp_snooping(b"\x00\x01\x00\x01")
-        assert result is not None
         assert result.enabled is True
 
     def test_disabled(self):
         result = parse_igmp_snooping(b"\x00\x00\x00\x00")
-        assert result is not None
         assert result.enabled is False
 
     def test_enabled_with_vlan(self):
         # enabled, vlan_id = 10 in byte 3
         result = parse_igmp_snooping(b"\x00\x01\x00\x0a")
-        assert result is not None
         assert result.enabled is True
         assert result.vlan_id == 10
 
     def test_enabled_no_vlan(self):
         # enabled, vlan_id = 0 means None
         result = parse_igmp_snooping(b"\x00\x01\x00\x00")
-        assert result is not None
         assert result.enabled is True
         assert result.vlan_id is None
 
     def test_invalid_length_too_short(self):
-        assert parse_igmp_snooping(b"\x00") is None
+        with pytest.raises(ValueError, match="2 bytes"):
+            parse_igmp_snooping(b"\x00")
 
 
 class TestParseDiscoveryResponseNewTags:
