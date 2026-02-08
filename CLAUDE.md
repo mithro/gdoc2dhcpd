@@ -112,9 +112,11 @@ The letsencrypt generator (`letsencrypt.py`) produces per-host certbot scripts i
 
 ### Nginx Reverse Proxy
 
-The nginx generator (`nginx.py`) produces per-host reverse proxy server blocks under `sites-available/`. Each host gets four config file variants: `{fqdn}-http-public`, `{fqdn}-http-private`, `{fqdn}-https-public`, `{fqdn}-https-private`.
+The nginx generator (`nginx.py`) produces per-host config files under `sites-available/`. Each host gets four files: `{fqdn}-http-public`, `{fqdn}-http-private` (HTTP reverse proxy), `{fqdn}-stream` (stream upstream for TLS passthrough), and `{fqdn}-stream-map` (SNI map entries).
 
-Multi-interface hosts get a combined config file (per variant) containing an `upstream` block listing all interface IPs for round-robin failover with `proxy_next_upstream`, a root server block using the upstream, and per-interface server blocks with direct `proxy_pass`. Single-interface hosts produce simple direct `proxy_pass` configs.
+HTTPS is handled via stream SNI passthrough rather than http-module HTTPS blocks, ensuring consistent TLS behaviour for both IPv4 (proxied) and IPv6 (direct) paths. HTTP blocks include inline ACME challenge locations with `try_files` fallback to the backend for hosts handling their own ACME challenges.
+
+Multi-interface hosts get a combined HTTP config file (per variant) containing an `upstream` block listing all interface IPs for round-robin failover with `proxy_next_upstream`, a root server block using the upstream, and per-interface server blocks with direct `proxy_pass`. Their stream upstream uses `balancer_by_lua_file` for health-aware peer selection via a custom Lua HTTPS health checker (`stream-healthcheck.d/`). Single-interface hosts produce simple direct `proxy_pass` configs and direct stream server entries.
 
 ### Network Topology
 
