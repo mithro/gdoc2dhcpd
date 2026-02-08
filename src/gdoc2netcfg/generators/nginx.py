@@ -28,8 +28,18 @@ Admins activate configs via symlinks in sites-enabled/.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from gdoc2netcfg.models.host import DNSName, Host, NetworkInventory
 from gdoc2netcfg.utils.dns import is_safe_dns_name, is_safe_path
+
+
+class _UpstreamInfo(NamedTuple):
+    """Metadata for a generated upstream block, used for healthcheck config."""
+
+    name: str       # e.g. "tweed.welland.mithis.com-https-public-backend"
+    hc_type: str    # "http" or "https"
+    host: str       # e.g. "tweed.welland.mithis.com"
 
 
 def _is_nginx_name(dn: DNSName) -> bool:
@@ -118,6 +128,8 @@ def generate_nginx(
     acme_webroot: str = "/var/www/acme",
     htpasswd_file: str = "/etc/nginx/.htpasswd",
     https_listen: str = "",
+    lua_healthcheck_path: str = "/usr/share/lua/5.1/",
+    healthcheck_dir: str = "/etc/nginx/healthcheck.d",
 ) -> dict[str, str]:
     """Generate nginx reverse proxy configs for each host.
 
@@ -128,18 +140,29 @@ def generate_nginx(
             "" (default) → listen 443 / [::]:443
             "8443" → listen 8443 / [::]:8443
             "127.0.0.1:8443" → listen 127.0.0.1:8443 / [::1]:8443
+        lua_healthcheck_path: Base directory for lua-resty-upstream-healthcheck.
+            Used to set lua_package_path in nginx config.
+        healthcheck_dir: Runtime directory where nginx loads per-host
+            healthcheck .lua files from. The init_worker block scans this
+            directory at startup.
 
     Raises:
-        ValueError: If acme_webroot or htpasswd_file contain unsafe characters.
+        ValueError: If acme_webroot, htpasswd_file, lua_healthcheck_path,
+            or healthcheck_dir contain unsafe characters.
     """
     if not is_safe_path(acme_webroot):
         raise ValueError(f"Unsafe acme_webroot path: {acme_webroot!r}")
     if not is_safe_path(htpasswd_file):
         raise ValueError(f"Unsafe htpasswd_file path: {htpasswd_file!r}")
+    if not is_safe_path(lua_healthcheck_path):
+        raise ValueError(f"Unsafe lua_healthcheck_path: {lua_healthcheck_path!r}")
+    if not is_safe_path(healthcheck_dir):
+        raise ValueError(f"Unsafe healthcheck_dir: {healthcheck_dir!r}")
 
     listen_ipv4, listen_ipv6 = _parse_https_listen(https_listen)
 
     files: dict[str, str] = {}
+    healthcheck_hosts: list[tuple[str, list[_UpstreamInfo]]] = []
 
     # Shared ACME challenge snippet
     files["snippets/acme-challenge.conf"] = _acme_challenge_snippet(acme_webroot)
@@ -195,19 +218,25 @@ def generate_nginx(
                 str(vi.ipv4) for vi in host.virtual_interfaces
             ]
 
-            # Collect per-interface (name_list, ip) pairs
-            iface_configs: list[tuple[list[str], str]] = []
+            # Collect per-interface (name_list, ip, fqdn) tuples.
+            iface_configs: list[tuple[list[str], str, str]] = []
             for iface in host.interfaces:
                 if iface.name is None:
                     continue
                 dns_for_iface = iface_dns.get(iface.name, [])
+                iface_fqdns = [
+                    dn.name for dn in dns_for_iface
+                    if dn.is_fqdn and _is_nginx_name(dn)
+                ]
                 iface_names = [
                     dn.name for dn in dns_for_iface
                     if _is_nginx_name(dn)
                 ]
-                if not iface_names:
+                if not iface_names or not iface_fqdns:
                     continue
-                iface_configs.append((iface_names, str(iface.ipv4)))
+                iface_configs.append(
+                    (iface_names, str(iface.ipv4), iface_fqdns[0])
+                )
 
             _emit_combined_four_files(
                 files, primary_fqdn, root_names,
@@ -215,6 +244,30 @@ def generate_nginx(
                 has_valid_cert, htpasswd_file,
                 listen_ipv4, listen_ipv6,
             )
+
+            # Collect upstream metadata for per-host healthcheck config
+            host_upstreams = []
+            for suffix, _builder, _port in _VARIANT_BUILDERS:
+                upstream_name = f"{primary_fqdn}-{suffix}-backend"
+                hc_type = "https" if suffix.startswith("https") else "http"
+                host_upstreams.append(_UpstreamInfo(
+                    name=upstream_name,
+                    hc_type=hc_type,
+                    host=primary_fqdn,
+                ))
+            healthcheck_hosts.append((primary_fqdn, host_upstreams))
+
+    # Emit healthcheck config files if any multi-interface hosts exist
+    if healthcheck_hosts:
+        files["conf.d/lua-healthcheck.conf"] = _lua_healthcheck_conf(
+            lua_healthcheck_path,
+        )
+        files["conf.d/healthcheck-init.conf"] = _healthcheck_init_conf(
+            healthcheck_dir,
+        )
+        files["conf.d/healthcheck-status.conf"] = _healthcheck_status_conf()
+        for fqdn, upstreams in healthcheck_hosts:
+            files[f"healthcheck.d/{fqdn}.lua"] = _healthcheck_host_lua(upstreams)
 
     return files
 
@@ -253,7 +306,7 @@ def _emit_combined_four_files(
     primary_fqdn: str,
     root_names: list[str],
     all_ips: list[str],
-    iface_configs: list[tuple[list[str], str]],
+    iface_configs: list[tuple[list[str], str, str]],
     has_valid_cert: bool,
     htpasswd_file: str,
     listen_ipv4: str = "443",
@@ -261,10 +314,10 @@ def _emit_combined_four_files(
 ) -> None:
     """Emit four config files for a multi-interface host.
 
-    Each file contains its own upstream block (with a variant-specific
-    name to avoid conflicts when multiple variants are enabled), the
-    root server block (using upstream failover), and one server block
-    per named interface (using direct proxy_pass).
+    Each file contains upstream blocks (a round-robin failover upstream
+    for the root, plus one single-server upstream per interface named by
+    its FQDN), the root server block, and one server block per named
+    interface.
 
     HTTP variants use port 80 backends, HTTPS variants use port 443.
     """
@@ -272,6 +325,13 @@ def _emit_combined_four_files(
         upstream_name = f"{primary_fqdn}-{suffix}-backend"
         upstream_text = _upstream_block(upstream_name, all_ips, port=port)
         parts = [upstream_text]
+
+        # Per-interface upstream blocks (single server, named by FQDN)
+        for _iface_names, iface_ip, iface_fqdn in iface_configs:
+            iface_upstream = f"{iface_fqdn}-{suffix}-backend"
+            parts.append(
+                _upstream_block(iface_upstream, [iface_ip], port=port)
+            )
 
         # Root server block (upstream failover)
         parts.append(builder(
@@ -281,12 +341,13 @@ def _emit_combined_four_files(
             listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
         ))
 
-        # Per-interface server blocks (direct proxy_pass)
-        for iface_names, iface_ip in iface_configs:
+        # Per-interface server blocks (proxy_pass via named upstream)
+        for iface_names, _iface_ip, iface_fqdn in iface_configs:
+            iface_upstream = f"{iface_fqdn}-{suffix}-backend"
             parts.append(builder(
                 iface_names, primary_fqdn,
                 has_valid_cert, htpasswd_file,
-                target_ip=iface_ip,
+                upstream_name=iface_upstream,
                 listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
             ))
 
@@ -490,3 +551,124 @@ def _https_block(
         "",
     ])
     return "\n".join(lines)
+
+
+def _lua_healthcheck_conf(lua_path: str) -> str:
+    """Generate the lua-resty-upstream-healthcheck global config.
+
+    Sets up lua_package_path, shared memory zone for healthcheck state,
+    and disables socket logging errors (healthcheck probes to down
+    backends are expected to fail).
+    """
+    return (
+        f"lua_package_path \"{lua_path}?.lua;{lua_path}?/init.lua;;\";\n"
+        "lua_shared_dict healthcheck 1m;\n"
+        "# NB: lua_socket_log_errors is a global setting — it suppresses\n"
+        "# socket errors for ALL Lua modules, not just healthcheck probes.\n"
+        "lua_socket_log_errors off;\n"
+    )
+
+
+def _healthcheck_init_conf(healthcheck_dir: str) -> str:
+    """Generate a generic init_worker_by_lua_block that loads per-host files.
+
+    Scans the healthcheck_dir for .lua files and executes each one.
+    Per-host files contain their own upstream existence guards, so files
+    for disabled hosts (no upstream block in running config) are safely
+    skipped at runtime.
+    """
+    return (
+        "init_worker_by_lua_block {\n"
+        f'    local dir = "{healthcheck_dir}"\n'
+        '    local pipe = io.popen("ls " .. dir .. "/*.lua")\n'
+        "    if not pipe then return end\n"
+        "    for path in pipe:lines() do\n"
+        "        local fn, err = loadfile(path)\n"
+        "        if fn then\n"
+        "            local ok, exec_err = pcall(fn)\n"
+        "            if not ok then\n"
+        '                ngx.log(ngx.ERR, "healthcheck config error in ", '
+        "path, \": \", exec_err)\n"
+        "            end\n"
+        "        else\n"
+        '            ngx.log(ngx.ERR, "failed to load ", path, ": ", err)\n'
+        "        end\n"
+        "    end\n"
+        "    pipe:close()\n"
+        "}\n"
+    )
+
+
+def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
+    """Generate a per-host Lua file with spawn_checker calls.
+
+    Each file is self-contained: it requires the healthcheck and upstream
+    modules, defines a try_spawn helper that checks upstream existence
+    before spawning, then calls it for each variant.
+
+    The upstream existence check (get_primary_peers) means this file can
+    be deployed permanently — if the host's server config isn't enabled
+    (not symlinked into sites-enabled/), the upstreams won't exist and
+    the spawn calls are silently skipped.
+    """
+    lines = [
+        'local hc = require "resty.upstream.healthcheck"',
+        'local upstream_mod = require "ngx.upstream"',
+        "",
+        "local function try_spawn(opts)",
+        "    if not upstream_mod.get_primary_peers(opts.upstream) then",
+        "        return",
+        "    end",
+        "    local ok, err = hc.spawn_checker(opts)",
+        "    if not ok then",
+        '        ngx.log(ngx.ERR, "failed to spawn health checker for ",'
+        " opts.upstream, \": \", err)",
+        "    end",
+        "end",
+        "",
+    ]
+
+    for us in upstreams:
+        lines.append("try_spawn({")
+        checker_args = [
+            'shm = "healthcheck"',
+            f'upstream = "{us.name}"',
+            f'type = "{us.hc_type}"',
+            f'http_req = "GET / HTTP/1.0\\r\\nHost: {us.host}\\r\\n\\r\\n"',
+            "interval = 5000",
+            "timeout = 2000",
+            "fall = 3",
+            "rise = 2",
+            # 401/403 are valid because backends use auth_basic — a
+            # rejected-but-responding backend is still healthy.
+            "valid_statuses = {200, 301, 302, 401, 403}",
+        ]
+        if us.hc_type == "https":
+            checker_args.append("ssl_verify = false")
+        for arg in checker_args:
+            lines.append(f"    {arg},")
+        lines.append("})")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _healthcheck_status_conf() -> str:
+    """Generate the healthcheck status monitoring endpoint.
+
+    Listens on 127.0.0.1:8080 (localhost only) and exposes the
+    healthcheck status page at /upstream-status.
+    """
+    return (
+        "server {\n"
+        "    listen 127.0.0.1:8080;\n"
+        "\n"
+        "    location /upstream-status {\n"
+        "        default_type text/plain;\n"
+        "        content_by_lua_block {\n"
+        "            local hc = require \"resty.upstream.healthcheck\"\n"
+        "            ngx.say(hc.status_page())\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )

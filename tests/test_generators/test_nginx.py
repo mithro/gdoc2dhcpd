@@ -494,20 +494,19 @@ class TestMultiInterfaceHost:
         assert "eth0.rpi-sdr-kraken" not in root_block
         assert "wlan0.rpi-sdr-kraken" not in root_block
 
-    def test_interface_server_blocks_use_direct_proxy_pass(self):
+    def test_interface_server_blocks_use_named_upstream(self):
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        conf = files[f"sites-available/{fqdn}-http-public"]
         blocks = _extract_server_blocks(conf)
         eth0_block = blocks[1]
         wlan0_block = blocks[2]
 
-        assert "proxy_pass http://10.1.90.149;" in eth0_block
-        assert "proxy_pass http://10.1.90.150;" in wlan0_block
-        # No upstream in interface blocks
-        assert "proxy_next_upstream" not in eth0_block
-        assert "proxy_next_upstream" not in wlan0_block
+        # Per-interface blocks use named upstreams, not bare IPs
+        assert f"proxy_pass http://eth0.{fqdn}-http-public-backend;" in eth0_block
+        assert f"proxy_pass http://wlan0.{fqdn}-http-public-backend;" in wlan0_block
 
     def test_interface_server_blocks_have_interface_names(self):
         host = _make_multi_iface_host()
@@ -535,19 +534,19 @@ class TestMultiInterfaceHost:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-https-public"]
-        assert "upstream rpi-sdr-kraken.welland.mithis.com-https-public-backend {" in conf
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        conf = files[f"sites-available/{fqdn}-https-public"]
+        assert f"upstream {fqdn}-https-public-backend {{" in conf
         assert "server 10.1.90.149:443;" in conf
         assert "server 10.1.90.150:443;" in conf
         blocks = _extract_server_blocks(conf)
         assert len(blocks) == 3
-        # Root uses upstream
-        expected = "proxy_pass https://rpi-sdr-kraken.welland.mithis.com-https-public-backend;"
-        assert expected in blocks[0]
+        # Root uses round-robin upstream
+        assert f"proxy_pass https://{fqdn}-https-public-backend;" in blocks[0]
         assert "proxy_next_upstream error timeout http_502;" in blocks[0]
-        # Interfaces use direct IP
-        assert "proxy_pass https://10.1.90.149;" in blocks[1]
-        assert "proxy_pass https://10.1.90.150;" in blocks[2]
+        # Interfaces use per-interface named upstreams
+        assert f"proxy_pass https://eth0.{fqdn}-https-public-backend;" in blocks[1]
+        assert f"proxy_pass https://wlan0.{fqdn}-https-public-backend;" in blocks[2]
 
     def test_multi_iface_https_listen_in_all_server_blocks(self):
         """https_listen is applied to all server blocks in a multi-interface config."""
@@ -659,6 +658,193 @@ class TestSharedIPHost:
 
         fqdn = "server.welland.mithis.com"
         http_pub = files[f"sites-available/{fqdn}-http-public"]
-        # Upstream should have two entries, not three
-        assert http_pub.count("server 10.1.10.100:80;") == 1
-        assert http_pub.count("server 10.1.10.101:80;") == 1
+        # Extract the main round-robin upstream block (first one)
+        main_upstream_end = http_pub.index("}\n\n")
+        main_upstream = http_pub[:main_upstream_end]
+        # Main upstream should have two entries, not three
+        assert main_upstream.count("server 10.1.10.100:80;") == 1
+        assert main_upstream.count("server 10.1.10.101:80;") == 1
+
+
+class TestHealthcheck:
+    """Tests for lua-resty-upstream-healthcheck config generation."""
+
+    def test_no_healthcheck_files_for_single_interface_only(self):
+        """No conf.d/ or healthcheck.d/ files when only single-interface hosts."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        confd_files = [k for k in files if k.startswith("conf.d/")]
+        hcd_files = [k for k in files if k.startswith("healthcheck.d/")]
+        assert len(confd_files) == 0
+        assert len(hcd_files) == 0
+
+    def test_healthcheck_files_present_for_multi_interface_host(self):
+        """conf.d/ files and per-host .lua emitted for multi-interface host."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        assert "conf.d/lua-healthcheck.conf" in files
+        assert "conf.d/healthcheck-init.conf" in files
+        assert "conf.d/healthcheck-status.conf" in files
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        assert f"healthcheck.d/{fqdn}.lua" in files
+
+    def test_lua_healthcheck_conf_default_path(self):
+        """Default lua_package_path uses /usr/share/lua/5.1/."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        conf = files["conf.d/lua-healthcheck.conf"]
+        assert "lua_package_path" in conf
+        assert "/usr/share/lua/5.1/" in conf
+
+    def test_lua_healthcheck_conf_custom_path(self):
+        """Custom lua_healthcheck_path flows through to lua_package_path."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(
+            _make_inventory(host),
+            lua_healthcheck_path="/opt/lua/lib/",
+        )
+
+        conf = files["conf.d/lua-healthcheck.conf"]
+        assert "/opt/lua/lib/" in conf
+
+    def test_rejects_unsafe_lua_healthcheck_path(self):
+        """Path injection in lua_healthcheck_path is rejected."""
+        import pytest
+
+        host = _make_multi_iface_host()
+        with pytest.raises(ValueError, match="Unsafe lua_healthcheck_path"):
+            generate_nginx(
+                _make_inventory(host),
+                lua_healthcheck_path="/opt/lua'; evil;",
+            )
+
+    def test_per_host_lua_has_all_four_variants(self):
+        """Per-host .lua file contains spawn_checker for all 4 variants."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        assert f"{fqdn}-http-public-backend" in lua
+        assert f"{fqdn}-http-private-backend" in lua
+        assert f"{fqdn}-https-public-backend" in lua
+        assert f"{fqdn}-https-private-backend" in lua
+
+    def test_separate_lua_files_per_host(self):
+        """Each multi-interface host gets its own .lua file."""
+        h1 = _make_multi_iface_host(
+            hostname="host-a",
+            iface_ips={"eth0": "10.1.90.10", "eth1": "10.1.90.11"},
+        )
+        h2 = _make_multi_iface_host(
+            hostname="host-b",
+            iface_ips={"eth0": "10.1.90.20", "eth1": "10.1.90.21"},
+        )
+        files = generate_nginx(_make_inventory(h1, h2))
+
+        # Separate per-host .lua files
+        assert "healthcheck.d/host-a.welland.mithis.com.lua" in files
+        assert "healthcheck.d/host-b.welland.mithis.com.lua" in files
+        # Single generic init_worker block (no host-specific content)
+        init = files["conf.d/healthcheck-init.conf"]
+        assert init.count("init_worker_by_lua_block") == 1
+        assert "host-a" not in init
+        assert "host-b" not in init
+
+    def test_init_conf_scans_healthcheck_dir(self):
+        """Init conf is a generic loader that scans healthcheck.d/."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        init = files["conf.d/healthcheck-init.conf"]
+        assert "init_worker_by_lua_block" in init
+        assert "healthcheck.d" in init
+        assert "loadfile" in init
+
+    def test_init_conf_custom_healthcheck_dir(self):
+        """Custom healthcheck_dir flows through to init conf."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(
+            _make_inventory(host),
+            healthcheck_dir="/opt/nginx/hc.d",
+        )
+
+        init = files["conf.d/healthcheck-init.conf"]
+        assert "/opt/nginx/hc.d" in init
+
+    def test_rejects_unsafe_healthcheck_dir(self):
+        """Path injection in healthcheck_dir is rejected."""
+        import pytest
+
+        host = _make_multi_iface_host()
+        with pytest.raises(ValueError, match="Unsafe healthcheck_dir"):
+            generate_nginx(
+                _make_inventory(host),
+                healthcheck_dir="/etc/nginx/hc'; rm -rf /;",
+            )
+
+    def test_per_host_lua_checks_upstream_exists(self):
+        """Per-host .lua file guards against missing upstreams."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        assert "get_primary_peers" in lua
+
+    def test_status_conf_has_listener_and_endpoint(self):
+        """Status page config has correct listener and endpoint."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        status = files["conf.d/healthcheck-status.conf"]
+        assert "127.0.0.1:8080" in status
+        assert "/upstream-status" in status
+        assert "status_page" in status
+
+    def test_https_variants_have_ssl_verify_false(self):
+        """HTTPS healthcheck entries include ssl_verify = false."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        # Split into per-upstream blocks by try_spawn calls
+        blocks = lua.split("try_spawn(")
+        for block in blocks[1:]:  # skip preamble before first try_spawn
+            if 'type = "https"' in block:
+                assert "ssl_verify = false" in block, (
+                    "HTTPS upstream missing ssl_verify = false"
+                )
+            elif 'type = "http"' in block:
+                assert "ssl_verify" not in block, (
+                    "HTTP upstream should not have ssl_verify"
+                )
+
+    def test_mixed_hosts_only_multi_interface_in_healthcheck(self):
+        """Single-interface hosts are excluded from healthcheck files."""
+        single = _make_host(hostname="desktop", ip="10.1.10.100")
+        multi = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(single, multi))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        assert f"healthcheck.d/{fqdn}.lua" in files
+        hcd_files = [k for k in files if k.startswith("healthcheck.d/")]
+        assert len(hcd_files) == 1  # only the multi-interface host
+
+    def test_shared_ip_host_no_healthcheck(self):
+        """Shared-IP hosts (treated as single-interface) don't trigger healthcheck."""
+        shared = _make_multi_iface_host(
+            hostname="roku",
+            iface_ips={"eth0": "10.1.90.50", "wlan0": "10.1.90.50"},
+            subdomain="iot",
+        )
+        files = generate_nginx(_make_inventory(shared))
+
+        confd_files = [k for k in files if k.startswith("conf.d/")]
+        hcd_files = [k for k in files if k.startswith("healthcheck.d/")]
+        assert len(confd_files) == 0
+        assert len(hcd_files) == 0
