@@ -241,7 +241,7 @@ def scan_nsdp(
             "  Or grant capability: sudo setcap cap_net_raw+ep $(which python3)",
             file=sys.stderr,
         )
-    except Exception as e:
+    except OSError as e:
         print(f"Error during NSDP scan: {e}", file=sys.stderr)
 
     save_nsdp_cache(cache_path, nsdp_data)

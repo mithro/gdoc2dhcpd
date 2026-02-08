@@ -865,4 +865,4 @@ def enrich_hosts_with_bridge_data(
         )
 
         # Also set the unified switch_data
-        host.switch_data = bridge_to_switch_data(host.bridge_data, model=host.hostname)
+        host.switch_data = bridge_to_switch_data(host.bridge_data)
