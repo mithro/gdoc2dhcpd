@@ -129,6 +129,7 @@ def generate_nginx(
     htpasswd_file: str = "/etc/nginx/.htpasswd",
     https_listen: str = "",
     lua_healthcheck_path: str = "/usr/share/lua/5.1/",
+    healthcheck_dir: str = "/etc/nginx/healthcheck.d",
 ) -> dict[str, str]:
     """Generate nginx reverse proxy configs for each host.
 
@@ -141,10 +142,13 @@ def generate_nginx(
             "127.0.0.1:8443" → listen 127.0.0.1:8443 / [::1]:8443
         lua_healthcheck_path: Base directory for lua-resty-upstream-healthcheck.
             Used to set lua_package_path in nginx config.
+        healthcheck_dir: Runtime directory where nginx loads per-host
+            healthcheck .lua files from. The init_worker block scans this
+            directory at startup.
 
     Raises:
-        ValueError: If acme_webroot, htpasswd_file, or lua_healthcheck_path
-            contain unsafe characters.
+        ValueError: If acme_webroot, htpasswd_file, lua_healthcheck_path,
+            or healthcheck_dir contain unsafe characters.
     """
     if not is_safe_path(acme_webroot):
         raise ValueError(f"Unsafe acme_webroot path: {acme_webroot!r}")
@@ -152,11 +156,13 @@ def generate_nginx(
         raise ValueError(f"Unsafe htpasswd_file path: {htpasswd_file!r}")
     if not is_safe_path(lua_healthcheck_path):
         raise ValueError(f"Unsafe lua_healthcheck_path: {lua_healthcheck_path!r}")
+    if not is_safe_path(healthcheck_dir):
+        raise ValueError(f"Unsafe healthcheck_dir: {healthcheck_dir!r}")
 
     listen_ipv4, listen_ipv6 = _parse_https_listen(https_listen)
 
     files: dict[str, str] = {}
-    upstreams: list[_UpstreamInfo] = []
+    healthcheck_hosts: list[tuple[str, list[_UpstreamInfo]]] = []
 
     # Shared ACME challenge snippet
     files["snippets/acme-challenge.conf"] = _acme_challenge_snippet(acme_webroot)
@@ -233,23 +239,29 @@ def generate_nginx(
                 listen_ipv4, listen_ipv6,
             )
 
-            # Collect upstream metadata for healthcheck config
+            # Collect upstream metadata for per-host healthcheck config
+            host_upstreams = []
             for suffix, _builder, _port in _VARIANT_BUILDERS:
                 upstream_name = f"{primary_fqdn}-{suffix}-backend"
                 hc_type = "https" if suffix.startswith("https") else "http"
-                upstreams.append(_UpstreamInfo(
+                host_upstreams.append(_UpstreamInfo(
                     name=upstream_name,
                     hc_type=hc_type,
                     host=primary_fqdn,
                 ))
+            healthcheck_hosts.append((primary_fqdn, host_upstreams))
 
-    # Emit healthcheck config files if any upstreams were collected
-    if upstreams:
+    # Emit healthcheck config files if any multi-interface hosts exist
+    if healthcheck_hosts:
         files["conf.d/lua-healthcheck.conf"] = _lua_healthcheck_conf(
             lua_healthcheck_path,
         )
-        files["conf.d/healthcheck-init.conf"] = _healthcheck_init_conf(upstreams)
+        files["conf.d/healthcheck-init.conf"] = _healthcheck_init_conf(
+            healthcheck_dir,
+        )
         files["conf.d/healthcheck-status.conf"] = _healthcheck_status_conf()
+        for fqdn, upstreams in healthcheck_hosts:
+            files[f"healthcheck.d/{fqdn}.lua"] = _healthcheck_host_lua(upstreams)
 
     return files
 
@@ -536,18 +548,67 @@ def _lua_healthcheck_conf(lua_path: str) -> str:
     )
 
 
-def _healthcheck_init_conf(upstreams: list[_UpstreamInfo]) -> str:
-    """Generate the init_worker_by_lua_block with spawn_checker calls.
+def _healthcheck_init_conf(healthcheck_dir: str) -> str:
+    """Generate a generic init_worker_by_lua_block that loads per-host files.
 
-    Each upstream gets a healthcheck spawner with hardcoded parameters:
-    interval=5s, timeout=2s, fall=3, rise=2, valid HTTP statuses, and
-    ssl_verify=false for HTTPS upstreams.
+    Scans the healthcheck_dir for .lua files and executes each one.
+    Per-host files contain their own upstream existence guards, so files
+    for disabled hosts (no upstream block in running config) are safely
+    skipped at runtime.
     """
-    lines = ["init_worker_by_lua_block {"]
-    lines.append("    local hc = require \"resty.upstream.healthcheck\"")
-    lines.append("")
+    return (
+        "init_worker_by_lua_block {\n"
+        f'    local dir = "{healthcheck_dir}"\n'
+        '    local pipe = io.popen("ls " .. dir .. "/*.lua 2>/dev/null")\n'
+        "    if not pipe then return end\n"
+        "    for path in pipe:lines() do\n"
+        "        local fn, err = loadfile(path)\n"
+        "        if fn then\n"
+        "            local ok, exec_err = pcall(fn)\n"
+        "            if not ok then\n"
+        '                ngx.log(ngx.ERR, "healthcheck config error in ", '
+        "path, \": \", exec_err)\n"
+        "            end\n"
+        "        else\n"
+        '            ngx.log(ngx.ERR, "failed to load ", path, ": ", err)\n'
+        "        end\n"
+        "    end\n"
+        "    pipe:close()\n"
+        "}\n"
+    )
+
+
+def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
+    """Generate a per-host Lua file with spawn_checker calls.
+
+    Each file is self-contained: it requires the healthcheck and upstream
+    modules, defines a try_spawn helper that checks upstream existence
+    before spawning, then calls it for each variant.
+
+    The upstream existence check (get_primary_peers) means this file can
+    be deployed permanently — if the host's server config isn't enabled
+    (not symlinked into sites-enabled/), the upstreams won't exist and
+    the spawn calls are silently skipped.
+    """
+    lines = [
+        'local hc = require "resty.upstream.healthcheck"',
+        'local upstream_mod = require "ngx.upstream"',
+        "",
+        "local function try_spawn(opts)",
+        "    if not upstream_mod.get_primary_peers(opts.upstream) then",
+        "        return",
+        "    end",
+        "    local ok, err = hc.spawn_checker(opts)",
+        "    if not ok then",
+        '        ngx.log(ngx.ERR, "failed to spawn health checker for ",'
+        " opts.upstream, \": \", err)",
+        "    end",
+        "end",
+        "",
+    ]
 
     for us in upstreams:
+        lines.append("try_spawn({")
         checker_args = [
             'shm = "healthcheck"',
             f'upstream = "{us.name}"',
@@ -561,21 +622,11 @@ def _healthcheck_init_conf(upstreams: list[_UpstreamInfo]) -> str:
         ]
         if us.hc_type == "https":
             checker_args.append("ssl_verify = false")
-
-        lines.append("    local ok, err = hc.spawn_checker({")
         for arg in checker_args:
-            lines.append(f"        {arg},")
-        lines.append("    })")
-        lines.append("    if not ok then")
-        lines.append(
-            f"        ngx.log(ngx.ERR, "
-            f"\"failed to spawn health checker for {us.name}: \", err)"
-        )
-        lines.append("    end")
+            lines.append(f"    {arg},")
+        lines.append("})")
         lines.append("")
 
-    lines.append("}")
-    lines.append("")
     return "\n".join(lines)
 
 

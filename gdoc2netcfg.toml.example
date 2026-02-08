@@ -53,6 +53,7 @@ acme_webroot = "/var/www/acme"
 htpasswd_file = "/etc/nginx/.htpasswd"
 https_listen = "127.0.0.1:8443"
 # lua_healthcheck_path = "/usr/share/lua/5.1/"  # Path to lua-resty-upstream-healthcheck
+# healthcheck_dir = "/etc/nginx/healthcheck.d"  # Runtime dir for per-host healthcheck .lua files
 
 [generators.letsencrypt]
 auth_hook = "/opt/certbot/bin/certbot-hook-dnsmasq"
