@@ -193,7 +193,7 @@ def generate_nginx(
 
             _emit_four_files(
                 files, primary_fqdn, all_names, target_ip,
-                has_valid_cert, htpasswd_file,
+                has_valid_cert, htpasswd_file, acme_webroot,
                 listen_ipv4, listen_ipv6,
             )
         else:
@@ -241,7 +241,7 @@ def generate_nginx(
             _emit_combined_four_files(
                 files, primary_fqdn, root_names,
                 all_ips, iface_configs,
-                has_valid_cert, htpasswd_file,
+                has_valid_cert, htpasswd_file, acme_webroot,
                 listen_ipv4, listen_ipv6,
             )
 
@@ -279,15 +279,17 @@ def _emit_four_files(
     target_ip: str,
     has_valid_cert: bool,
     htpasswd_file: str,
+    acme_webroot: str = "/var/www/acme",
     listen_ipv4: str = "443",
     listen_ipv6: str = "[::]:443",
 ) -> None:
     """Emit the four config file variants for a single-interface host."""
     files[f"sites-available/{primary_fqdn}-http-public"] = _http_block(
-        all_names, target_ip, private=False,
+        all_names, target_ip, private=False, acme_webroot=acme_webroot,
     )
     files[f"sites-available/{primary_fqdn}-http-private"] = _http_block(
-        all_names, target_ip, private=True, htpasswd_file=htpasswd_file,
+        all_names, target_ip, private=True,
+        htpasswd_file=htpasswd_file, acme_webroot=acme_webroot,
     )
     files[f"sites-available/{primary_fqdn}-https-public"] = _https_block(
         all_names, target_ip, primary_fqdn,
@@ -309,6 +311,7 @@ def _emit_combined_four_files(
     iface_configs: list[tuple[list[str], str, str]],
     has_valid_cert: bool,
     htpasswd_file: str,
+    acme_webroot: str = "/var/www/acme",
     listen_ipv4: str = "443",
     listen_ipv6: str = "[::]:443",
 ) -> None:
@@ -337,6 +340,7 @@ def _emit_combined_four_files(
         parts.append(builder(
             root_names, primary_fqdn,
             has_valid_cert, htpasswd_file,
+            acme_webroot=acme_webroot,
             upstream_name=upstream_name,
             listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
         ))
@@ -347,6 +351,7 @@ def _emit_combined_four_files(
             parts.append(builder(
                 iface_names, primary_fqdn,
                 has_valid_cert, htpasswd_file,
+                acme_webroot=acme_webroot,
                 upstream_name=iface_upstream,
                 listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
             ))
@@ -359,12 +364,16 @@ def _build_http_public(
     primary_fqdn: str,
     has_valid_cert: bool,
     htpasswd_file: str,
+    acme_webroot: str = "/var/www/acme",
     upstream_name: str = "",
     target_ip: str = "",
     listen_ipv4: str = "443",
     listen_ipv6: str = "[::]:443",
 ) -> str:
-    return _http_block(names, target_ip, private=False, upstream_name=upstream_name)
+    return _http_block(
+        names, target_ip, private=False,
+        acme_webroot=acme_webroot, upstream_name=upstream_name,
+    )
 
 
 def _build_http_private(
@@ -372,6 +381,7 @@ def _build_http_private(
     primary_fqdn: str,
     has_valid_cert: bool,
     htpasswd_file: str,
+    acme_webroot: str = "/var/www/acme",
     upstream_name: str = "",
     target_ip: str = "",
     listen_ipv4: str = "443",
@@ -379,6 +389,7 @@ def _build_http_private(
 ) -> str:
     return _http_block(
         names, target_ip, private=True,
+        acme_webroot=acme_webroot,
         htpasswd_file=htpasswd_file, upstream_name=upstream_name,
     )
 
@@ -388,6 +399,7 @@ def _build_https_public(
     primary_fqdn: str,
     has_valid_cert: bool,
     htpasswd_file: str,
+    acme_webroot: str = "/var/www/acme",
     upstream_name: str = "",
     target_ip: str = "",
     listen_ipv4: str = "443",
@@ -405,6 +417,7 @@ def _build_https_private(
     primary_fqdn: str,
     has_valid_cert: bool,
     htpasswd_file: str,
+    acme_webroot: str = "/var/www/acme",
     upstream_name: str = "",
     target_ip: str = "",
     listen_ipv4: str = "443",
@@ -441,11 +454,43 @@ def _server_names(names: list[str]) -> str:
     return " ".join(names)
 
 
+def _acme_challenge_block(
+    acme_webroot: str,
+    proxy_target: str,
+) -> list[str]:
+    """Generate ACME challenge location blocks with fallback proxy.
+
+    Returns lines for two locations within an HTTP server block:
+    1. A primary location that tries serving from disk first
+    2. A named fallback location that proxies to the backend
+
+    The try_files directive serves local challenge files (for certbot
+    running on this nginx host) and falls back to proxying the request
+    to the backend (for backends that handle their own ACME challenges).
+    """
+    return [
+        "    location /.well-known/acme-challenge/ {",
+        f"        root {acme_webroot};",
+        "        auth_basic off;",
+        "        try_files $uri @acme_fallback;",
+        "    }",
+        "",
+        "    location @acme_fallback {",
+        f"        proxy_pass http://{proxy_target};",
+        "        proxy_http_version 1.1;",
+        "        proxy_set_header Host $host;",
+        "        proxy_set_header X-Real-IP $remote_addr;",
+        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        "        proxy_set_header X-Forwarded-Proto $scheme;",
+        "    }",
+    ]
+
 
 def _http_block(
     names: list[str],
     target_ip: str,
     private: bool,
+    acme_webroot: str = "/var/www/acme",
     htpasswd_file: str = "",
     upstream_name: str = "",
 ) -> str:
@@ -454,16 +499,19 @@ def _http_block(
     When upstream_name is set, proxy_pass targets the upstream and
     proxy_next_upstream is added for failover.
     """
+    proxy_target = upstream_name if upstream_name else target_ip
     lines = [
         "server {",
         "    listen 80;",
         "    listen [::]:80;",
         f"    server_name {_server_names(names)};",
         "",
-        "    include snippets/acme-challenge.conf;",
-        "",
-        "    location / {",
     ]
+
+    lines.extend(_acme_challenge_block(acme_webroot, proxy_target))
+    lines.append("")
+
+    lines.append("    location / {")
 
     if private:
         lines.append('        auth_basic "Restricted";')

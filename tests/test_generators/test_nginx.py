@@ -196,12 +196,15 @@ class TestHTTPBlock:
         block = files["sites-available/desktop.welland.mithis.com-http-public"]
         assert "proxy_pass http://10.1.10.100;" in block
 
-    def test_http_public_no_auth(self):
+    def test_http_public_no_auth_in_main_location(self):
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         block = files["sites-available/desktop.welland.mithis.com-http-public"]
-        assert "auth_basic" not in block
+        # auth_basic "Restricted" should NOT appear (that's the private variant)
+        assert 'auth_basic "Restricted"' not in block
+        # auth_basic off IS present in the ACME challenge block
+        assert "auth_basic off;" in block
 
     def test_http_private_has_auth(self):
         host = _make_host()
@@ -211,12 +214,23 @@ class TestHTTPBlock:
         assert 'auth_basic "Restricted";' in block
         assert "auth_basic_user_file" in block
 
-    def test_http_includes_acme_snippet(self):
+    def test_http_has_inline_acme_with_try_files(self):
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         block = files["sites-available/desktop.welland.mithis.com-http-public"]
-        assert "include snippets/acme-challenge.conf;" in block
+        assert "location /.well-known/acme-challenge/" in block
+        assert "root /var/www/acme;" in block
+        assert "auth_basic off;" in block
+        assert "try_files $uri @acme_fallback;" in block
+
+    def test_http_has_acme_fallback_proxy(self):
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "location @acme_fallback {" in block
+        assert "proxy_pass http://10.1.10.100;" in block
 
     def test_http_has_proxy_headers(self):
         host = _make_host()
@@ -236,6 +250,59 @@ class TestHTTPBlock:
         assert "proxy_http_version 1.1;" in block
         assert "proxy_set_header Upgrade $http_upgrade;" in block
         assert 'proxy_set_header Connection "upgrade";' in block
+
+
+class TestAcmeFallback:
+    def test_fallback_proxy_has_headers(self):
+        """@acme_fallback location has standard proxy headers."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        # Find the fallback section
+        fallback_start = block.index("@acme_fallback")
+        fallback = block[fallback_start:]
+        assert "proxy_set_header Host $host;" in fallback
+        assert "proxy_set_header X-Real-IP $remote_addr;" in fallback
+        assert "proxy_set_header X-Forwarded-For" in fallback
+        assert "proxy_set_header X-Forwarded-Proto" in fallback
+
+    def test_custom_webroot_in_acme_block(self):
+        """Custom acme_webroot flows through to inline ACME block."""
+        host = _make_host()
+        files = generate_nginx(
+            _make_inventory(host), acme_webroot="/srv/acme",
+        )
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "root /srv/acme;" in block
+
+    def test_multi_interface_fallback_uses_upstream(self):
+        """Multi-interface hosts use upstream name in ACME fallback."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        block = files[f"sites-available/{fqdn}-http-public"]
+        fallback_start = block.index("@acme_fallback")
+        fallback = block[fallback_start:]
+        # Should proxy to the upstream, not a bare IP
+        assert f"proxy_pass http://{fqdn}-http-public-backend;" in fallback
+
+    def test_no_include_snippet_in_http_block(self):
+        """HTTP blocks no longer use include for ACME — it's inline."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert "include snippets/acme-challenge.conf;" not in block
+
+    def test_snippet_file_still_generated(self):
+        """The snippet file is still generated for deployment compatibility."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        assert "snippets/acme-challenge.conf" in files
 
 
 class TestHTTPSBlock:
