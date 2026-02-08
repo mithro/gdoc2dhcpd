@@ -5,9 +5,10 @@ shared ACME challenge snippet. Each host gets four config file variants:
 
   - {fqdn}-http-public       HTTP, no auth
   - {fqdn}-http-private      HTTP, auth_basic
+  - {fqdn}-stream            Stream upstream block (TLS passthrough)
+  - {fqdn}-stream-map        SNI map entries for stream routing
 
-HTTPS is handled via stream SNI passthrough (generated separately as
-{fqdn}-stream and {fqdn}-stream-map files) rather than http-module
+HTTPS is handled via stream SNI passthrough rather than http-module
 HTTPS blocks, ensuring consistent TLS behavior for both IPv4 (proxied)
 and IPv6 (direct) paths.
 
@@ -100,12 +101,73 @@ def _upstream_block(upstream_name: str, ips: list[str], port: int = 80) -> str:
     return "\n".join(lines)
 
 
+def _stream_upstream_block(
+    upstream_name: str,
+    ips: list[str],
+    balancer_lua_path: str = "",
+) -> str:
+    """Generate a stream upstream block for TLS passthrough.
+
+    Single-interface hosts get a direct server entry.
+    Multi-interface hosts use a placeholder server with
+    balancer_by_lua_file for health-aware peer selection.
+    """
+    lines = [f"upstream {upstream_name} {{"]
+    if balancer_lua_path:
+        # Multi-interface: placeholder IP, Lua balancer selects real peer
+        lines.append("    server 0.0.0.1:443;  # placeholder")
+        lines.append(f"    balancer_by_lua_file {balancer_lua_path};")
+    else:
+        for ip in ips:
+            lines.append(f"    server {ip}:443;")
+    lines.append("}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _stream_map_entries(
+    upstream_name: str,
+    dns_names: list[str],
+) -> str:
+    """Generate bare SNI map entries for a host.
+
+    Each line maps a DNS name to the host's stream upstream. These are
+    included by the admin's hand-crafted map block via:
+        include /etc/nginx/sites-enabled/*-stream-map;
+    """
+    lines = []
+    for name in dns_names:
+        # Pad to align the upstream name (nginx map syntax: key value;)
+        lines.append(f"{name} {upstream_name};")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _emit_stream_files(
+    files: dict[str, str],
+    primary_fqdn: str,
+    all_nginx_names: list[str],
+    ips: list[str],
+    balancer_lua_path: str = "",
+) -> None:
+    """Emit stream upstream and SNI map files for a host."""
+    upstream_name = f"{primary_fqdn}-tls"
+
+    files[f"sites-available/{primary_fqdn}-stream"] = _stream_upstream_block(
+        upstream_name, ips, balancer_lua_path=balancer_lua_path,
+    )
+    files[f"sites-available/{primary_fqdn}-stream-map"] = _stream_map_entries(
+        upstream_name, all_nginx_names,
+    )
+
+
 def generate_nginx(
     inventory: NetworkInventory,
     acme_webroot: str = "/var/www/acme",
     htpasswd_file: str = "/etc/nginx/.htpasswd",
     lua_healthcheck_path: str = "/usr/share/lua/5.1/",
     healthcheck_dir: str = "/etc/nginx/healthcheck.d",
+    stream_healthcheck_dir: str = "/etc/nginx/stream-healthcheck.d",
 ) -> dict[str, str]:
     """Generate nginx reverse proxy configs for each host.
 
@@ -117,10 +179,13 @@ def generate_nginx(
         healthcheck_dir: Runtime directory where nginx loads per-host
             healthcheck .lua files from. The init_worker block scans this
             directory at startup.
+        stream_healthcheck_dir: Runtime directory for stream health check
+            Lua files. Used as the balancer_by_lua_file path in stream
+            upstream blocks for multi-interface hosts.
 
     Raises:
         ValueError: If acme_webroot, htpasswd_file, lua_healthcheck_path,
-            or healthcheck_dir contain unsafe characters.
+            healthcheck_dir, or stream_healthcheck_dir contain unsafe characters.
     """
     if not is_safe_path(acme_webroot):
         raise ValueError(f"Unsafe acme_webroot path: {acme_webroot!r}")
@@ -130,6 +195,8 @@ def generate_nginx(
         raise ValueError(f"Unsafe lua_healthcheck_path: {lua_healthcheck_path!r}")
     if not is_safe_path(healthcheck_dir):
         raise ValueError(f"Unsafe healthcheck_dir: {healthcheck_dir!r}")
+    if not is_safe_path(stream_healthcheck_dir):
+        raise ValueError(f"Unsafe stream_healthcheck_dir: {stream_healthcheck_dir!r}")
 
     files: dict[str, str] = {}
     healthcheck_hosts: list[tuple[str, list[_UpstreamInfo]]] = []
@@ -145,18 +212,24 @@ def generate_nginx(
         if not fqdns:
             continue
 
+        # Collect all nginx-eligible DNS names for stream map
+        all_nginx_names = [
+            dn.name for dn in host.dns_names
+            if _is_nginx_name(dn)
+        ]
+
         if not host.is_multi_interface():
             # Single-interface host
             primary_fqdn = fqdns[0]
-            all_names = [
-                dn.name for dn in host.dns_names
-                if _is_nginx_name(dn)
-            ]
             target_ip = str(host.default_ipv4)
 
             _emit_http_files(
-                files, primary_fqdn, all_names, target_ip,
+                files, primary_fqdn, all_nginx_names, target_ip,
                 htpasswd_file, acme_webroot,
+            )
+            _emit_stream_files(
+                files, primary_fqdn, all_nginx_names,
+                ips=[target_ip],
             )
         else:
             # Multi-interface host: single file per variant containing
@@ -204,6 +277,11 @@ def generate_nginx(
                 files, primary_fqdn, root_names,
                 all_ips, iface_configs,
                 htpasswd_file, acme_webroot,
+            )
+            balancer_path = f"{stream_healthcheck_dir}/balancer.lua"
+            _emit_stream_files(
+                files, primary_fqdn, all_nginx_names,
+                ips=all_ips, balancer_lua_path=balancer_path,
             )
 
             # Collect upstream metadata for per-host healthcheck config

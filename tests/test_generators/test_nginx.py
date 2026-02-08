@@ -60,17 +60,20 @@ class TestNginxFileStructure:
 
         assert "snippets/acme-challenge.conf" in files
 
-    def test_produces_two_http_files_per_host(self):
+    def test_produces_four_site_files_per_host(self):
+        """Each host gets 2 HTTP + 2 stream files."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 2
+        assert len(site_files) == 4
 
         prefixes = {f.split("/")[1] for f in site_files}
         assert f"{fqdn}-http-public" in prefixes
         assert f"{fqdn}-http-private" in prefixes
+        assert f"{fqdn}-stream" in prefixes
+        assert f"{fqdn}-stream-map" in prefixes
 
     def test_no_https_http_files_generated(self):
         """HTTPS is handled by stream SNI, not http-module blocks."""
@@ -275,13 +278,13 @@ class TestCustomHtpasswd:
 
 
 class TestMultipleHosts:
-    def test_two_hosts_produce_four_site_files(self):
+    def test_two_hosts_produce_eight_site_files(self):
         h1 = _make_host(hostname="desktop", ip="10.1.10.100")
         h2 = _make_host(hostname="server", ip="10.1.10.200")
         files = generate_nginx(_make_inventory(h1, h2))
 
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 4  # 2 per host
+        assert len(site_files) == 8  # 4 per host (2 HTTP + 2 stream)
 
     def test_each_host_uses_own_ip(self):
         h1 = _make_host(hostname="desktop", ip="10.1.10.100")
@@ -361,13 +364,13 @@ def _extract_server_blocks(config_text: str) -> list[str]:
 
 
 class TestMultiInterfaceHost:
-    def test_produces_two_files_not_six(self):
-        """Multi-interface hosts produce 2 HTTP files (one per variant)."""
+    def test_produces_four_files(self):
+        """Multi-interface hosts produce 2 HTTP + 2 stream files."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 2
+        assert len(site_files) == 4
 
     def test_file_contains_upstream_block(self):
         host = _make_multi_iface_host()
@@ -511,7 +514,7 @@ class TestSharedIPHost:
 
         fqdn = "roku.welland.mithis.com"
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 2
+        assert len(site_files) == 4  # 2 HTTP + 2 stream
 
         # Should use direct proxy_pass, not upstream
         http_pub = files[f"sites-available/{fqdn}-http-public"]
@@ -709,3 +712,86 @@ class TestHealthcheck:
         hcd_files = [k for k in files if k.startswith("healthcheck.d/")]
         assert len(confd_files) == 0
         assert len(hcd_files) == 0
+
+
+class TestStreamSNI:
+    """Tests for stream SNI passthrough config generation."""
+
+    def test_per_host_stream_file(self):
+        """Each host gets a sites-available/{fqdn}-stream file."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "desktop.welland.mithis.com"
+        assert f"sites-available/{fqdn}-stream" in files
+
+    def test_per_host_stream_map_file(self):
+        """Each host gets a sites-available/{fqdn}-stream-map file."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "desktop.welland.mithis.com"
+        assert f"sites-available/{fqdn}-stream-map" in files
+
+    def test_single_host_stream_upstream(self):
+        """Single-interface host gets direct server entry in stream upstream."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "desktop.welland.mithis.com"
+        stream = files[f"sites-available/{fqdn}-stream"]
+        assert f"upstream {fqdn}-tls {{" in stream
+        assert "server 10.1.10.100:443;" in stream
+        assert "balancer_by_lua_file" not in stream
+
+    def test_multi_interface_stream_upstream_has_balancer(self):
+        """Multi-interface host uses balancer_by_lua_file in stream upstream."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        stream = files[f"sites-available/{fqdn}-stream"]
+        assert f"upstream {fqdn}-tls {{" in stream
+        assert "server 0.0.0.1:443;" in stream
+        assert "balancer_by_lua_file" in stream
+
+    def test_stream_map_entries_for_all_fqdns(self):
+        """Stream map file has entries for all FQDN DNS names."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "desktop.welland.mithis.com"
+        stream_map = files[f"sites-available/{fqdn}-stream-map"]
+        # Root FQDN and subdomain variant
+        assert f"desktop.welland.mithis.com {fqdn}-tls;" in stream_map
+        assert f"desktop.int.welland.mithis.com {fqdn}-tls;" in stream_map
+        # ipv4 prefix variant
+        assert f"ipv4.desktop.welland.mithis.com {fqdn}-tls;" in stream_map
+
+    def test_no_ipv6_only_names_in_stream_map(self):
+        """IPv6-only DNS names are excluded from stream map."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "desktop.welland.mithis.com"
+        stream_map = files[f"sites-available/{fqdn}-stream-map"]
+        assert "ipv6.desktop.welland.mithis.com" not in stream_map
+
+    def test_no_https_http_files_generated(self):
+        """No *-https-* files in sites-available (stream replaces HTTPS)."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        https_files = [k for k in files if "https" in k and k.startswith("sites-available/")]
+        assert len(https_files) == 0
+
+    def test_healthcheck_lua_only_http_variants(self):
+        """HTTP health check .lua files have only HTTP variants, no HTTPS."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        # 2 try_spawn calls (http-public + http-private) + 1 function def
+        assert lua.count("try_spawn({\n") == 2
+        assert "https" not in lua
