@@ -631,7 +631,10 @@ class TestCmdCronShow:
 
         with (
             patch("shutil.which", return_value="/usr/bin/uv"),
-            patch("gdoc2netcfg.cli.cron.detect_project_root", return_value=Path("/opt/gdoc2netcfg")),
+            patch(
+                "gdoc2netcfg.cli.cron.detect_project_root",
+                return_value=Path("/opt/gdoc2netcfg"),
+            ),
         ):
             result = cmd_cron_show()
 
@@ -647,7 +650,10 @@ class TestCmdCronShow:
 
         with (
             patch("shutil.which", return_value="/home/tim/.local/bin/uv"),
-            patch("gdoc2netcfg.cli.cron.detect_project_root", return_value=Path("/opt/gdoc2netcfg")),
+            patch(
+                "gdoc2netcfg.cli.cron.detect_project_root",
+                return_value=Path("/opt/gdoc2netcfg"),
+            ),
         ):
             cmd_cron_show()
 
@@ -665,7 +671,10 @@ class TestCmdCronInstall:
 
         with (
             patch("shutil.which", return_value="/usr/bin/uv"),
-            patch("gdoc2netcfg.cli.cron.detect_project_root", return_value=Path("/opt/gdoc2netcfg")),
+            patch(
+                "gdoc2netcfg.cli.cron.detect_project_root",
+                return_value=Path("/opt/gdoc2netcfg"),
+            ),
             patch("gdoc2netcfg.cli.cron.read_current_crontab", return_value=""),
             patch("gdoc2netcfg.cli.cron.write_crontab") as mock_write,
         ):
@@ -683,8 +692,14 @@ class TestCmdCronInstall:
 
         with (
             patch("shutil.which", return_value="/usr/bin/uv"),
-            patch("gdoc2netcfg.cli.cron.detect_project_root", return_value=Path("/opt/gdoc2netcfg")),
-            patch("gdoc2netcfg.cli.cron.read_current_crontab", return_value="0 * * * * other-job\n"),
+            patch(
+                "gdoc2netcfg.cli.cron.detect_project_root",
+                return_value=Path("/opt/gdoc2netcfg"),
+            ),
+            patch(
+                "gdoc2netcfg.cli.cron.read_current_crontab",
+                return_value="0 * * * * other-job\n",
+            ),
             patch("gdoc2netcfg.cli.cron.write_crontab") as mock_write,
         ):
             cmd_cron_install()
@@ -724,7 +739,10 @@ class TestCmdCronUninstall:
         from gdoc2netcfg.cli.cron import cmd_cron_uninstall
 
         with (
-            patch("gdoc2netcfg.cli.cron.read_current_crontab", return_value="0 * * * * other-job\n"),
+            patch(
+                "gdoc2netcfg.cli.cron.read_current_crontab",
+                return_value="0 * * * * other-job\n",
+            ),
             patch("gdoc2netcfg.cli.cron.write_crontab") as mock_write,
         ):
             result = cmd_cron_uninstall()
