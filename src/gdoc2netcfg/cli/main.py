@@ -13,6 +13,7 @@ Subcommands:
     snmp-switch    Scan switches for bridge/topology data via SNMP.
     bridge         Unified switch data (scan, show).
     nsdp           NSDP switch discovery (scan, show).
+    password       Look up device credentials by hostname, IP, or MAC.
 """
 
 from __future__ import annotations
@@ -1342,6 +1343,88 @@ def cmd_nsdp_show(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: password
+# ---------------------------------------------------------------------------
+
+def cmd_password(args: argparse.Namespace) -> int:
+    """Look up device credentials by hostname, IP, or MAC."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.utils.lookup import (
+        available_credential_fields,
+        get_credential_fields,
+        lookup_host,
+        suggest_matches,
+    )
+
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    results = lookup_host(args.query, hosts, config.site.domain)
+
+    if not results:
+        print(f"Error: no device found matching '{args.query}'", file=sys.stderr)
+        suggestions = suggest_matches(args.query, hosts)
+        if suggestions:
+            print("Did you mean?", file=sys.stderr)
+            for s in suggestions:
+                print(f"  {s}", file=sys.stderr)
+        return 1
+
+    if len(results) > 1:
+        print(
+            f"Note: {len(results)} matches found, using best match.",
+            file=sys.stderr,
+        )
+
+    best = results[0]
+    host = best.host
+
+    cred = get_credential_fields(
+        host, args.credential_type, args.field_name,
+    )
+
+    if not cred:
+        what = args.field_name or args.credential_type or "password"
+        print(
+            f"Error: no '{what}' credential found for {host.hostname}",
+            file=sys.stderr,
+        )
+        available = available_credential_fields(host)
+        if available:
+            print("Available fields:", file=sys.stderr)
+            for f in available:
+                print(f"  {f}", file=sys.stderr)
+        return 1
+
+    if args.quiet:
+        for value in cred.values():
+            print(value)
+    else:
+        print(f"Host:       {host.hostname}")
+        if host.default_ipv4:
+            print(f"IP:         {host.default_ipv4}")
+        if host.all_macs:
+            print(f"MAC:        {host.all_macs[0]}")
+        print(f"Matched by: {best.match_detail}")
+        print()
+        for field_name, value in cred.items():
+            print(f"{field_name}: {value}")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1471,6 +1554,28 @@ def main(argv: list[str] | None = None) -> int:
 
     nsdp_subparsers.add_parser("show", help="Show cached NSDP data")
 
+    # password (device credential lookup)
+    pwd_parser = subparsers.add_parser(
+        "password", help="Look up device credentials",
+    )
+    pwd_parser.add_argument(
+        "query", help="Device: hostname, MAC address, or IP address",
+    )
+    pwd_type_group = pwd_parser.add_mutually_exclusive_group()
+    pwd_type_group.add_argument(
+        "--type", "-t", dest="credential_type",
+        choices=["password", "snmp", "ipmi"], default=None,
+        help="Credential type to look up (default: password)",
+    )
+    pwd_type_group.add_argument(
+        "--field", "-f", dest="field_name", default=None,
+        help="Arbitrary extra column name to look up",
+    )
+    pwd_parser.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="Output credential value(s) only (for piping/scripting)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -1511,6 +1616,7 @@ def main(argv: list[str] | None = None) -> int:
         "bmc-firmware": cmd_bmc_firmware,
         "snmp-switch": cmd_snmp_switch,
         "cron": cmd_cron,
+        "password": cmd_password,
     }
 
     return commands[args.command](args)
