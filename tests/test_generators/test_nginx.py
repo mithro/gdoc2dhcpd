@@ -494,20 +494,19 @@ class TestMultiInterfaceHost:
         assert "eth0.rpi-sdr-kraken" not in root_block
         assert "wlan0.rpi-sdr-kraken" not in root_block
 
-    def test_interface_server_blocks_use_direct_proxy_pass(self):
+    def test_interface_server_blocks_use_named_upstream(self):
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        conf = files[f"sites-available/{fqdn}-http-public"]
         blocks = _extract_server_blocks(conf)
         eth0_block = blocks[1]
         wlan0_block = blocks[2]
 
-        assert "proxy_pass http://10.1.90.149;" in eth0_block
-        assert "proxy_pass http://10.1.90.150;" in wlan0_block
-        # No upstream in interface blocks
-        assert "proxy_next_upstream" not in eth0_block
-        assert "proxy_next_upstream" not in wlan0_block
+        # Per-interface blocks use named upstreams, not bare IPs
+        assert f"proxy_pass http://eth0.{fqdn}-http-public-backend;" in eth0_block
+        assert f"proxy_pass http://wlan0.{fqdn}-http-public-backend;" in wlan0_block
 
     def test_interface_server_blocks_have_interface_names(self):
         host = _make_multi_iface_host()
@@ -535,19 +534,19 @@ class TestMultiInterfaceHost:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-https-public"]
-        assert "upstream rpi-sdr-kraken.welland.mithis.com-https-public-backend {" in conf
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        conf = files[f"sites-available/{fqdn}-https-public"]
+        assert f"upstream {fqdn}-https-public-backend {{" in conf
         assert "server 10.1.90.149:443;" in conf
         assert "server 10.1.90.150:443;" in conf
         blocks = _extract_server_blocks(conf)
         assert len(blocks) == 3
-        # Root uses upstream
-        expected = "proxy_pass https://rpi-sdr-kraken.welland.mithis.com-https-public-backend;"
-        assert expected in blocks[0]
+        # Root uses round-robin upstream
+        assert f"proxy_pass https://{fqdn}-https-public-backend;" in blocks[0]
         assert "proxy_next_upstream error timeout http_502;" in blocks[0]
-        # Interfaces use direct IP
-        assert "proxy_pass https://10.1.90.149;" in blocks[1]
-        assert "proxy_pass https://10.1.90.150;" in blocks[2]
+        # Interfaces use per-interface named upstreams
+        assert f"proxy_pass https://eth0.{fqdn}-https-public-backend;" in blocks[1]
+        assert f"proxy_pass https://wlan0.{fqdn}-https-public-backend;" in blocks[2]
 
     def test_multi_iface_https_listen_in_all_server_blocks(self):
         """https_listen is applied to all server blocks in a multi-interface config."""
@@ -659,9 +658,12 @@ class TestSharedIPHost:
 
         fqdn = "server.welland.mithis.com"
         http_pub = files[f"sites-available/{fqdn}-http-public"]
-        # Upstream should have two entries, not three
-        assert http_pub.count("server 10.1.10.100:80;") == 1
-        assert http_pub.count("server 10.1.10.101:80;") == 1
+        # Extract the main round-robin upstream block (first one)
+        main_upstream_end = http_pub.index("}\n\n")
+        main_upstream = http_pub[:main_upstream_end]
+        # Main upstream should have two entries, not three
+        assert main_upstream.count("server 10.1.10.100:80;") == 1
+        assert main_upstream.count("server 10.1.10.101:80;") == 1
 
 
 class TestHealthcheck:

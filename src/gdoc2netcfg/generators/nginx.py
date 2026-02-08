@@ -218,19 +218,25 @@ def generate_nginx(
                 str(vi.ipv4) for vi in host.virtual_interfaces
             ]
 
-            # Collect per-interface (name_list, ip) pairs
-            iface_configs: list[tuple[list[str], str]] = []
+            # Collect per-interface (name_list, ip, fqdn) tuples.
+            iface_configs: list[tuple[list[str], str, str]] = []
             for iface in host.interfaces:
                 if iface.name is None:
                     continue
                 dns_for_iface = iface_dns.get(iface.name, [])
+                iface_fqdns = [
+                    dn.name for dn in dns_for_iface
+                    if dn.is_fqdn and _is_nginx_name(dn)
+                ]
                 iface_names = [
                     dn.name for dn in dns_for_iface
                     if _is_nginx_name(dn)
                 ]
-                if not iface_names:
+                if not iface_names or not iface_fqdns:
                     continue
-                iface_configs.append((iface_names, str(iface.ipv4)))
+                iface_configs.append(
+                    (iface_names, str(iface.ipv4), iface_fqdns[0])
+                )
 
             _emit_combined_four_files(
                 files, primary_fqdn, root_names,
@@ -300,7 +306,7 @@ def _emit_combined_four_files(
     primary_fqdn: str,
     root_names: list[str],
     all_ips: list[str],
-    iface_configs: list[tuple[list[str], str]],
+    iface_configs: list[tuple[list[str], str, str]],
     has_valid_cert: bool,
     htpasswd_file: str,
     listen_ipv4: str = "443",
@@ -308,10 +314,10 @@ def _emit_combined_four_files(
 ) -> None:
     """Emit four config files for a multi-interface host.
 
-    Each file contains its own upstream block (with a variant-specific
-    name to avoid conflicts when multiple variants are enabled), the
-    root server block (using upstream failover), and one server block
-    per named interface (using direct proxy_pass).
+    Each file contains upstream blocks (a round-robin failover upstream
+    for the root, plus one single-server upstream per interface named by
+    its FQDN), the root server block, and one server block per named
+    interface.
 
     HTTP variants use port 80 backends, HTTPS variants use port 443.
     """
@@ -319,6 +325,13 @@ def _emit_combined_four_files(
         upstream_name = f"{primary_fqdn}-{suffix}-backend"
         upstream_text = _upstream_block(upstream_name, all_ips, port=port)
         parts = [upstream_text]
+
+        # Per-interface upstream blocks (single server, named by FQDN)
+        for _iface_names, iface_ip, iface_fqdn in iface_configs:
+            iface_upstream = f"{iface_fqdn}-{suffix}-backend"
+            parts.append(
+                _upstream_block(iface_upstream, [iface_ip], port=port)
+            )
 
         # Root server block (upstream failover)
         parts.append(builder(
@@ -328,12 +341,13 @@ def _emit_combined_four_files(
             listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
         ))
 
-        # Per-interface server blocks (direct proxy_pass)
-        for iface_names, iface_ip in iface_configs:
+        # Per-interface server blocks (proxy_pass via named upstream)
+        for iface_names, _iface_ip, iface_fqdn in iface_configs:
+            iface_upstream = f"{iface_fqdn}-{suffix}-backend"
             parts.append(builder(
                 iface_names, primary_fqdn,
                 has_valid_cert, htpasswd_file,
-                target_ip=iface_ip,
+                upstream_name=iface_upstream,
                 listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
             ))
 
