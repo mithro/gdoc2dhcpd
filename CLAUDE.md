@@ -101,10 +101,6 @@ Multi-interface hosts get a combined config file (per variant) containing an `up
 - `Host` — groups `NetworkInterface` entries for one machine, with default IP selection
 - `NetworkInventory` — the complete enriched model passed to generators
 
-### Legacy Shims
-
-Root-level scripts (`dnsmasq.py`, `sshfp.py`, `nagios.py`) are thin wrappers that delegate to the CLI. They exist for backward compatibility with production scripts.
-
 ## Production Deployment
 
 Deployed on two sites, both at `/opt/gdoc2netcfg/`:
