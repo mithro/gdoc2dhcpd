@@ -502,6 +502,18 @@ class TestRemoveManagedBlock:
         with pytest.raises(ValueError, match="BEGIN.*without.*END"):
             remove_managed_block(crontab)
 
+    def test_raises_on_end_without_begin(self):
+        """Should raise ValueError when END marker has no preceding BEGIN."""
+        from gdoc2netcfg.cli.cron import remove_managed_block
+
+        crontab = (
+            "0 * * * * other-job\n"
+            "# END gdoc2netcfg managed entries\n"
+            "30 * * * * another-job\n"
+        )
+        with pytest.raises(ValueError, match="END.*without.*BEGIN"):
+            remove_managed_block(crontab)
+
     def test_no_trailing_blank_lines(self):
         """Should not leave multiple trailing blank lines after removal."""
         from gdoc2netcfg.cli.cron import remove_managed_block
@@ -735,7 +747,7 @@ class TestCmdCronUninstall:
         assert "0 * * * * other-job" in written
 
     def test_noop_when_no_block(self, capsys):
-        """Should succeed even when no managed block exists."""
+        """Should not write crontab when no managed block exists."""
         from gdoc2netcfg.cli.cron import cmd_cron_uninstall
 
         with (
@@ -748,7 +760,25 @@ class TestCmdCronUninstall:
             result = cmd_cron_uninstall()
 
         assert result == 0
-        mock_write.assert_called_once()
+        mock_write.assert_not_called()
+        captured = capsys.readouterr()
+        assert "No gdoc2netcfg" in captured.err
+
+    def test_noop_when_empty_crontab(self, capsys):
+        """Should not write crontab when user has no crontab at all."""
+        from gdoc2netcfg.cli.cron import cmd_cron_uninstall
+
+        with (
+            patch(
+                "gdoc2netcfg.cli.cron.read_current_crontab",
+                return_value="",
+            ),
+            patch("gdoc2netcfg.cli.cron.write_crontab") as mock_write,
+        ):
+            result = cmd_cron_uninstall()
+
+        assert result == 0
+        mock_write.assert_not_called()
 
 
 class TestCmdCron:

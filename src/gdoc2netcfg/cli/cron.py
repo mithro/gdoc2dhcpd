@@ -225,8 +225,8 @@ def remove_managed_block(crontab: str) -> str:
     Returns the crontab with the block (between BEGIN/END markers) removed.
     Preserves all other content.
 
-    Raises ValueError if a BEGIN marker exists without a matching END marker,
-    to prevent silent data loss from a corrupted crontab.
+    Raises ValueError if markers are mismatched (BEGIN without END, or
+    END without BEGIN), to prevent silent data loss from a corrupted crontab.
     """
     lines = crontab.splitlines(keepends=True)
     result: list[str] = []
@@ -238,6 +238,11 @@ def remove_managed_block(crontab: str) -> str:
             inside_block = True
             continue
         if stripped == _END_MARKER:
+            if not inside_block:
+                raise ValueError(
+                    "Corrupted crontab: found END marker without preceding BEGIN marker. "
+                    "Please fix your crontab manually (crontab -e)."
+                )
             inside_block = False
             continue
         if not inside_block:
@@ -306,6 +311,11 @@ def cmd_cron_install() -> int:
 def cmd_cron_uninstall() -> int:
     """Remove gdoc2netcfg cron entries from the user's crontab."""
     current = read_current_crontab()
+
+    if _BEGIN_MARKER not in current:
+        print("No gdoc2netcfg cron entries found in crontab.", file=sys.stderr)
+        return 0
+
     cleaned = remove_managed_block(current)
     write_crontab(cleaned)
 
