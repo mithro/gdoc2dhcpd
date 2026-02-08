@@ -86,10 +86,15 @@ deploy-nginx: generate ## Generate and deploy nginx configs (run with sudo)
 	cp $(OUTPUT_DIR)/nginx/sites-available/* $(NGINX_CONF_DIR)/sites-available/
 	cp $(OUTPUT_DIR)/nginx/snippets/* $(NGINX_CONF_DIR)/snippets/
 	rm -f $(NGINX_CONF_DIR)/conf.d/lua-healthcheck.conf $(NGINX_CONF_DIR)/conf.d/healthcheck-init.conf $(NGINX_CONF_DIR)/conf.d/healthcheck-status.conf
-	cp $(OUTPUT_DIR)/nginx/conf.d/* $(NGINX_CONF_DIR)/conf.d/
+	test -d $(OUTPUT_DIR)/nginx/conf.d && cp $(OUTPUT_DIR)/nginx/conf.d/* $(NGINX_CONF_DIR)/conf.d/ || true
 	mkdir -p $(NGINX_CONF_DIR)/healthcheck.d
 	rm -f $(NGINX_CONF_DIR)/healthcheck.d/*.lua
-	cp $(OUTPUT_DIR)/nginx/healthcheck.d/* $(NGINX_CONF_DIR)/healthcheck.d/
+	test -d $(OUTPUT_DIR)/nginx/healthcheck.d && cp $(OUTPUT_DIR)/nginx/healthcheck.d/* $(NGINX_CONF_DIR)/healthcheck.d/ || true
+	mkdir -p $(NGINX_CONF_DIR)/stream.d $(NGINX_CONF_DIR)/stream-healthcheck.d
+	rm -f $(NGINX_CONF_DIR)/stream.d/generated-*.conf
+	rm -f $(NGINX_CONF_DIR)/stream-healthcheck.d/*.lua
+	test -d $(OUTPUT_DIR)/nginx/stream.d && cp $(OUTPUT_DIR)/nginx/stream.d/* $(NGINX_CONF_DIR)/stream.d/ || true
+	test -d $(OUTPUT_DIR)/nginx/stream-healthcheck.d && cp $(OUTPUT_DIR)/nginx/stream-healthcheck.d/* $(NGINX_CONF_DIR)/stream-healthcheck.d/ || true
 	nginx -t
 	systemctl reload nginx
 

@@ -324,12 +324,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 kwargs["acme_webroot"] = gen_config.params["acme_webroot"]
             if gen_config.params.get("htpasswd_file"):
                 kwargs["htpasswd_file"] = gen_config.params["htpasswd_file"]
-            if gen_config.params.get("https_listen"):
-                kwargs["https_listen"] = gen_config.params["https_listen"]
             if gen_config.params.get("lua_healthcheck_path"):
                 kwargs["lua_healthcheck_path"] = gen_config.params["lua_healthcheck_path"]
             if gen_config.params.get("healthcheck_dir"):
                 kwargs["healthcheck_dir"] = gen_config.params["healthcheck_dir"]
+            if gen_config.params.get("stream_healthcheck_dir"):
+                kwargs["stream_healthcheck_dir"] = gen_config.params["stream_healthcheck_dir"]
         elif name == "topology" and gen_config:
             if gen_config.params.get("show_unknown_macs"):
                 kwargs["show_unknown_macs"] = (
