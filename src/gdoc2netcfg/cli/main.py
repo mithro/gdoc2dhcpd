@@ -311,6 +311,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 kwargs["htpasswd_file"] = gen_config.params["htpasswd_file"]
             if gen_config.params.get("https_listen"):
                 kwargs["https_listen"] = gen_config.params["https_listen"]
+            if gen_config.params.get("lua_healthcheck_path"):
+                kwargs["lua_healthcheck_path"] = gen_config.params["lua_healthcheck_path"]
         elif name == "topology" and gen_config:
             if gen_config.params.get("show_unknown_macs"):
                 kwargs["show_unknown_macs"] = (
