@@ -4,6 +4,9 @@ gdoc2netcfg.toml
 out/
 internal/
 external/
+nginx/
+letsencrypt/
+nagios-switches.cfg
 dhcpd.static.conf
 info.json
 good.json
