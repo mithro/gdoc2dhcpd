@@ -795,3 +795,92 @@ class TestStreamSNI:
         # 2 try_spawn calls (http-public + http-private) + 1 function def
         assert lua.count("try_spawn({\n") == 2
         assert "https" not in lua
+
+
+class TestStreamHealthcheck:
+    """Tests for custom HTTPS health checker for stream upstreams."""
+
+    def test_no_stream_healthcheck_for_single_interface(self):
+        """Single-interface hosts don't generate stream health check files."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        stream_d = [k for k in files if k.startswith("stream.d/")]
+        stream_hc = [k for k in files if k.startswith("stream-healthcheck.d/")]
+        assert len(stream_d) == 0
+        assert len(stream_hc) == 0
+
+    def test_stream_healthcheck_lua_conf_generated(self):
+        """Multi-interface host triggers stream.d/ lua config."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        assert "stream.d/generated-lua-healthcheck.conf" in files
+        conf = files["stream.d/generated-lua-healthcheck.conf"]
+        assert "lua_shared_dict stream_healthcheck" in conf
+
+    def test_stream_healthcheck_init_generated(self):
+        """Init worker block loads per-host files from stream-healthcheck.d/."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        assert "stream.d/generated-healthcheck-init.conf" in files
+        init = files["stream.d/generated-healthcheck-init.conf"]
+        assert "init_worker_by_lua_block" in init
+        assert "stream-healthcheck.d" in init
+
+    def test_stream_per_host_lua_generated(self):
+        """Per-host Lua file with peer IPs and health params."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        key = f"stream-healthcheck.d/{fqdn}.lua"
+        assert key in files
+        lua = files[key]
+        assert "10.1.90.149" in lua
+        assert "10.1.90.150" in lua
+        assert f"{fqdn}-tls" in lua
+
+    def test_stream_checker_lua_generated(self):
+        """Shared checker.lua module is generated."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        assert "stream-healthcheck.d/checker.lua" in files
+        checker = files["stream-healthcheck.d/checker.lua"]
+        assert "sslhandshake" in checker
+        assert "stream_healthcheck" in checker
+
+    def test_stream_balancer_lua_generated(self):
+        """Balancer.lua entry point for balancer_by_lua_file."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        assert "stream-healthcheck.d/balancer.lua" in files
+        balancer = files["stream-healthcheck.d/balancer.lua"]
+        assert "balancer" in balancer.lower() or "stream_healthcheck" in balancer
+
+    def test_stream_upstream_has_balancer_lua_path(self):
+        """Multi-interface stream upstream references balancer.lua."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        stream = files[f"sites-available/{fqdn}-stream"]
+        assert "stream-healthcheck.d/balancer.lua" in stream
+
+    def test_stream_healthcheck_custom_dir(self):
+        """Custom stream_healthcheck_dir flows through to generated files."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(
+            _make_inventory(host),
+            stream_healthcheck_dir="/opt/nginx/stream-hc.d",
+        )
+
+        init = files["stream.d/generated-healthcheck-init.conf"]
+        assert "/opt/nginx/stream-hc.d" in init
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        stream = files[f"sites-available/{fqdn}-stream"]
+        assert "/opt/nginx/stream-hc.d/balancer.lua" in stream

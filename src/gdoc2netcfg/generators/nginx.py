@@ -200,6 +200,8 @@ def generate_nginx(
 
     files: dict[str, str] = {}
     healthcheck_hosts: list[tuple[str, list[_UpstreamInfo]]] = []
+    # (fqdn, upstream_name, ips) for multi-interface stream health checks
+    stream_healthcheck_hosts: list[tuple[str, str, list[str]]] = []
 
     # Shared ACME challenge snippet
     files["snippets/acme-challenge.conf"] = _acme_challenge_snippet(acme_webroot)
@@ -294,6 +296,12 @@ def generate_nginx(
                 ))
             healthcheck_hosts.append((primary_fqdn, host_upstreams))
 
+            # Collect stream healthcheck metadata
+            stream_upstream_name = f"{primary_fqdn}-tls"
+            stream_healthcheck_hosts.append(
+                (primary_fqdn, stream_upstream_name, all_ips)
+            )
+
     # Emit healthcheck config files if any multi-interface hosts exist
     if healthcheck_hosts:
         files["conf.d/lua-healthcheck.conf"] = _lua_healthcheck_conf(
@@ -305,6 +313,21 @@ def generate_nginx(
         files["conf.d/healthcheck-status.conf"] = _healthcheck_status_conf()
         for fqdn, upstreams in healthcheck_hosts:
             files[f"healthcheck.d/{fqdn}.lua"] = _healthcheck_host_lua(upstreams)
+
+    # Emit stream health check files if any multi-interface hosts exist
+    if stream_healthcheck_hosts:
+        files["stream.d/generated-lua-healthcheck.conf"] = (
+            _stream_lua_healthcheck_conf()
+        )
+        files["stream.d/generated-healthcheck-init.conf"] = (
+            _stream_healthcheck_init_conf(stream_healthcheck_dir)
+        )
+        files["stream-healthcheck.d/checker.lua"] = _stream_checker_lua()
+        files["stream-healthcheck.d/balancer.lua"] = _stream_balancer_lua()
+        for fqdn, upstream_name, ips in stream_healthcheck_hosts:
+            files[f"stream-healthcheck.d/{fqdn}.lua"] = (
+                _stream_healthcheck_host_lua(upstream_name, fqdn, ips)
+            )
 
     return files
 
@@ -600,6 +623,236 @@ def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _stream_lua_healthcheck_conf() -> str:
+    """Generate the stream-level Lua shared dict config.
+
+    This is included in the stream {} block (via stream.d/) and sets up:
+    - lua_shared_dict for health check state
+    - Suppresses socket errors (expected from health probes to down backends)
+    """
+    return (
+        "lua_shared_dict stream_healthcheck 1m;\n"
+        "lua_socket_log_errors off;\n"
+    )
+
+
+def _stream_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
+    """Generate a stream-level init_worker_by_lua_block.
+
+    Scans stream_healthcheck_dir for per-host .lua config files and
+    loads each one. Per-host files register their peers and health
+    check parameters with the shared checker module.
+    """
+    return (
+        "init_worker_by_lua_block {\n"
+        f'    local dir = "{stream_healthcheck_dir}"\n'
+        '    local checker = require "checker"\n'
+        '    local pipe = io.popen("ls " .. dir .. "/*.lua")\n'
+        "    if not pipe then return end\n"
+        "    for path in pipe:lines() do\n"
+        "        local fn, err = loadfile(path)\n"
+        "        if fn then\n"
+        "            local ok, exec_err = pcall(fn)\n"
+        "            if not ok then\n"
+        '                ngx.log(ngx.ERR, "stream healthcheck config error in ", '
+        "path, \": \", exec_err)\n"
+        "            end\n"
+        "        else\n"
+        '            ngx.log(ngx.ERR, "failed to load ", path, ": ", err)\n'
+        "        end\n"
+        "    end\n"
+        "    pipe:close()\n"
+        "    checker.start()\n"
+        "}\n"
+    )
+
+
+def _stream_healthcheck_host_lua(
+    upstream_name: str,
+    fqdn: str,
+    ips: list[str],
+) -> str:
+    """Generate a per-host Lua file for stream health checking.
+
+    Registers the upstream's peers (IP addresses) and health check
+    parameters with the shared checker module. The checker module
+    runs periodic HTTPS probes to each peer.
+    """
+    lines = [
+        'local checker = require "checker"',
+        "",
+        "checker.register({",
+        f'    upstream = "{upstream_name}",',
+        f'    host = "{fqdn}",',
+        "    peers = {",
+    ]
+    for ip in ips:
+        lines.append(f'        "{ip}",')
+    lines.extend([
+        "    },",
+        "    interval = 5,",
+        "    timeout = 2,",
+        "    fall = 3,",
+        "    rise = 2,",
+        "})",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _stream_checker_lua() -> str:
+    """Generate the shared checker.lua module for stream HTTPS health checks.
+
+    This module:
+    1. Maintains a registry of upstreams and their peers
+    2. Uses ngx.timer.every to probe each peer on port 443
+    3. Performs TLS handshake + HTTP/1.0 GET to verify backend health
+    4. Tracks consecutive failures (fall) and recoveries (rise)
+    5. Stores health status in lua_shared_dict stream_healthcheck
+    """
+    return '''\
+local _M = {}
+
+local registry = {}
+local shm = ngx.shared.stream_healthcheck
+
+function _M.register(opts)
+    registry[opts.upstream] = {
+        host = opts.host,
+        peers = opts.peers,
+        interval = opts.interval or 5,
+        timeout = opts.timeout or 2,
+        fall = opts.fall or 3,
+        rise = opts.rise or 2,
+    }
+    -- Initialise health state for each peer
+    for _, ip in ipairs(opts.peers) do
+        local key = opts.upstream .. ":" .. ip
+        if not shm:get(key .. ":healthy") then
+            shm:set(key .. ":healthy", true)
+            shm:set(key .. ":fail_count", 0)
+            shm:set(key .. ":ok_count", 0)
+        end
+    end
+end
+
+local function check_peer(upstream_name, info, ip)
+    local sock = ngx.socket.tcp()
+    sock:settimeout(info.timeout * 1000)
+
+    local ok, err = sock:connect(ip, 443)
+    if not ok then
+        return false, err
+    end
+
+    local session, ssl_err = sock:sslhandshake(nil, info.host, false)
+    if not session then
+        sock:close()
+        return false, ssl_err
+    end
+
+    local req = "GET / HTTP/1.0\\r\\nHost: " .. info.host .. "\\r\\n\\r\\n"
+    sock:send(req)
+    local line, read_err = sock:receive("*l")
+    sock:close()
+
+    if not line then
+        return false, read_err
+    end
+
+    -- Any HTTP response means alive
+    return true, nil
+end
+
+local function run_checks()
+    for upstream_name, info in pairs(registry) do
+        for _, ip in ipairs(info.peers) do
+            local key = upstream_name .. ":" .. ip
+            local healthy, err = check_peer(upstream_name, info, ip)
+
+            if healthy then
+                shm:set(key .. ":fail_count", 0)
+                local ok_count = (shm:get(key .. ":ok_count") or 0) + 1
+                shm:set(key .. ":ok_count", ok_count)
+                if ok_count >= info.rise then
+                    shm:set(key .. ":healthy", true)
+                end
+            else
+                shm:set(key .. ":ok_count", 0)
+                local fail_count = (shm:get(key .. ":fail_count") or 0) + 1
+                shm:set(key .. ":fail_count", fail_count)
+                if fail_count >= info.fall then
+                    shm:set(key .. ":healthy", false)
+                end
+            end
+        end
+    end
+end
+
+function _M.start()
+    local min_interval = 5
+    for _, info in pairs(registry) do
+        if info.interval < min_interval then
+            min_interval = info.interval
+        end
+    end
+    ngx.timer.every(min_interval, function(premature)
+        if premature then return end
+        run_checks()
+    end)
+end
+
+function _M.get_healthy_peer(upstream_name)
+    local info = registry[upstream_name]
+    if not info then return nil, "unknown upstream" end
+
+    for _, ip in ipairs(info.peers) do
+        local key = upstream_name .. ":" .. ip
+        if shm:get(key .. ":healthy") then
+            return ip
+        end
+    end
+
+    -- All peers down: return first as fallback
+    return info.peers[1], "all peers unhealthy"
+end
+
+return _M
+'''
+
+
+def _stream_balancer_lua() -> str:
+    """Generate the balancer.lua entry point for balancer_by_lua_file.
+
+    This is referenced by stream upstream blocks. It queries the shared
+    checker module for a healthy peer and sets it as the proxy target.
+    """
+    return '''\
+local checker = require "checker"
+local balancer = require "ngx.balancer"
+
+local upstream_name = ngx.var.upstream_name or ngx.ctx.upstream_name
+
+-- Extract upstream name from the proxy_pass target
+-- In stream context, we can get it from the upstream block name
+if not upstream_name then
+    upstream_name = ngx.var.proxy_protocol_server_name
+end
+
+local peer, err = checker.get_healthy_peer(upstream_name)
+if not peer then
+    ngx.log(ngx.ERR, "no healthy peer for stream upstream: ", err)
+    return ngx.exit(502)
+end
+
+local ok, set_err = balancer.set_current_peer(peer, 443)
+if not ok then
+    ngx.log(ngx.ERR, "failed to set stream peer: ", set_err)
+    return ngx.exit(502)
+end
+'''
 
 
 def _healthcheck_status_conf() -> str:
