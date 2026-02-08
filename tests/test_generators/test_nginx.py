@@ -811,31 +811,34 @@ class TestStreamHealthcheck:
         assert len(stream_hc) == 0
 
     def test_stream_healthcheck_lua_conf_generated(self):
-        """Multi-interface host triggers stream.d/ lua config."""
+        """Multi-interface host triggers stream.d/ lua config with package path."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         assert "stream.d/generated-lua-healthcheck.conf" in files
         conf = files["stream.d/generated-lua-healthcheck.conf"]
         assert "lua_shared_dict stream_healthcheck" in conf
+        assert "lua_package_path" in conf
+        assert "stream-healthcheck.d" in conf
 
     def test_stream_healthcheck_init_generated(self):
-        """Init worker block loads per-host files from stream-healthcheck.d/."""
+        """Init worker block loads per-host files from hosts/ subdirectory."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         assert "stream.d/generated-healthcheck-init.conf" in files
         init = files["stream.d/generated-healthcheck-init.conf"]
         assert "init_worker_by_lua_block" in init
-        assert "stream-healthcheck.d" in init
+        # Scans hosts/ subdirectory, not top-level (avoids loading checker/balancer)
+        assert "/hosts" in init
 
-    def test_stream_per_host_lua_generated(self):
-        """Per-host Lua file with peer IPs and health params."""
+    def test_stream_per_host_lua_in_hosts_subdir(self):
+        """Per-host Lua files live in hosts/ subdirectory."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        key = f"stream-healthcheck.d/{fqdn}.lua"
+        key = f"stream-healthcheck.d/hosts/{fqdn}.lua"
         assert key in files
         lua = files[key]
         assert "10.1.90.149" in lua
@@ -843,7 +846,7 @@ class TestStreamHealthcheck:
         assert f"{fqdn}-tls" in lua
 
     def test_stream_checker_lua_generated(self):
-        """Shared checker.lua module is generated."""
+        """Shared checker.lua module is generated at top level."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
@@ -852,23 +855,26 @@ class TestStreamHealthcheck:
         assert "sslhandshake" in checker
         assert "stream_healthcheck" in checker
 
-    def test_stream_balancer_lua_generated(self):
-        """Balancer.lua entry point for balancer_by_lua_file."""
+    def test_per_host_balancer_lua_generated(self):
+        """Each multi-interface host gets its own balancer with hardcoded upstream name."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        assert "stream-healthcheck.d/balancer.lua" in files
-        balancer = files["stream-healthcheck.d/balancer.lua"]
-        assert "balancer" in balancer.lower() or "stream_healthcheck" in balancer
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        key = f"stream-healthcheck.d/{fqdn}-balancer.lua"
+        assert key in files
+        balancer = files[key]
+        assert f"{fqdn}-tls" in balancer
+        assert "set_current_peer" in balancer
 
-    def test_stream_upstream_has_balancer_lua_path(self):
-        """Multi-interface stream upstream references balancer.lua."""
+    def test_stream_upstream_references_per_host_balancer(self):
+        """Multi-interface stream upstream references per-host balancer."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         stream = files[f"sites-available/{fqdn}-stream"]
-        assert "stream-healthcheck.d/balancer.lua" in stream
+        assert f"stream-healthcheck.d/{fqdn}-balancer.lua" in stream
 
     def test_stream_healthcheck_custom_dir(self):
         """Custom stream_healthcheck_dir flows through to generated files."""
@@ -878,9 +884,38 @@ class TestStreamHealthcheck:
             stream_healthcheck_dir="/opt/nginx/stream-hc.d",
         )
 
+        conf = files["stream.d/generated-lua-healthcheck.conf"]
+        assert "/opt/nginx/stream-hc.d" in conf
+
         init = files["stream.d/generated-healthcheck-init.conf"]
-        assert "/opt/nginx/stream-hc.d" in init
+        assert "/opt/nginx/stream-hc.d/hosts" in init
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         stream = files[f"sites-available/{fqdn}-stream"]
-        assert "/opt/nginx/stream-hc.d/balancer.lua" in stream
+        assert f"/opt/nginx/stream-hc.d/{fqdn}-balancer.lua" in stream
+
+    def test_no_shared_balancer_lua(self):
+        """No shared balancer.lua — each host gets its own per-host balancer."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        assert "stream-healthcheck.d/balancer.lua" not in files
+
+    def test_rejects_unsafe_stream_healthcheck_dir(self):
+        """Path injection in stream_healthcheck_dir is rejected."""
+        import pytest
+
+        host = _make_multi_iface_host()
+        with pytest.raises(ValueError, match="Unsafe stream_healthcheck_dir"):
+            generate_nginx(
+                _make_inventory(host),
+                stream_healthcheck_dir="/etc/nginx/hc'; rm -rf /;",
+            )
+
+    def test_checker_lua_has_round_robin(self):
+        """get_healthy_peer uses round-robin, not always first healthy."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        checker = files["stream-healthcheck.d/checker.lua"]
+        assert "rr_index" in checker or "round" in checker.lower()

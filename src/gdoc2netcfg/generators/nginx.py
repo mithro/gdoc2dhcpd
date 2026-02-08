@@ -280,7 +280,7 @@ def generate_nginx(
                 all_ips, iface_configs,
                 htpasswd_file, acme_webroot,
             )
-            balancer_path = f"{stream_healthcheck_dir}/balancer.lua"
+            balancer_path = f"{stream_healthcheck_dir}/{primary_fqdn}-balancer.lua"
             _emit_stream_files(
                 files, primary_fqdn, all_nginx_names,
                 ips=all_ips, balancer_lua_path=balancer_path,
@@ -317,16 +317,18 @@ def generate_nginx(
     # Emit stream health check files if any multi-interface hosts exist
     if stream_healthcheck_hosts:
         files["stream.d/generated-lua-healthcheck.conf"] = (
-            _stream_lua_healthcheck_conf()
+            _stream_lua_healthcheck_conf(stream_healthcheck_dir)
         )
         files["stream.d/generated-healthcheck-init.conf"] = (
             _stream_healthcheck_init_conf(stream_healthcheck_dir)
         )
         files["stream-healthcheck.d/checker.lua"] = _stream_checker_lua()
-        files["stream-healthcheck.d/balancer.lua"] = _stream_balancer_lua()
         for fqdn, upstream_name, ips in stream_healthcheck_hosts:
-            files[f"stream-healthcheck.d/{fqdn}.lua"] = (
+            files[f"stream-healthcheck.d/hosts/{fqdn}.lua"] = (
                 _stream_healthcheck_host_lua(upstream_name, fqdn, ips)
+            )
+            files[f"stream-healthcheck.d/{fqdn}-balancer.lua"] = (
+                _stream_balancer_lua(upstream_name)
             )
 
     return files
@@ -625,14 +627,16 @@ def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
     return "\n".join(lines)
 
 
-def _stream_lua_healthcheck_conf() -> str:
-    """Generate the stream-level Lua shared dict config.
+def _stream_lua_healthcheck_conf(stream_healthcheck_dir: str) -> str:
+    """Generate the stream-level Lua config.
 
     This is included in the stream {} block (via stream.d/) and sets up:
+    - lua_package_path so require "checker" resolves to checker.lua
     - lua_shared_dict for health check state
     - Suppresses socket errors (expected from health probes to down backends)
     """
     return (
+        f'lua_package_path "{stream_healthcheck_dir}/?.lua;;";\n'
         "lua_shared_dict stream_healthcheck 1m;\n"
         "lua_socket_log_errors off;\n"
     )
@@ -641,13 +645,18 @@ def _stream_lua_healthcheck_conf() -> str:
 def _stream_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
     """Generate a stream-level init_worker_by_lua_block.
 
-    Scans stream_healthcheck_dir for per-host .lua config files and
-    loads each one. Per-host files register their peers and health
+    Scans stream_healthcheck_dir/hosts/ for per-host .lua config files
+    and loads each one. Per-host files register their peers and health
     check parameters with the shared checker module.
+
+    The hosts/ subdirectory is scanned (not the top level) to avoid
+    accidentally loading checker.lua and per-host balancer files as
+    config files — those are Lua modules, not init_worker scripts.
     """
+    hosts_dir = f"{stream_healthcheck_dir}/hosts"
     return (
         "init_worker_by_lua_block {\n"
-        f'    local dir = "{stream_healthcheck_dir}"\n'
+        f'    local dir = "{hosts_dir}"\n'
         '    local checker = require "checker"\n'
         '    local pipe = io.popen("ls " .. dir .. "/*.lua")\n'
         "    if not pipe then return end\n"
@@ -808,42 +817,47 @@ function _M.get_healthy_peer(upstream_name)
     local info = registry[upstream_name]
     if not info then return nil, "unknown upstream" end
 
-    for _, ip in ipairs(info.peers) do
+    -- Round-robin across healthy peers using a shared counter
+    local rr_key = upstream_name .. ":rr_index"
+    local rr_index = (shm:get(rr_key) or 0)
+    local n = #info.peers
+
+    for i = 1, n do
+        local idx = ((rr_index + i - 1) % n) + 1
+        local ip = info.peers[idx]
         local key = upstream_name .. ":" .. ip
         if shm:get(key .. ":healthy") then
+            shm:set(rr_key, idx)
             return ip
         end
     end
 
-    -- All peers down: return first as fallback
-    return info.peers[1], "all peers unhealthy"
+    -- All peers down: round-robin as fallback
+    local idx = (rr_index % n) + 1
+    shm:set(rr_key, idx)
+    return info.peers[idx], "all peers unhealthy"
 end
 
 return _M
 '''
 
 
-def _stream_balancer_lua() -> str:
-    """Generate the balancer.lua entry point for balancer_by_lua_file.
+def _stream_balancer_lua(upstream_name: str) -> str:
+    """Generate a per-host balancer Lua file for balancer_by_lua_file.
 
-    This is referenced by stream upstream blocks. It queries the shared
-    checker module for a healthy peer and sets it as the proxy target.
+    Each multi-interface host gets its own balancer file with the
+    upstream name hardcoded. This avoids the problem of trying to
+    discover the upstream name at runtime in the stream balancer
+    context, where nginx variables like ngx.var.upstream_name are
+    not available.
     """
-    return '''\
+    return f'''\
 local checker = require "checker"
 local balancer = require "ngx.balancer"
 
-local upstream_name = ngx.var.upstream_name or ngx.ctx.upstream_name
-
--- Extract upstream name from the proxy_pass target
--- In stream context, we can get it from the upstream block name
-if not upstream_name then
-    upstream_name = ngx.var.proxy_protocol_server_name
-end
-
-local peer, err = checker.get_healthy_peer(upstream_name)
+local peer, err = checker.get_healthy_peer("{upstream_name}")
 if not peer then
-    ngx.log(ngx.ERR, "no healthy peer for stream upstream: ", err)
+    ngx.log(ngx.ERR, "no healthy peer for stream upstream {upstream_name}: ", err)
     return ngx.exit(502)
 end
 
