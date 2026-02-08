@@ -788,6 +788,25 @@ class TestHealthcheck:
         assert "/upstream-status" in status
         assert "healthcheck_status_page" in status
 
+    def test_https_variants_have_ssl_verify_false(self):
+        """HTTPS healthcheck entries include ssl_verify = false."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        # Split into per-upstream blocks by try_spawn calls
+        blocks = lua.split("try_spawn(")
+        for block in blocks[1:]:  # skip preamble before first try_spawn
+            if 'type = "https"' in block:
+                assert "ssl_verify = false" in block, (
+                    "HTTPS upstream missing ssl_verify = false"
+                )
+            elif 'type = "http"' in block:
+                assert "ssl_verify" not in block, (
+                    "HTTP upstream should not have ssl_verify"
+                )
+
     def test_mixed_hosts_only_multi_interface_in_healthcheck(self):
         """Single-interface hosts are excluded from healthcheck files."""
         single = _make_host(hostname="desktop", ip="10.1.10.100")

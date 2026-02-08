@@ -543,8 +543,10 @@ def _lua_healthcheck_conf(lua_path: str) -> str:
     """
     return (
         f"lua_package_path \"{lua_path}?.lua;{lua_path}?/init.lua;;\";\n"
-        f"lua_shared_dict healthcheck 1m;\n"
-        f"lua_socket_log_errors off;\n"
+        "lua_shared_dict healthcheck 1m;\n"
+        "# NB: lua_socket_log_errors is a global setting — it suppresses\n"
+        "# socket errors for ALL Lua modules, not just healthcheck probes.\n"
+        "lua_socket_log_errors off;\n"
     )
 
 
@@ -559,7 +561,7 @@ def _healthcheck_init_conf(healthcheck_dir: str) -> str:
     return (
         "init_worker_by_lua_block {\n"
         f'    local dir = "{healthcheck_dir}"\n'
-        '    local pipe = io.popen("ls " .. dir .. "/*.lua 2>/dev/null")\n'
+        '    local pipe = io.popen("ls " .. dir .. "/*.lua")\n'
         "    if not pipe then return end\n"
         "    for path in pipe:lines() do\n"
         "        local fn, err = loadfile(path)\n"
@@ -618,6 +620,8 @@ def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
             "timeout = 2000",
             "fall = 3",
             "rise = 2",
+            # 401/403 are valid because backends use auth_basic — a
+            # rejected-but-responding backend is still healthy.
             "valid_statuses = {200, 301, 302, 401, 403}",
         ]
         if us.hc_type == "https":
