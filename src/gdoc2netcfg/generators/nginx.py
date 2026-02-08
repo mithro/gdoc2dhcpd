@@ -549,15 +549,15 @@ def _healthcheck_init_conf(upstreams: list[_UpstreamInfo]) -> str:
 
     for us in upstreams:
         checker_args = [
-            f"shm = \"healthcheck\"",
-            f"upstream = \"{us.name}\"",
-            f"type = \"{us.hc_type}\"",
-            f"http_req = \"GET / HTTP/1.0\\r\\nHost: {us.host}\\r\\n\\r\\n\"",
-            f"interval = 5000",
-            f"timeout = 2000",
-            f"fall = 3",
-            f"rise = 2",
-            f"valid_statuses = {{200, 301, 302, 401, 403}}",
+            'shm = "healthcheck"',
+            f'upstream = "{us.name}"',
+            f'type = "{us.hc_type}"',
+            f'http_req = "GET / HTTP/1.0\\r\\nHost: {us.host}\\r\\n\\r\\n"',
+            "interval = 5000",
+            "timeout = 2000",
+            "fall = 3",
+            "rise = 2",
+            "valid_statuses = {200, 301, 302, 401, 403}",
         ]
         if us.hc_type == "https":
             checker_args.append("ssl_verify = false")
