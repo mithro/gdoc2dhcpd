@@ -5,8 +5,11 @@ shared ACME challenge snippet. Each host gets four config file variants:
 
   - {fqdn}-http-public       HTTP, no auth
   - {fqdn}-http-private      HTTP, auth_basic
-  - {fqdn}-https-public      HTTPS, no auth
-  - {fqdn}-https-private     HTTPS, auth_basic
+
+HTTPS is handled via stream SNI passthrough (generated separately as
+{fqdn}-stream and {fqdn}-stream-map files) rather than http-module
+HTTPS blocks, ensuring consistent TLS behavior for both IPv4 (proxied)
+and IPv6 (direct) paths.
 
 Multi-interface hosts get a combined config file (per variant) containing:
 
@@ -16,12 +19,8 @@ Multi-interface hosts get a combined config file (per variant) containing:
   - A server block per named interface using direct proxy_pass to
     that interface's IP, with interface-specific DNS names
 
-Single-interface hosts produce one set of four files with direct
+Single-interface hosts produce one set of two files with direct
 proxy_pass (no upstream block).
-
-The proxy_ssl_verify setting inside HTTPS configs is set based on the
-host's SSL cert status: "on" if there's a valid Let's Encrypt cert,
-"off" otherwise.
 
 Admins activate configs via symlinks in sites-enabled/.
 """
@@ -37,8 +36,7 @@ from gdoc2netcfg.utils.dns import is_safe_dns_name, is_safe_path
 class _UpstreamInfo(NamedTuple):
     """Metadata for a generated upstream block, used for healthcheck config."""
 
-    name: str       # e.g. "tweed.welland.mithis.com-https-public-backend"
-    hc_type: str    # "http" or "https"
+    name: str       # e.g. "tweed.welland.mithis.com-http-public-backend"
     host: str       # e.g. "tweed.welland.mithis.com"
 
 
@@ -88,27 +86,6 @@ def _partition_dns_names(
     return root_names, iface_names
 
 
-def _parse_https_listen(value: str) -> tuple[str, str]:
-    """Parse https_listen config into (ipv4_listen, ipv6_listen) directives.
-
-    Returns the text after 'listen ' and before ' ssl;'.
-    """
-    if not value:
-        return ("443", "[::]:443")
-
-    if ":" in value:
-        # addr:port form like "127.0.0.1:8443"
-        host, port = value.rsplit(":", 1)
-        if host == "127.0.0.1":
-            ipv6_host = "[::1]"
-        else:
-            ipv6_host = f"[{host}]" if ":" not in host else host
-        return (f"{host}:{port}", f"{ipv6_host}:{port}")
-    else:
-        # Port-only form like "8443"
-        return (value, f"[::]:{value}")
-
-
 def _upstream_block(upstream_name: str, ips: list[str], port: int = 80) -> str:
     """Generate an nginx upstream block for failover.
 
@@ -127,7 +104,6 @@ def generate_nginx(
     inventory: NetworkInventory,
     acme_webroot: str = "/var/www/acme",
     htpasswd_file: str = "/etc/nginx/.htpasswd",
-    https_listen: str = "",
     lua_healthcheck_path: str = "/usr/share/lua/5.1/",
     healthcheck_dir: str = "/etc/nginx/healthcheck.d",
 ) -> dict[str, str]:
@@ -136,10 +112,6 @@ def generate_nginx(
     Returns a dict mapping relative paths to file contents.
 
     Args:
-        https_listen: Override HTTPS listen directives. Examples:
-            "" (default) → listen 443 / [::]:443
-            "8443" → listen 8443 / [::]:8443
-            "127.0.0.1:8443" → listen 127.0.0.1:8443 / [::1]:8443
         lua_healthcheck_path: Base directory for lua-resty-upstream-healthcheck.
             Used to set lua_package_path in nginx config.
         healthcheck_dir: Runtime directory where nginx loads per-host
@@ -159,8 +131,6 @@ def generate_nginx(
     if not is_safe_path(healthcheck_dir):
         raise ValueError(f"Unsafe healthcheck_dir: {healthcheck_dir!r}")
 
-    listen_ipv4, listen_ipv6 = _parse_https_listen(https_listen)
-
     files: dict[str, str] = {}
     healthcheck_hosts: list[tuple[str, list[_UpstreamInfo]]] = []
 
@@ -175,15 +145,8 @@ def generate_nginx(
         if not fqdns:
             continue
 
-        # Determine proxy_ssl_verify setting for HTTPS
-        has_valid_cert = (
-            host.ssl_cert_info is not None
-            and host.ssl_cert_info.valid
-            and not host.ssl_cert_info.self_signed
-        )
-
         if not host.is_multi_interface():
-            # Single-interface host: unchanged behaviour
+            # Single-interface host
             primary_fqdn = fqdns[0]
             all_names = [
                 dn.name for dn in host.dns_names
@@ -191,10 +154,9 @@ def generate_nginx(
             ]
             target_ip = str(host.default_ipv4)
 
-            _emit_four_files(
+            _emit_http_files(
                 files, primary_fqdn, all_names, target_ip,
-                has_valid_cert, htpasswd_file, acme_webroot,
-                listen_ipv4, listen_ipv6,
+                htpasswd_file, acme_webroot,
             )
         else:
             # Multi-interface host: single file per variant containing
@@ -238,21 +200,18 @@ def generate_nginx(
                     (iface_names, str(iface.ipv4), iface_fqdns[0])
                 )
 
-            _emit_combined_four_files(
+            _emit_combined_http_files(
                 files, primary_fqdn, root_names,
                 all_ips, iface_configs,
-                has_valid_cert, htpasswd_file, acme_webroot,
-                listen_ipv4, listen_ipv6,
+                htpasswd_file, acme_webroot,
             )
 
             # Collect upstream metadata for per-host healthcheck config
             host_upstreams = []
-            for suffix, _builder, _port in _VARIANT_BUILDERS:
+            for suffix, _builder in _VARIANT_BUILDERS:
                 upstream_name = f"{primary_fqdn}-{suffix}-backend"
-                hc_type = "https" if suffix.startswith("https") else "http"
                 host_upstreams.append(_UpstreamInfo(
                     name=upstream_name,
-                    hc_type=hc_type,
                     host=primary_fqdn,
                 ))
             healthcheck_hosts.append((primary_fqdn, host_upstreams))
@@ -272,18 +231,15 @@ def generate_nginx(
     return files
 
 
-def _emit_four_files(
+def _emit_http_files(
     files: dict[str, str],
     primary_fqdn: str,
     all_names: list[str],
     target_ip: str,
-    has_valid_cert: bool,
     htpasswd_file: str,
     acme_webroot: str = "/var/www/acme",
-    listen_ipv4: str = "443",
-    listen_ipv6: str = "[::]:443",
 ) -> None:
-    """Emit the four config file variants for a single-interface host."""
+    """Emit the two HTTP config file variants for a single-interface host."""
     files[f"sites-available/{primary_fqdn}-http-public"] = _http_block(
         all_names, target_ip, private=False, acme_webroot=acme_webroot,
     )
@@ -291,69 +247,50 @@ def _emit_four_files(
         all_names, target_ip, private=True,
         htpasswd_file=htpasswd_file, acme_webroot=acme_webroot,
     )
-    files[f"sites-available/{primary_fqdn}-https-public"] = _https_block(
-        all_names, target_ip, primary_fqdn,
-        verify=has_valid_cert, private=False,
-        listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
-    )
-    files[f"sites-available/{primary_fqdn}-https-private"] = _https_block(
-        all_names, target_ip, primary_fqdn,
-        verify=has_valid_cert, private=True, htpasswd_file=htpasswd_file,
-        listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
-    )
 
 
-def _emit_combined_four_files(
+def _emit_combined_http_files(
     files: dict[str, str],
     primary_fqdn: str,
     root_names: list[str],
     all_ips: list[str],
     iface_configs: list[tuple[list[str], str, str]],
-    has_valid_cert: bool,
     htpasswd_file: str,
     acme_webroot: str = "/var/www/acme",
-    listen_ipv4: str = "443",
-    listen_ipv6: str = "[::]:443",
 ) -> None:
-    """Emit four config files for a multi-interface host.
+    """Emit two HTTP config files for a multi-interface host.
 
     Each file contains upstream blocks (a round-robin failover upstream
     for the root, plus one single-server upstream per interface named by
     its FQDN), the root server block, and one server block per named
     interface.
-
-    HTTP variants use port 80 backends, HTTPS variants use port 443.
     """
-    for suffix, builder, port in _VARIANT_BUILDERS:
+    for suffix, builder in _VARIANT_BUILDERS:
         upstream_name = f"{primary_fqdn}-{suffix}-backend"
-        upstream_text = _upstream_block(upstream_name, all_ips, port=port)
+        upstream_text = _upstream_block(upstream_name, all_ips, port=80)
         parts = [upstream_text]
 
         # Per-interface upstream blocks (single server, named by FQDN)
         for _iface_names, iface_ip, iface_fqdn in iface_configs:
             iface_upstream = f"{iface_fqdn}-{suffix}-backend"
             parts.append(
-                _upstream_block(iface_upstream, [iface_ip], port=port)
+                _upstream_block(iface_upstream, [iface_ip], port=80)
             )
 
         # Root server block (upstream failover)
         parts.append(builder(
-            root_names, primary_fqdn,
-            has_valid_cert, htpasswd_file,
+            root_names, htpasswd_file,
             acme_webroot=acme_webroot,
             upstream_name=upstream_name,
-            listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
         ))
 
         # Per-interface server blocks (proxy_pass via named upstream)
         for iface_names, _iface_ip, iface_fqdn in iface_configs:
             iface_upstream = f"{iface_fqdn}-{suffix}-backend"
             parts.append(builder(
-                iface_names, primary_fqdn,
-                has_valid_cert, htpasswd_file,
+                iface_names, htpasswd_file,
                 acme_webroot=acme_webroot,
                 upstream_name=iface_upstream,
-                listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
             ))
 
         files[f"sites-available/{primary_fqdn}-{suffix}"] = "\n".join(parts)
@@ -361,81 +298,32 @@ def _emit_combined_four_files(
 
 def _build_http_public(
     names: list[str],
-    primary_fqdn: str,
-    has_valid_cert: bool,
     htpasswd_file: str,
     acme_webroot: str = "/var/www/acme",
     upstream_name: str = "",
-    target_ip: str = "",
-    listen_ipv4: str = "443",
-    listen_ipv6: str = "[::]:443",
 ) -> str:
     return _http_block(
-        names, target_ip, private=False,
+        names, "", private=False,
         acme_webroot=acme_webroot, upstream_name=upstream_name,
     )
 
 
 def _build_http_private(
     names: list[str],
-    primary_fqdn: str,
-    has_valid_cert: bool,
     htpasswd_file: str,
     acme_webroot: str = "/var/www/acme",
     upstream_name: str = "",
-    target_ip: str = "",
-    listen_ipv4: str = "443",
-    listen_ipv6: str = "[::]:443",
 ) -> str:
     return _http_block(
-        names, target_ip, private=True,
+        names, "", private=True,
         acme_webroot=acme_webroot,
         htpasswd_file=htpasswd_file, upstream_name=upstream_name,
     )
 
 
-def _build_https_public(
-    names: list[str],
-    primary_fqdn: str,
-    has_valid_cert: bool,
-    htpasswd_file: str,
-    acme_webroot: str = "/var/www/acme",
-    upstream_name: str = "",
-    target_ip: str = "",
-    listen_ipv4: str = "443",
-    listen_ipv6: str = "[::]:443",
-) -> str:
-    return _https_block(
-        names, target_ip, primary_fqdn,
-        verify=has_valid_cert, private=False, upstream_name=upstream_name,
-        listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
-    )
-
-
-def _build_https_private(
-    names: list[str],
-    primary_fqdn: str,
-    has_valid_cert: bool,
-    htpasswd_file: str,
-    acme_webroot: str = "/var/www/acme",
-    upstream_name: str = "",
-    target_ip: str = "",
-    listen_ipv4: str = "443",
-    listen_ipv6: str = "[::]:443",
-) -> str:
-    return _https_block(
-        names, target_ip, primary_fqdn,
-        verify=has_valid_cert, private=True,
-        htpasswd_file=htpasswd_file, upstream_name=upstream_name,
-        listen_ipv4=listen_ipv4, listen_ipv6=listen_ipv6,
-    )
-
-
 _VARIANT_BUILDERS = [
-    ("http-public", _build_http_public, 80),
-    ("http-private", _build_http_private, 80),
-    ("https-public", _build_https_public, 443),
-    ("https-private", _build_https_private, 443),
+    ("http-public", _build_http_public),
+    ("http-private", _build_http_private),
 ]
 
 
@@ -538,69 +426,6 @@ def _http_block(
     return "\n".join(lines)
 
 
-def _https_block(
-    names: list[str],
-    target_ip: str,
-    primary_fqdn: str,
-    verify: bool,
-    private: bool,
-    htpasswd_file: str = "",
-    upstream_name: str = "",
-    listen_ipv4: str = "443",
-    listen_ipv6: str = "[::]:443",
-) -> str:
-    """Generate an HTTPS server block.
-
-    When upstream_name is set, proxy_pass targets the upstream and
-    proxy_next_upstream is added for failover.
-    """
-    verify_str = "on" if verify else "off"
-
-    lines = [
-        "server {",
-        f"    listen {listen_ipv4} ssl;",
-        f"    listen {listen_ipv6} ssl;",
-        f"    server_name {_server_names(names)};",
-        "",
-        f"    ssl_certificate /etc/letsencrypt/live/{primary_fqdn}/fullchain.pem;",
-        f"    ssl_certificate_key /etc/letsencrypt/live/{primary_fqdn}/privkey.pem;",
-        "",
-        "    include snippets/acme-challenge.conf;",
-        "",
-        "    location / {",
-    ]
-
-    if private:
-        lines.append('        auth_basic "Restricted";')
-        lines.append(f"        auth_basic_user_file {htpasswd_file};")
-
-    if upstream_name:
-        lines.append(f"        proxy_pass https://{upstream_name};")
-        lines.append("        proxy_next_upstream error timeout http_502;")
-    else:
-        lines.append(f"        proxy_pass https://{target_ip};")
-
-    lines.append(f"        proxy_ssl_verify {verify_str};")
-    if verify:
-        lines.append(
-            "        proxy_ssl_trusted_certificate"
-            " /etc/ssl/certs/ca-certificates.crt;"
-        )
-    lines.extend([
-        "        proxy_http_version 1.1;",
-        '        proxy_set_header Upgrade $http_upgrade;',
-        '        proxy_set_header Connection "upgrade";',
-        "        proxy_set_header Host $host;",
-        "        proxy_set_header X-Real-IP $remote_addr;",
-        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-        "        proxy_set_header X-Forwarded-Proto $scheme;",
-        "    }",
-        "}",
-        "",
-    ])
-    return "\n".join(lines)
-
-
 def _lua_healthcheck_conf(lua_path: str) -> str:
     """Generate the lua-resty-upstream-healthcheck global config.
 
@@ -681,7 +506,7 @@ def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
         checker_args = [
             'shm = "healthcheck"',
             f'upstream = "{us.name}"',
-            f'type = "{us.hc_type}"',
+            'type = "http"',
             f'http_req = "GET / HTTP/1.0\\r\\nHost: {us.host}\\r\\n\\r\\n"',
             "interval = 5000",
             "timeout = 2000",
@@ -691,8 +516,6 @@ def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
             # skips status code validation — any HTTP response means the
             # backend is alive. Only connection failures mark it down.
         ]
-        if us.hc_type == "https":
-            checker_args.append("ssl_verify = false")
         for arg in checker_args:
             lines.append(f"    {arg},")
         lines.append("})")

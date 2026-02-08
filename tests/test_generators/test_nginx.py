@@ -7,7 +7,6 @@ from gdoc2netcfg.models.host import (
     Host,
     NetworkInterface,
     NetworkInventory,
-    SSLCertInfo,
 )
 from gdoc2netcfg.models.network import IPv6Prefix, Site
 
@@ -24,7 +23,7 @@ SITE = Site(
 )
 
 
-def _make_host(hostname="desktop", ip="10.1.10.100", ssl_cert_info=None):
+def _make_host(hostname="desktop", ip="10.1.10.100"):
     ipv4 = IPv4Address(ip)
     parts = ip.split(".")
     aa = parts[1]
@@ -45,7 +44,6 @@ def _make_host(hostname="desktop", ip="10.1.10.100", ssl_cert_info=None):
         ],
         default_ipv4=ipv4,
         subdomain="int",
-        ssl_cert_info=ssl_cert_info,
     )
     derive_all_dns_names(host, SITE)
     return host
@@ -55,23 +53,6 @@ def _make_inventory(*hosts):
     return NetworkInventory(site=SITE, hosts=list(hosts))
 
 
-VALID_LE_CERT = SSLCertInfo(
-    issuer="Let's Encrypt",
-    self_signed=False,
-    valid=True,
-    expiry="2026-04-15",
-    sans=("desktop.welland.mithis.com",),
-)
-
-SELF_SIGNED_CERT = SSLCertInfo(
-    issuer="desktop",
-    self_signed=True,
-    valid=False,
-    expiry="2027-01-01",
-    sans=(),
-)
-
-
 class TestNginxFileStructure:
     def test_produces_acme_snippet(self):
         host = _make_host()
@@ -79,49 +60,25 @@ class TestNginxFileStructure:
 
         assert "snippets/acme-challenge.conf" in files
 
-    def test_produces_four_files_per_host(self):
+    def test_produces_two_http_files_per_host(self):
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 4
+        assert len(site_files) == 2
 
         prefixes = {f.split("/")[1] for f in site_files}
         assert f"{fqdn}-http-public" in prefixes
         assert f"{fqdn}-http-private" in prefixes
 
-    def test_https_files_have_consistent_names(self):
-        host = _make_host()  # No ssl_cert_info
+    def test_no_https_http_files_generated(self):
+        """HTTPS is handled by stream SNI, not http-module blocks."""
+        host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        fqdn = "desktop.welland.mithis.com"
-        assert f"sites-available/{fqdn}-https-public" in files
-        assert f"sites-available/{fqdn}-https-private" in files
-
-    def test_ssl_verify_off_when_no_cert(self):
-        host = _make_host()  # No ssl_cert_info
-        files = generate_nginx(_make_inventory(host))
-
-        fqdn = "desktop.welland.mithis.com"
-        block = files[f"sites-available/{fqdn}-https-public"]
-        assert "proxy_ssl_verify off;" in block
-
-    def test_ssl_verify_on_when_valid_le_cert(self):
-        host = _make_host(ssl_cert_info=VALID_LE_CERT)
-        files = generate_nginx(_make_inventory(host))
-
-        fqdn = "desktop.welland.mithis.com"
-        block = files[f"sites-available/{fqdn}-https-public"]
-        assert "proxy_ssl_verify on;" in block
-
-    def test_ssl_verify_off_when_self_signed(self):
-        host = _make_host(ssl_cert_info=SELF_SIGNED_CERT)
-        files = generate_nginx(_make_inventory(host))
-
-        fqdn = "desktop.welland.mithis.com"
-        block = files[f"sites-available/{fqdn}-https-public"]
-        assert "proxy_ssl_verify off;" in block
+        https_files = [k for k in files if "https" in k and k.startswith("sites-available/")]
+        assert len(https_files) == 0
 
     def test_host_with_no_fqdns_skipped(self):
         host = Host(
@@ -305,114 +262,7 @@ class TestAcmeFallback:
         assert "snippets/acme-challenge.conf" in files
 
 
-class TestHTTPSBlock:
-    def test_https_has_listen_443(self):
-        """Default (no https_listen) emits standard port 443 directives."""
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "listen 443 ssl;" in block
-        assert "listen [::]:443 ssl;" in block
-
-    def test_https_listen_addr_port(self):
-        """https_listen='127.0.0.1:8443' binds to loopback on both stacks."""
-        host = _make_host()
-        files = generate_nginx(
-            _make_inventory(host), https_listen="127.0.0.1:8443",
-        )
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "listen 127.0.0.1:8443 ssl;" in block
-        assert "listen [::1]:8443 ssl;" in block
-        assert "listen 443 ssl;" not in block
-
-    def test_https_listen_port_only(self):
-        """https_listen='8443' (port-only) binds to all interfaces."""
-        host = _make_host()
-        files = generate_nginx(
-            _make_inventory(host), https_listen="8443",
-        )
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "listen 8443 ssl;" in block
-        assert "listen [::]:8443 ssl;" in block
-        assert "listen 443 ssl;" not in block
-
-    def test_https_listen_does_not_affect_http(self):
-        """HTTP blocks are unaffected by https_listen."""
-        host = _make_host()
-        files = generate_nginx(
-            _make_inventory(host), https_listen="127.0.0.1:8443",
-        )
-
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
-        assert "listen 80;" in block
-        assert "listen [::]:80;" in block
-        assert "8443" not in block
-
-    def test_https_has_ssl_cert_paths(self):
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        fqdn = "desktop.welland.mithis.com"
-        assert f"ssl_certificate /etc/letsencrypt/live/{fqdn}/fullchain.pem;" in block
-        assert f"ssl_certificate_key /etc/letsencrypt/live/{fqdn}/privkey.pem;" in block
-
-    def test_https_noverify_has_ssl_verify_off(self):
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "proxy_ssl_verify off;" in block
-        assert "proxy_pass https://10.1.10.100;" in block
-
-    def test_https_verify_has_ssl_verify_on(self):
-        host = _make_host(ssl_cert_info=VALID_LE_CERT)
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "proxy_ssl_verify on;" in block
-
-    def test_ssl_verify_on_includes_trusted_certificate(self):
-        host = _make_host(ssl_cert_info=VALID_LE_CERT)
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "proxy_ssl_trusted_certificate" in block
-        assert "ca-certificates.crt" in block
-
-    def test_ssl_verify_off_omits_trusted_certificate(self):
-        host = _make_host()  # No cert → verify off
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "proxy_ssl_trusted_certificate" not in block
-
-    def test_https_private_has_auth(self):
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-private"]
-        assert 'auth_basic "Restricted";' in block
-
-    def test_https_includes_acme_snippet(self):
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "include snippets/acme-challenge.conf;" in block
-
-    def test_https_has_websocket_headers(self):
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "proxy_http_version 1.1;" in block
-        assert "proxy_set_header Upgrade $http_upgrade;" in block
-        assert 'proxy_set_header Connection "upgrade";' in block
-
+class TestCustomHtpasswd:
     def test_custom_htpasswd_file(self):
         host = _make_host()
         files = generate_nginx(
@@ -425,13 +275,13 @@ class TestHTTPSBlock:
 
 
 class TestMultipleHosts:
-    def test_two_hosts_produce_eight_site_files(self):
+    def test_two_hosts_produce_four_site_files(self):
         h1 = _make_host(hostname="desktop", ip="10.1.10.100")
         h2 = _make_host(hostname="server", ip="10.1.10.200")
         files = generate_nginx(_make_inventory(h1, h2))
 
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 8  # 4 per host
+        assert len(site_files) == 4  # 2 per host
 
     def test_each_host_uses_own_ip(self):
         h1 = _make_host(hostname="desktop", ip="10.1.10.100")
@@ -448,7 +298,6 @@ class TestMultipleHosts:
 def _make_multi_iface_host(
     hostname="rpi-sdr-kraken",
     iface_ips=None,
-    ssl_cert_info=None,
     subdomain="iot",
 ):
     """Create a host with multiple named interfaces.
@@ -487,7 +336,6 @@ def _make_multi_iface_host(
         interfaces=interfaces,
         default_ipv4=default_ipv4,
         subdomain=subdomain,
-        ssl_cert_info=ssl_cert_info,
     )
     derive_all_dns_names(host, SITE)
     return host
@@ -513,13 +361,13 @@ def _extract_server_blocks(config_text: str) -> list[str]:
 
 
 class TestMultiInterfaceHost:
-    def test_produces_four_files_not_twelve(self):
-        """Multi-interface hosts still produce 4 files (one per variant)."""
+    def test_produces_two_files_not_six(self):
+        """Multi-interface hosts produce 2 HTTP files (one per variant)."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 4
+        assert len(site_files) == 2
 
     def test_file_contains_upstream_block(self):
         host = _make_multi_iface_host()
@@ -597,40 +445,6 @@ class TestMultiInterfaceHost:
         assert "proxy_next_upstream" not in block
         assert "proxy_pass http://10.1.10.100;" in block
 
-    def test_https_file_contains_upstream_and_all_blocks(self):
-        host = _make_multi_iface_host()
-        files = generate_nginx(_make_inventory(host))
-
-        fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        conf = files[f"sites-available/{fqdn}-https-public"]
-        assert f"upstream {fqdn}-https-public-backend {{" in conf
-        assert "server 10.1.90.149:443;" in conf
-        assert "server 10.1.90.150:443;" in conf
-        blocks = _extract_server_blocks(conf)
-        assert len(blocks) == 3
-        # Root uses round-robin upstream
-        assert f"proxy_pass https://{fqdn}-https-public-backend;" in blocks[0]
-        assert "proxy_next_upstream error timeout http_502;" in blocks[0]
-        # Interfaces use per-interface named upstreams
-        assert f"proxy_pass https://eth0.{fqdn}-https-public-backend;" in blocks[1]
-        assert f"proxy_pass https://wlan0.{fqdn}-https-public-backend;" in blocks[2]
-
-    def test_multi_iface_https_listen_in_all_server_blocks(self):
-        """https_listen is applied to all server blocks in a multi-interface config."""
-        host = _make_multi_iface_host()
-        files = generate_nginx(
-            _make_inventory(host), https_listen="127.0.0.1:8443",
-        )
-
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-https-public"]
-        blocks = _extract_server_blocks(conf)
-        assert len(blocks) == 3
-        for block in blocks:
-            assert "listen 127.0.0.1:8443 ssl;" in block
-            assert "listen [::1]:8443 ssl;" in block
-            assert "listen 443 ssl;" not in block
-
-
 class TestAltNames:
     def test_alt_names_in_server_name(self):
         host = _make_host()
@@ -649,15 +463,6 @@ class TestAltNames:
 
         block = files["sites-available/desktop.welland.mithis.com-http-public"]
         assert "*.example.com" in block
-
-    def test_alt_names_in_https_server_name(self):
-        host = _make_host()
-        host.alt_names = ["alias.example.com"]
-        derive_all_dns_names(host, SITE)
-        files = generate_nginx(_make_inventory(host))
-
-        block = files["sites-available/desktop.welland.mithis.com-https-public"]
-        assert "alias.example.com" in block
 
     def test_multiple_alt_names(self):
         host = _make_host()
@@ -706,7 +511,7 @@ class TestSharedIPHost:
 
         fqdn = "roku.welland.mithis.com"
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 4
+        assert len(site_files) == 2
 
         # Should use direct proxy_pass, not upstream
         http_pub = files[f"sites-available/{fqdn}-http-public"]
@@ -788,8 +593,8 @@ class TestHealthcheck:
                 lua_healthcheck_path="/opt/lua'; evil;",
             )
 
-    def test_per_host_lua_has_all_four_variants(self):
-        """Per-host .lua file contains spawn_checker for all 4 variants."""
+    def test_per_host_lua_has_two_http_variants(self):
+        """Per-host .lua file contains spawn_checker for 2 HTTP variants."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
@@ -797,8 +602,7 @@ class TestHealthcheck:
         lua = files[f"healthcheck.d/{fqdn}.lua"]
         assert f"{fqdn}-http-public-backend" in lua
         assert f"{fqdn}-http-private-backend" in lua
-        assert f"{fqdn}-https-public-backend" in lua
-        assert f"{fqdn}-https-private-backend" in lua
+        assert "https" not in lua
 
     def test_separate_lua_files_per_host(self):
         """Each multi-interface host gets its own .lua file."""
@@ -871,25 +675,6 @@ class TestHealthcheck:
         assert "127.0.0.1:8080" in status
         assert "/upstream-status" in status
         assert "status_page" in status
-
-    def test_https_variants_have_ssl_verify_false(self):
-        """HTTPS healthcheck entries include ssl_verify = false."""
-        host = _make_multi_iface_host()
-        files = generate_nginx(_make_inventory(host))
-
-        fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        lua = files[f"healthcheck.d/{fqdn}.lua"]
-        # Split into per-upstream blocks by try_spawn calls
-        blocks = lua.split("try_spawn(")
-        for block in blocks[1:]:  # skip preamble before first try_spawn
-            if 'type = "https"' in block:
-                assert "ssl_verify = false" in block, (
-                    "HTTPS upstream missing ssl_verify = false"
-                )
-            elif 'type = "http"' in block:
-                assert "ssl_verify" not in block, (
-                    "HTTP upstream should not have ssl_verify"
-                )
 
     def test_healthcheck_lua_omits_valid_statuses(self):
         """valid_statuses is omitted so any HTTP response means healthy."""
