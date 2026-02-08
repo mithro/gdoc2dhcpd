@@ -653,7 +653,7 @@ def _healthcheck_status_conf() -> str:
         "        default_type text/plain;\n"
         "        content_by_lua_block {\n"
         "            local hc = require \"resty.upstream.healthcheck\"\n"
-        "            ngx.say(hc.healthcheck_status_page())\n"
+        "            ngx.say(hc.status_page())\n"
         "        }\n"
         "    }\n"
         "}\n"

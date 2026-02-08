@@ -801,7 +801,7 @@ class TestHealthcheck:
         status = files["conf.d/healthcheck-status.conf"]
         assert "127.0.0.1:8080" in status
         assert "/upstream-status" in status
-        assert "healthcheck_status_page" in status
+        assert "status_page" in status
 
     def test_https_variants_have_ssl_verify_false(self):
         """HTTPS healthcheck entries include ssl_verify = false."""
