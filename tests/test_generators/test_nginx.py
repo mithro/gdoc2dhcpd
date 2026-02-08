@@ -308,6 +308,21 @@ class TestHTTPSBlock:
         block = files["sites-available/desktop.welland.mithis.com-https-public"]
         assert "proxy_ssl_verify on;" in block
 
+    def test_ssl_verify_on_includes_trusted_certificate(self):
+        host = _make_host(ssl_cert_info=VALID_LE_CERT)
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
+        assert "proxy_ssl_trusted_certificate" in block
+        assert "ca-certificates.crt" in block
+
+    def test_ssl_verify_off_omits_trusted_certificate(self):
+        host = _make_host()  # No cert → verify off
+        files = generate_nginx(_make_inventory(host))
+
+        block = files["sites-available/desktop.welland.mithis.com-https-public"]
+        assert "proxy_ssl_trusted_certificate" not in block
+
     def test_https_private_has_auth(self):
         host = _make_host()
         files = generate_nginx(_make_inventory(host))

@@ -471,8 +471,13 @@ def _https_block(
     else:
         lines.append(f"        proxy_pass https://{target_ip};")
 
+    lines.append(f"        proxy_ssl_verify {verify_str};")
+    if verify:
+        lines.append(
+            "        proxy_ssl_trusted_certificate"
+            " /etc/ssl/certs/ca-certificates.crt;"
+        )
     lines.extend([
-        f"        proxy_ssl_verify {verify_str};",
         "        proxy_http_version 1.1;",
         '        proxy_set_header Upgrade $http_upgrade;',
         '        proxy_set_header Connection "upgrade";',
