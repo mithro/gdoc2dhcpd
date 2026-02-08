@@ -65,19 +65,36 @@ INSTALL_DIR := /opt/gdoc2netcfg
 DNSMASQ_CONF_DIR := /etc/dnsmasq.d
 
 .PHONY: deploy-dnsmasq-internal
-deploy-dnsmasq-internal: generate ## Generate and deploy internal dnsmasq configs (requires sudo)
-	sudo rm $(DNSMASQ_CONF_DIR)/internal/generated/*.conf
-	sudo cp $(OUTPUT_DIR)/internal/*.conf $(DNSMASQ_CONF_DIR)/internal/generated/
-	sudo systemctl restart dnsmasq@internal
+deploy-dnsmasq-internal: generate ## Generate and deploy internal dnsmasq configs (run with sudo)
+	rm $(DNSMASQ_CONF_DIR)/internal/generated/*.conf
+	cp $(OUTPUT_DIR)/internal/*.conf $(DNSMASQ_CONF_DIR)/internal/generated/
+	systemctl restart dnsmasq@internal
 
 .PHONY: deploy-dnsmasq-external
-deploy-dnsmasq-external: generate ## Generate and deploy external dnsmasq configs (requires sudo)
-	sudo rm $(DNSMASQ_CONF_DIR)/external/generated/*.conf
-	sudo cp $(OUTPUT_DIR)/external/*.conf $(DNSMASQ_CONF_DIR)/external/generated/
-	sudo systemctl restart dnsmasq@external
+deploy-dnsmasq-external: generate ## Generate and deploy external dnsmasq configs (run with sudo)
+	rm $(DNSMASQ_CONF_DIR)/external/generated/*.conf
+	cp $(OUTPUT_DIR)/external/*.conf $(DNSMASQ_CONF_DIR)/external/generated/
+	systemctl restart dnsmasq@external
 
 .PHONY: deploy-dnsmasq
-deploy-dnsmasq: deploy-dnsmasq-internal deploy-dnsmasq-external ## Deploy both internal and external dnsmasq configs
+deploy-dnsmasq: deploy-dnsmasq-internal deploy-dnsmasq-external ## Deploy both internal and external dnsmasq configs (run with sudo)
+
+NGINX_CONF_DIR := /etc/nginx
+
+.PHONY: deploy-nginx
+deploy-nginx: generate ## Generate and deploy nginx configs (run with sudo)
+	cp $(OUTPUT_DIR)/nginx/sites-available/* $(NGINX_CONF_DIR)/sites-available/
+	cp $(OUTPUT_DIR)/nginx/snippets/* $(NGINX_CONF_DIR)/snippets/
+	rm -f $(NGINX_CONF_DIR)/conf.d/lua-healthcheck.conf $(NGINX_CONF_DIR)/conf.d/healthcheck-init.conf $(NGINX_CONF_DIR)/conf.d/healthcheck-status.conf
+	cp $(OUTPUT_DIR)/nginx/conf.d/* $(NGINX_CONF_DIR)/conf.d/
+	mkdir -p $(NGINX_CONF_DIR)/healthcheck.d
+	rm -f $(NGINX_CONF_DIR)/healthcheck.d/*.lua
+	cp $(OUTPUT_DIR)/nginx/healthcheck.d/* $(NGINX_CONF_DIR)/healthcheck.d/
+	nginx -t
+	systemctl reload nginx
+
+.PHONY: deploy
+deploy: deploy-dnsmasq deploy-nginx ## Run all deploy steps (run with sudo)
 
 .PHONY: install
 install: ## Install into /opt/gdoc2netcfg
