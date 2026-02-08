@@ -777,6 +777,18 @@ class TestStreamSNI:
         stream_map = files[f"sites-available/{fqdn}-stream-map"]
         assert "ipv6.desktop.welland.mithis.com" not in stream_map
 
+    def test_no_bare_hostnames_in_stream_map(self):
+        """Bare (non-FQDN) hostnames excluded from stream map (SNI is always FQDN)."""
+        host = _make_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "desktop.welland.mithis.com"
+        stream_map = files[f"sites-available/{fqdn}-stream-map"]
+        # "desktop" without domain should not appear as its own map entry
+        for line in stream_map.strip().splitlines():
+            name = line.split()[0]
+            assert "." in name, f"bare hostname in stream map: {name}"
+
     def test_no_https_http_files_generated(self):
         """No *-https-* files in sites-available (stream replaces HTTPS)."""
         host = _make_host()

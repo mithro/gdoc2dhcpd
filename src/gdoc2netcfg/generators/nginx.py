@@ -146,18 +146,22 @@ def _stream_map_entries(
 def _emit_stream_files(
     files: dict[str, str],
     primary_fqdn: str,
-    all_nginx_names: list[str],
+    fqdn_names: list[str],
     ips: list[str],
     balancer_lua_path: str = "",
 ) -> None:
-    """Emit stream upstream and SNI map files for a host."""
+    """Emit stream upstream and SNI map files for a host.
+
+    fqdn_names must be FQDN-only (not bare hostnames) because SNI
+    values in TLS ClientHello are always fully qualified domain names.
+    """
     upstream_name = f"{primary_fqdn}-tls"
 
     files[f"sites-available/{primary_fqdn}-stream"] = _stream_upstream_block(
         upstream_name, ips, balancer_lua_path=balancer_lua_path,
     )
     files[f"sites-available/{primary_fqdn}-stream-map"] = _stream_map_entries(
-        upstream_name, all_nginx_names,
+        upstream_name, fqdn_names,
     )
 
 
@@ -214,10 +218,15 @@ def generate_nginx(
         if not fqdns:
             continue
 
-        # Collect all nginx-eligible DNS names for stream map
+        # All nginx-eligible names (including bare hostnames) for HTTP server_name
         all_nginx_names = [
             dn.name for dn in host.dns_names
             if _is_nginx_name(dn)
+        ]
+        # FQDN-only subset for stream SNI map (TLS ClientHello uses FQDNs)
+        all_fqdn_names = [
+            dn.name for dn in host.dns_names
+            if dn.is_fqdn and _is_nginx_name(dn)
         ]
 
         if not host.is_multi_interface():
@@ -230,7 +239,7 @@ def generate_nginx(
                 htpasswd_file, acme_webroot,
             )
             _emit_stream_files(
-                files, primary_fqdn, all_nginx_names,
+                files, primary_fqdn, all_fqdn_names,
                 ips=[target_ip],
             )
         else:
@@ -282,7 +291,7 @@ def generate_nginx(
             )
             balancer_path = f"{stream_healthcheck_dir}/{primary_fqdn}-balancer.lua"
             _emit_stream_files(
-                files, primary_fqdn, all_nginx_names,
+                files, primary_fqdn, all_fqdn_names,
                 ips=all_ips, balancer_lua_path=balancer_path,
             )
 
