@@ -75,6 +75,6 @@ src/gdoc2netcfg/
 ├── supplements/    External data enrichment (SSHFP, SSL)
 ├── constraints/    Validation checks
 ├── generators/     Output generators
-├── utils/          Shared utilities (IP helpers, DNS utils)
+├── utils/          Shared utilities (IP helpers, DNS utils, device lookup)
 └── audit/          Audit trail utilities
 ```

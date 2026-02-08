@@ -7,8 +7,6 @@ import pytest
 from gdoc2netcfg.models.addressing import IPv4Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface
 from gdoc2netcfg.utils.lookup import (
-    CREDENTIAL_TYPES,
-    LookupResult,
     _match_by_mac,
     available_credential_fields,
     detect_query_type,
@@ -16,7 +14,6 @@ from gdoc2netcfg.utils.lookup import (
     lookup_host,
     suggest_matches,
 )
-
 
 # --- Helpers ----------------------------------------------------------------
 

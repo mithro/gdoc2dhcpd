@@ -28,6 +28,10 @@ uv run gdoc2netcfg bmc-firmware --force # Probe BMC firmware versions via ipmito
 uv run gdoc2netcfg bridge              # Unified switch data (SNMP + NSDP)
 uv run gdoc2netcfg nsdp                # Scan Netgear switches via NSDP
 uv run gdoc2netcfg cron                # Manage scheduled cron jobs
+uv run gdoc2netcfg password <query>        # Look up device password by hostname/MAC/IP
+uv run gdoc2netcfg password --type snmp <query>  # Look up SNMP community string
+uv run gdoc2netcfg password --type ipmi <query>  # Look up IPMI credentials
+uv run gdoc2netcfg password --quiet <query>      # Output password only (for piping)
 ```
 
 Always use `uv run` to execute Python commands. Never use bare `python` or `pip`.
@@ -129,6 +133,8 @@ The topology generator (`topology.py`) produces a Graphviz DOT diagram of the ph
 - `NetworkInventory` — the complete enriched model passed to generators
 - `VLAN`, `Site` — network topology definitions in `models/network.py`, loaded from config + VLAN Allocations sheet
 - `PortLinkStatus`, `PortTrafficStats`, `SwitchData`, `SwitchDataSource` — unified switch data model in `models/switch_data.py`, populated from SNMP or NSDP sources
+
+**Credential columns**: The spreadsheet may include extra columns such as `Password`, `SNMP Community`, `IPMI Username`, `IPMI Password` which are preserved in `Host.extra` and accessible via the `password` CLI command.
 
 ### NSDP Protocol Library
 
@@ -236,6 +242,20 @@ sudo sh /opt/gdoc2netcfg/letsencrypt/certs-available/{fqdn}  # Provision a cert
 ```
 
 The auth hook is the `certbot-hook-dnsmasq` Python CLI installed at `/opt/certbot/bin/certbot-hook-dnsmasq` (separate repo: `mithro/certbot-hook-dnsmasq`). It creates TXT records in the external dnsmasq, verifies local resolution, sends NOTIFY to secondaries, and polls until they sync.
+
+### Looking up device credentials
+
+On either site, look up credentials from the cached spreadsheet data:
+
+```bash
+cd /opt/gdoc2netcfg
+uv run gdoc2netcfg password switch1              # Password for switch1
+uv run gdoc2netcfg password --quiet 10.1.10.1    # Password only (pipe to clipboard etc.)
+uv run gdoc2netcfg password --type snmp switch1   # SNMP community string
+uv run gdoc2netcfg password --type ipmi bmc.server1  # IPMI username + password
+```
+
+The command reads from the local CSV cache (`gdoc2netcfg fetch` must have been run at least once). It does not contact the Google Sheet directly.
 
 ### Other
 
