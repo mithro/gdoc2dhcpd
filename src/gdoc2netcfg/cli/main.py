@@ -1370,7 +1370,7 @@ def cmd_password(args: argparse.Namespace) -> int:
 
     hosts = build_hosts(all_records, config.site)
 
-    results = lookup_host(args.query, hosts, config.site.domain)
+    results = lookup_host(args.query, hosts)
 
     if not results:
         print(f"Error: no device found matching '{args.query}'", file=sys.stderr)

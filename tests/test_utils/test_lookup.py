@@ -97,6 +97,11 @@ class TestDetectQueryType:
     def test_whitespace_stripped(self):
         assert detect_query_type("  10.1.10.1  ") == "ip"
 
+    def test_invalid_ip_octets_classified_as_hostname(self):
+        """IPs with out-of-range octets are treated as hostnames."""
+        assert detect_query_type("999.999.999.999") == "hostname"
+        assert detect_query_type("256.0.0.1") == "hostname"
+
 
 # --- TestMatchByHostname ----------------------------------------------------
 
@@ -116,37 +121,37 @@ class TestMatchByHostname:
 
     def test_exact_hostname_match(self, hosts):
         results = lookup_host(
-            "switch1.net.welland.mithis.com", hosts, "welland.mithis.com",
+            "switch1.net.welland.mithis.com", hosts,
         )
         assert len(results) == 1
         assert results[0].host.hostname == "switch1.net.welland.mithis.com"
         assert results[0].match_type == "exact"
 
     def test_exact_machine_name_match(self, hosts):
-        results = lookup_host("switch1", hosts, "welland.mithis.com")
+        results = lookup_host("switch1", hosts)
         assert len(results) >= 1
         assert results[0].host.machine_name == "switch1"
         assert results[0].match_type == "exact"
 
     def test_case_insensitive(self, hosts):
-        results = lookup_host("SWITCH1", hosts, "welland.mithis.com")
+        results = lookup_host("SWITCH1", hosts)
         assert len(results) >= 1
         assert results[0].host.machine_name == "switch1"
 
     def test_prefix_match(self, hosts):
-        results = lookup_host("desktop", hosts, "welland.mithis.com")
+        results = lookup_host("desktop", hosts)
         # "desktop" exactly matches machine_name, so it's exact
         assert results[0].match_type == "exact"
 
     def test_prefix_match_domain_stripping(self, hosts):
         """Query like 'switch1' that has exact machine_name match AND prefix."""
-        results = lookup_host("switch1", hosts, "welland.mithis.com")
+        results = lookup_host("switch1", hosts)
         # Exact match on machine_name comes first
         assert results[0].host.machine_name == "switch1"
         assert results[0].match_type == "exact"
 
     def test_substring_match(self, hosts):
-        results = lookup_host("storage", hosts, "welland.mithis.com")
+        results = lookup_host("storage", hosts)
         assert len(results) == 1
         assert results[0].host.machine_name == "big-storage"
         assert results[0].match_type == "substring"
@@ -154,7 +159,7 @@ class TestMatchByHostname:
     def test_ordering_exact_before_prefix_before_substring(self, hosts):
         """'switch1' should match: exact(switch1), prefix(switch1.net..),
         then substring(switch10) should come last."""
-        results = lookup_host("switch1", hosts, "welland.mithis.com")
+        results = lookup_host("switch1", hosts)
         types = [r.match_type for r in results]
         # Exact first, then possibly substring for switch10
         assert types[0] == "exact"
@@ -164,7 +169,7 @@ class TestMatchByHostname:
             assert results[-1].host.machine_name == "switch10"
 
     def test_no_match(self, hosts):
-        results = lookup_host("nonexistent", hosts, "welland.mithis.com")
+        results = lookup_host("nonexistent", hosts)
         assert results == []
 
 
@@ -181,7 +186,7 @@ class TestMatchByIP:
         ]
 
     def test_exact_ip_match(self, hosts):
-        results = lookup_host("10.1.30.1", hosts, "welland.mithis.com")
+        results = lookup_host("10.1.30.1", hosts)
         assert len(results) == 1
         assert results[0].host.machine_name == "switch1"
         assert results[0].match_type == "exact"
@@ -189,18 +194,18 @@ class TestMatchByIP:
     def test_wildcard_second_octet(self, hosts):
         # Query with different second octet (e.g., Monarto IP 10.2.30.1
         # matching Welland host at 10.1.30.1)
-        results = lookup_host("10.2.30.1", hosts, "welland.mithis.com")
+        results = lookup_host("10.2.30.1", hosts)
         assert len(results) == 1
         assert results[0].host.machine_name == "switch1"
         assert results[0].match_type == "wildcard"
 
     def test_exact_before_wildcard(self, hosts):
         """If a host has exact match, it comes before wildcard matches."""
-        results = lookup_host("10.1.30.1", hosts, "welland.mithis.com")
+        results = lookup_host("10.1.30.1", hosts)
         assert results[0].match_type == "exact"
 
     def test_no_match(self, hosts):
-        results = lookup_host("10.1.99.99", hosts, "welland.mithis.com")
+        results = lookup_host("10.1.99.99", hosts)
         assert results == []
 
 
@@ -217,28 +222,28 @@ class TestMatchByMAC:
         ]
 
     def test_exact_mac_match(self, hosts):
-        results = lookup_host("aa:bb:cc:dd:ee:01", hosts, "welland.mithis.com")
+        results = lookup_host("aa:bb:cc:dd:ee:01", hosts)
         assert len(results) == 1
         assert results[0].host.machine_name == "switch1"
         assert results[0].match_type == "exact"
 
     def test_dash_format_normalized(self, hosts):
-        results = lookup_host("aa-bb-cc-dd-ee-01", hosts, "welland.mithis.com")
+        results = lookup_host("aa-bb-cc-dd-ee-01", hosts)
         assert len(results) == 1
         assert results[0].host.machine_name == "switch1"
 
     def test_dot_format_normalized(self, hosts):
-        results = lookup_host("aabb.ccdd.ee01", hosts, "welland.mithis.com")
+        results = lookup_host("aabb.ccdd.ee01", hosts)
         assert len(results) == 1
         assert results[0].host.machine_name == "switch1"
 
     def test_uppercase_mac(self, hosts):
-        results = lookup_host("AA:BB:CC:DD:EE:01", hosts, "welland.mithis.com")
+        results = lookup_host("AA:BB:CC:DD:EE:01", hosts)
         assert len(results) == 1
         assert results[0].host.machine_name == "switch1"
 
     def test_no_match(self, hosts):
-        results = lookup_host("ff:ff:ff:ff:ff:ff", hosts, "welland.mithis.com")
+        results = lookup_host("ff:ff:ff:ff:ff:ff", hosts)
         assert results == []
 
     def test_invalid_mac_raises(self, hosts):
@@ -249,7 +254,7 @@ class TestMatchByMAC:
     def test_invalid_mac_detected_as_hostname(self, hosts):
         """A MAC-like string with non-hex chars is treated as hostname."""
         # 'zz' is not valid hex, so detect_query_type classifies as hostname
-        results = lookup_host("zz:zz:zz:zz:zz:zz", hosts, "welland.mithis.com")
+        results = lookup_host("zz:zz:zz:zz:zz:zz", hosts)
         assert results == []
 
 

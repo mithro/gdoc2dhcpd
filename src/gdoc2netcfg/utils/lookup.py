@@ -42,7 +42,10 @@ def detect_query_type(query: str) -> str:
     if _MAC_COLON_RE.match(q) or _MAC_DASH_RE.match(q) or _MAC_DOT_RE.match(q):
         return "mac"
     if _IPV4_RE.match(q):
-        return "ip"
+        # Validate octets are in 0-255 range
+        octets = q.split(".")
+        if all(0 <= int(o) <= 255 for o in octets):
+            return "ip"
     return "hostname"
 
 
@@ -67,7 +70,7 @@ class LookupResult:
 # --- Matchers ---------------------------------------------------------------
 
 def _match_by_hostname(
-    query: str, hosts: list[Host], site_domain: str,
+    query: str, hosts: list[Host],
 ) -> list[LookupResult]:
     """Match hosts by hostname or machine_name.
 
@@ -173,7 +176,7 @@ def _match_by_mac(query: str, hosts: list[Host]) -> list[LookupResult]:
 # --- Main lookup entry point ------------------------------------------------
 
 def lookup_host(
-    query: str, hosts: list[Host], site_domain: str,
+    query: str, hosts: list[Host],
 ) -> list[LookupResult]:
     """Look up hosts matching a query string.
 
@@ -187,7 +190,7 @@ def lookup_host(
     elif qtype == "ip":
         return _match_by_ip(query, hosts)
     else:
-        return _match_by_hostname(query, hosts, site_domain)
+        return _match_by_hostname(query, hosts)
 
 
 # --- Suggestions for "did you mean?" ---------------------------------------
