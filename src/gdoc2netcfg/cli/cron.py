@@ -7,6 +7,7 @@ that keep cached data and generated config files up to date.
 from __future__ import annotations
 
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -169,3 +170,69 @@ def format_crontab_block(
     lines.append("")  # trailing newline
 
     return "\n".join(lines)
+
+
+def read_current_crontab() -> str:
+    """Read the current user's crontab.
+
+    Returns empty string if the user has no crontab.
+    """
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def write_crontab(content: str) -> None:
+    """Write content as the user's crontab by piping to 'crontab -'."""
+    subprocess.run(
+        ["crontab", "-"],
+        input=content,
+        text=True,
+        check=True,
+    )
+
+
+def remove_managed_block(crontab: str) -> str:
+    """Remove the gdoc2netcfg managed block from a crontab string.
+
+    Returns the crontab with the block (between BEGIN/END markers) removed.
+    Preserves all other content.
+    """
+    lines = crontab.splitlines(keepends=True)
+    result: list[str] = []
+    inside_block = False
+
+    for line in lines:
+        stripped = line.rstrip("\n")
+        if stripped == _BEGIN_MARKER:
+            inside_block = True
+            continue
+        if stripped == _END_MARKER:
+            inside_block = False
+            continue
+        if not inside_block:
+            result.append(line)
+
+    # Clean up trailing blank lines
+    text = "".join(result)
+    if text:
+        text = text.rstrip("\n") + "\n"
+    return text
+
+
+def add_managed_block(crontab: str, block: str) -> str:
+    """Add a managed block to a crontab, replacing any existing one.
+
+    Removes the old block first (if present), then appends the new one.
+    """
+    cleaned = remove_managed_block(crontab)
+    if cleaned and not cleaned.endswith("\n"):
+        cleaned += "\n"
+    return cleaned + block

@@ -360,3 +360,158 @@ class TestFormatCrontabBlock:
         entries = generate_cron_entries()
         block = format_crontab_block(entries, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
         assert block.endswith("\n")
+
+
+# ---------------------------------------------------------------------------
+# Crontab reading/writing
+# ---------------------------------------------------------------------------
+
+class TestReadCurrentCrontab:
+    """Tests for read_current_crontab()."""
+
+    def test_reads_existing_crontab(self):
+        """Should return the current crontab contents."""
+        from gdoc2netcfg.cli.cron import read_current_crontab
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.stdout = "0 * * * * some-job\n"
+            mock_run.return_value.returncode = 0
+            result = read_current_crontab()
+        assert result == "0 * * * * some-job\n"
+        mock_run.assert_called_once()
+
+    def test_returns_empty_when_no_crontab(self):
+        """Should return empty string when user has no crontab."""
+        import subprocess
+
+        from gdoc2netcfg.cli.cron import read_current_crontab
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(1, "crontab -l")
+            result = read_current_crontab()
+        assert result == ""
+
+
+class TestWriteCrontab:
+    """Tests for write_crontab()."""
+
+    def test_pipes_content_to_crontab(self):
+        """Should pipe content to 'crontab -'."""
+        from gdoc2netcfg.cli.cron import write_crontab
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            write_crontab("0 * * * * some-job\n")
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        assert call_args[0][0] == ["crontab", "-"]
+        assert call_args[1]["input"] == "0 * * * * some-job\n"
+
+
+# ---------------------------------------------------------------------------
+# Block manipulation
+# ---------------------------------------------------------------------------
+
+class TestRemoveManagedBlock:
+    """Tests for remove_managed_block()."""
+
+    def test_removes_block_between_markers(self):
+        """Should remove everything between BEGIN and END markers (inclusive)."""
+        from gdoc2netcfg.cli.cron import remove_managed_block
+
+        crontab = (
+            "0 * * * * other-job\n"
+            "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK\n"
+            "# Project: /opt/gdoc2netcfg\n"
+            "*/15 * * * * flock ...\n"
+            "# END gdoc2netcfg managed entries\n"
+            "30 * * * * another-job\n"
+        )
+        result = remove_managed_block(crontab)
+        assert "BEGIN gdoc2netcfg" not in result
+        assert "END gdoc2netcfg" not in result
+        assert "flock" not in result
+        assert "0 * * * * other-job" in result
+        assert "30 * * * * another-job" in result
+
+    def test_preserves_content_when_no_block(self):
+        """Should return crontab unchanged when no managed block exists."""
+        from gdoc2netcfg.cli.cron import remove_managed_block
+
+        crontab = "0 * * * * other-job\n30 * * * * another-job\n"
+        result = remove_managed_block(crontab)
+        assert result == crontab
+
+    def test_handles_empty_crontab(self):
+        """Should handle empty crontab gracefully."""
+        from gdoc2netcfg.cli.cron import remove_managed_block
+
+        result = remove_managed_block("")
+        assert result == ""
+
+    def test_no_trailing_blank_lines(self):
+        """Should not leave multiple trailing blank lines after removal."""
+        from gdoc2netcfg.cli.cron import remove_managed_block
+
+        crontab = (
+            "0 * * * * other-job\n"
+            "\n"
+            "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK\n"
+            "*/15 * * * * flock ...\n"
+            "# END gdoc2netcfg managed entries\n"
+        )
+        result = remove_managed_block(crontab)
+        # Should not have multiple trailing newlines
+        assert not result.endswith("\n\n")
+
+
+class TestAddManagedBlock:
+    """Tests for add_managed_block()."""
+
+    def test_appends_to_empty_crontab(self):
+        """Should add block to empty crontab."""
+        from gdoc2netcfg.cli.cron import add_managed_block
+
+        block = (
+            "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK\n"
+            "*/15 * * * * flock ...\n"
+            "# END gdoc2netcfg managed entries\n"
+        )
+        result = add_managed_block("", block)
+        assert block in result
+
+    def test_appends_to_existing_crontab(self):
+        """Should append block after existing entries."""
+        from gdoc2netcfg.cli.cron import add_managed_block
+
+        existing = "0 * * * * other-job\n"
+        block = (
+            "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK\n"
+            "*/15 * * * * flock ...\n"
+            "# END gdoc2netcfg managed entries\n"
+        )
+        result = add_managed_block(existing, block)
+        assert "0 * * * * other-job" in result
+        assert block in result
+
+    def test_replaces_existing_block(self):
+        """Should remove old block before adding new one."""
+        from gdoc2netcfg.cli.cron import add_managed_block
+
+        existing = (
+            "0 * * * * other-job\n"
+            "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK\n"
+            "# OLD ENTRY\n"
+            "# END gdoc2netcfg managed entries\n"
+        )
+        new_block = (
+            "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK\n"
+            "# NEW ENTRY\n"
+            "# END gdoc2netcfg managed entries\n"
+        )
+        result = add_managed_block(existing, new_block)
+        assert "OLD ENTRY" not in result
+        assert "NEW ENTRY" in result
+        assert "0 * * * * other-job" in result
+        # Should have exactly one BEGIN marker
+        assert result.count("BEGIN gdoc2netcfg") == 1
