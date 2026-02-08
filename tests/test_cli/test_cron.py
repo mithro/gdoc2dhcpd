@@ -616,3 +616,174 @@ class TestRoundTrip:
         first = add_managed_block(existing, block)
         second = add_managed_block(first, block)
         assert first == second
+
+
+# ---------------------------------------------------------------------------
+# CLI command handlers
+# ---------------------------------------------------------------------------
+
+class TestCmdCronShow:
+    """Tests for cmd_cron_show()."""
+
+    def test_prints_block_to_stdout(self, capsys):
+        """Should print the crontab block to stdout."""
+        from gdoc2netcfg.cli.cron import cmd_cron_show
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("gdoc2netcfg.cli.cron.detect_project_root", return_value=Path("/opt/gdoc2netcfg")),
+        ):
+            result = cmd_cron_show()
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "BEGIN gdoc2netcfg" in captured.out
+        assert "END gdoc2netcfg" in captured.out
+        assert "flock" in captured.out
+
+    def test_prints_detected_paths(self, capsys):
+        """Should print detected uv and project root paths."""
+        from gdoc2netcfg.cli.cron import cmd_cron_show
+
+        with (
+            patch("shutil.which", return_value="/home/tim/.local/bin/uv"),
+            patch("gdoc2netcfg.cli.cron.detect_project_root", return_value=Path("/opt/gdoc2netcfg")),
+        ):
+            cmd_cron_show()
+
+        captured = capsys.readouterr()
+        assert "/home/tim/.local/bin/uv" in captured.out
+        assert "/opt/gdoc2netcfg" in captured.out
+
+
+class TestCmdCronInstall:
+    """Tests for cmd_cron_install()."""
+
+    def test_installs_block_to_crontab(self, capsys):
+        """Should read crontab, add block, write back."""
+        from gdoc2netcfg.cli.cron import cmd_cron_install
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("gdoc2netcfg.cli.cron.detect_project_root", return_value=Path("/opt/gdoc2netcfg")),
+            patch("gdoc2netcfg.cli.cron.read_current_crontab", return_value=""),
+            patch("gdoc2netcfg.cli.cron.write_crontab") as mock_write,
+        ):
+            result = cmd_cron_install()
+
+        assert result == 0
+        mock_write.assert_called_once()
+        written = mock_write.call_args[0][0]
+        assert "BEGIN gdoc2netcfg" in written
+        assert "END gdoc2netcfg" in written
+
+    def test_preserves_existing_crontab(self, capsys):
+        """Should preserve existing crontab entries when installing."""
+        from gdoc2netcfg.cli.cron import cmd_cron_install
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("gdoc2netcfg.cli.cron.detect_project_root", return_value=Path("/opt/gdoc2netcfg")),
+            patch("gdoc2netcfg.cli.cron.read_current_crontab", return_value="0 * * * * other-job\n"),
+            patch("gdoc2netcfg.cli.cron.write_crontab") as mock_write,
+        ):
+            cmd_cron_install()
+
+        written = mock_write.call_args[0][0]
+        assert "0 * * * * other-job" in written
+        assert "BEGIN gdoc2netcfg" in written
+
+
+class TestCmdCronUninstall:
+    """Tests for cmd_cron_uninstall()."""
+
+    def test_removes_block_from_crontab(self, capsys):
+        """Should remove the managed block and write back."""
+        from gdoc2netcfg.cli.cron import cmd_cron_uninstall
+
+        existing = (
+            "0 * * * * other-job\n"
+            "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK\n"
+            "*/15 * * * * flock ...\n"
+            "# END gdoc2netcfg managed entries\n"
+        )
+        with (
+            patch("gdoc2netcfg.cli.cron.read_current_crontab", return_value=existing),
+            patch("gdoc2netcfg.cli.cron.write_crontab") as mock_write,
+        ):
+            result = cmd_cron_uninstall()
+
+        assert result == 0
+        mock_write.assert_called_once()
+        written = mock_write.call_args[0][0]
+        assert "BEGIN gdoc2netcfg" not in written
+        assert "0 * * * * other-job" in written
+
+    def test_noop_when_no_block(self, capsys):
+        """Should succeed even when no managed block exists."""
+        from gdoc2netcfg.cli.cron import cmd_cron_uninstall
+
+        with (
+            patch("gdoc2netcfg.cli.cron.read_current_crontab", return_value="0 * * * * other-job\n"),
+            patch("gdoc2netcfg.cli.cron.write_crontab") as mock_write,
+        ):
+            result = cmd_cron_uninstall()
+
+        assert result == 0
+        mock_write.assert_called_once()
+
+
+class TestCmdCron:
+    """Tests for cmd_cron() dispatcher."""
+
+    def test_dispatches_to_show(self):
+        """Should dispatch to cmd_cron_show when cron_command is 'show'."""
+        import argparse
+
+        from gdoc2netcfg.cli.cron import cmd_cron
+
+        args = argparse.Namespace(cron_command="show")
+        with (
+            patch("gdoc2netcfg.cli.cron.cmd_cron_show", return_value=0) as mock_show,
+        ):
+            result = cmd_cron(args)
+        assert result == 0
+        mock_show.assert_called_once()
+
+    def test_dispatches_to_install(self):
+        """Should dispatch to cmd_cron_install when cron_command is 'install'."""
+        import argparse
+
+        from gdoc2netcfg.cli.cron import cmd_cron
+
+        args = argparse.Namespace(cron_command="install")
+        with (
+            patch("gdoc2netcfg.cli.cron.cmd_cron_install", return_value=0) as mock_install,
+        ):
+            result = cmd_cron(args)
+        assert result == 0
+        mock_install.assert_called_once()
+
+    def test_dispatches_to_uninstall(self):
+        """Should dispatch to cmd_cron_uninstall when cron_command is 'uninstall'."""
+        import argparse
+
+        from gdoc2netcfg.cli.cron import cmd_cron
+
+        args = argparse.Namespace(cron_command="uninstall")
+        with (
+            patch("gdoc2netcfg.cli.cron.cmd_cron_uninstall", return_value=0) as mock_uninstall,
+        ):
+            result = cmd_cron(args)
+        assert result == 0
+        mock_uninstall.assert_called_once()
+
+    def test_returns_zero_when_no_subcommand(self, capsys):
+        """Should print help and return 0 when no cron_command given."""
+        import argparse
+
+        from gdoc2netcfg.cli.cron import cmd_cron
+
+        args = argparse.Namespace(cron_command=None)
+        result = cmd_cron(args)
+        assert result == 0

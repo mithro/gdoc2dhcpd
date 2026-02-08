@@ -6,8 +6,10 @@ that keep cached data and generated config files up to date.
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -263,3 +265,65 @@ def add_managed_block(crontab: str, block: str) -> str:
     if cleaned and not cleaned.endswith("\n"):
         cleaned += "\n"
     return cleaned + block
+
+
+# ---------------------------------------------------------------------------
+# CLI command handlers
+# ---------------------------------------------------------------------------
+
+
+def cmd_cron_show() -> int:
+    """Print the crontab block that would be installed."""
+    uv_path = detect_uv_path()
+    project_root = detect_project_root()
+    entries = generate_cron_entries()
+    block = format_crontab_block(entries, uv_path, project_root)
+
+    print(f"# uv path: {uv_path}")
+    print(f"# Project root: {project_root}")
+    print()
+    print(block)
+    return 0
+
+
+def cmd_cron_install() -> int:
+    """Install cron entries into the user's crontab."""
+    uv_path = detect_uv_path()
+    project_root = detect_project_root()
+    entries = generate_cron_entries()
+    block = format_crontab_block(entries, uv_path, project_root)
+
+    current = read_current_crontab()
+    new_crontab = add_managed_block(current, block)
+    write_crontab(new_crontab)
+
+    print(f"Installed {len(entries)} cron entries.", file=sys.stderr)
+    print(f"  uv: {uv_path}", file=sys.stderr)
+    print(f"  project: {project_root}", file=sys.stderr)
+    return 0
+
+
+def cmd_cron_uninstall() -> int:
+    """Remove gdoc2netcfg cron entries from the user's crontab."""
+    current = read_current_crontab()
+    cleaned = remove_managed_block(current)
+    write_crontab(cleaned)
+
+    print("Removed gdoc2netcfg cron entries.", file=sys.stderr)
+    return 0
+
+
+def cmd_cron(args: argparse.Namespace) -> int:
+    """Dispatch to the appropriate cron subcommand."""
+    handlers = {
+        "show": cmd_cron_show,
+        "install": cmd_cron_install,
+        "uninstall": cmd_cron_uninstall,
+    }
+
+    subcommand = getattr(args, "cron_command", None)
+    if subcommand is None:
+        print("Usage: gdoc2netcfg cron {show|install|uninstall}")
+        return 0
+
+    return handlers[subcommand]()
