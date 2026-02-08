@@ -914,11 +914,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Force re-scan even if cache is fresh",
     )
 
+    # cron
+    cron_parser = subparsers.add_parser("cron", help="Manage scheduled cron jobs")
+    cron_subparsers = cron_parser.add_subparsers(dest="cron_command")
+    cron_subparsers.add_parser("show", help="Display cron entries that would be installed")
+    cron_subparsers.add_parser("install", help="Install cron entries into user's crontab")
+    cron_subparsers.add_parser("uninstall", help="Remove gdoc2netcfg cron entries from crontab")
+
     args = parser.parse_args(argv)
 
     if args.command is None:
         parser.print_help()
         return 0
+
+    from gdoc2netcfg.cli.cron import cmd_cron
 
     commands = {
         "fetch": cmd_fetch,
@@ -931,6 +940,7 @@ def main(argv: list[str] | None = None) -> int:
         "snmp": cmd_snmp,
         "bmc-firmware": cmd_bmc_firmware,
         "bridge": cmd_bridge,
+        "cron": cmd_cron,
     }
 
     return commands[args.command](args)
