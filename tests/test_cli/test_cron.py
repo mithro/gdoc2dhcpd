@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # CronEntry data model
@@ -308,6 +306,32 @@ class TestFormatCronLine:
         line = format_cron_line(entry, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
         assert ">>/opt/gdoc2netcfg/.cache/cron.log 2>&1" in line
 
+    def test_rejects_uv_path_with_whitespace(self):
+        """Should raise ValueError if uv path contains whitespace."""
+        from gdoc2netcfg.cli.cron import CronEntry, format_cron_line
+
+        entry = CronEntry(
+            schedule="*/15 * * * *",
+            command="gdoc2netcfg fetch",
+            lock_name="fetch",
+            comment="Fetch CSVs",
+        )
+        with pytest.raises(ValueError, match="whitespace"):
+            format_cron_line(entry, Path("/home/user name/bin/uv"), Path("/opt/gdoc2netcfg"))
+
+    def test_rejects_project_root_with_whitespace(self):
+        """Should raise ValueError if project root contains whitespace."""
+        from gdoc2netcfg.cli.cron import CronEntry, format_cron_line
+
+        entry = CronEntry(
+            schedule="*/15 * * * *",
+            command="gdoc2netcfg fetch",
+            lock_name="fetch",
+            comment="Fetch CSVs",
+        )
+        with pytest.raises(ValueError, match="whitespace"):
+            format_cron_line(entry, Path("/usr/bin/uv"), Path("/opt/my project"))
+
 
 # ---------------------------------------------------------------------------
 # Crontab block formatting
@@ -381,15 +405,32 @@ class TestReadCurrentCrontab:
         mock_run.assert_called_once()
 
     def test_returns_empty_when_no_crontab(self):
-        """Should return empty string when user has no crontab."""
+        """Should return empty string when 'no crontab for user' error."""
         import subprocess
 
         from gdoc2netcfg.cli.cron import read_current_crontab
 
+        err = subprocess.CalledProcessError(1, "crontab -l")
+        err.stderr = "no crontab for user\n"
+
         with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.CalledProcessError(1, "crontab -l")
+            mock_run.side_effect = err
             result = read_current_crontab()
         assert result == ""
+
+    def test_raises_on_unexpected_crontab_error(self):
+        """Should re-raise CalledProcessError for unexpected errors."""
+        import subprocess
+
+        from gdoc2netcfg.cli.cron import read_current_crontab
+
+        err = subprocess.CalledProcessError(1, "crontab -l")
+        err.stderr = "permission denied\n"
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = err
+            with pytest.raises(subprocess.CalledProcessError):
+                read_current_crontab()
 
 
 class TestWriteCrontab:
@@ -448,6 +489,18 @@ class TestRemoveManagedBlock:
 
         result = remove_managed_block("")
         assert result == ""
+
+    def test_raises_on_begin_without_end(self):
+        """Should raise ValueError when BEGIN marker has no matching END."""
+        from gdoc2netcfg.cli.cron import remove_managed_block
+
+        crontab = (
+            "0 * * * * other-job\n"
+            "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK\n"
+            "*/15 * * * * flock ...\n"
+        )
+        with pytest.raises(ValueError, match="BEGIN.*without.*END"):
+            remove_managed_block(crontab)
 
     def test_no_trailing_blank_lines(self):
         """Should not leave multiple trailing blank lines after removal."""
@@ -515,3 +568,51 @@ class TestAddManagedBlock:
         assert "0 * * * * other-job" in result
         # Should have exactly one BEGIN marker
         assert result.count("BEGIN gdoc2netcfg") == 1
+
+
+# ---------------------------------------------------------------------------
+# Round-trip integration test
+# ---------------------------------------------------------------------------
+
+class TestRoundTrip:
+    """Integration test for generate -> format -> add -> remove round-trip."""
+
+    def test_full_round_trip(self):
+        """Generating, adding, then removing block should leave crontab intact."""
+        from gdoc2netcfg.cli.cron import (
+            add_managed_block,
+            format_crontab_block,
+            generate_cron_entries,
+            remove_managed_block,
+        )
+
+        existing = "0 * * * * other-job\n30 2 * * * backup\n"
+        entries = generate_cron_entries()
+        block = format_crontab_block(entries, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+
+        # Add the block
+        with_block = add_managed_block(existing, block)
+        assert "BEGIN gdoc2netcfg" in with_block
+        assert "0 * * * * other-job" in with_block
+
+        # Remove the block — original entries should be preserved
+        after_remove = remove_managed_block(with_block)
+        assert "0 * * * * other-job" in after_remove
+        assert "30 2 * * * backup" in after_remove
+        assert "BEGIN gdoc2netcfg" not in after_remove
+
+    def test_add_is_idempotent(self):
+        """Adding the same block twice should produce the same result."""
+        from gdoc2netcfg.cli.cron import (
+            add_managed_block,
+            format_crontab_block,
+            generate_cron_entries,
+        )
+
+        existing = "0 * * * * other-job\n"
+        entries = generate_cron_entries()
+        block = format_crontab_block(entries, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+
+        first = add_managed_block(existing, block)
+        second = add_managed_block(first, block)
+        assert first == second

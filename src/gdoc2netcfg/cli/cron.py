@@ -133,12 +133,26 @@ _BEGIN_MARKER = "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK"
 _END_MARKER = "# END gdoc2netcfg managed entries"
 
 
+def _validate_no_whitespace(path: Path, label: str) -> None:
+    """Raise ValueError if path contains whitespace (unsafe for unquoted cron lines)."""
+    path_str = str(path)
+    if any(c.isspace() for c in path_str):
+        raise ValueError(
+            f"{label} path contains whitespace, which is unsafe in crontab lines: {path_str}"
+        )
+
+
 def format_cron_line(entry: CronEntry, uv_path: Path, project_root: Path) -> str:
     """Format a single CronEntry as a crontab line.
 
     Uses flock for locking, uv --directory for working directory,
     and appends output to .cache/cron.log.
+
+    Raises ValueError if either path contains whitespace (would break
+    unquoted shell expansion in crontab).
     """
+    _validate_no_whitespace(uv_path, "uv")
+    _validate_no_whitespace(project_root, "Project root")
     lock_file = project_root / ".cache" / f"cron-{entry.lock_name}.lock"
     log_file = project_root / ".cache" / "cron.log"
     return (
@@ -176,6 +190,7 @@ def read_current_crontab() -> str:
     """Read the current user's crontab.
 
     Returns empty string if the user has no crontab.
+    Re-raises CalledProcessError for unexpected failures (e.g. permission denied).
     """
     try:
         result = subprocess.run(
@@ -185,8 +200,11 @@ def read_current_crontab() -> str:
             check=True,
         )
         return result.stdout
-    except subprocess.CalledProcessError:
-        return ""
+    except subprocess.CalledProcessError as e:
+        # "no crontab for <user>" is the expected error when user has no crontab
+        if "no crontab for" in (e.stderr or ""):
+            return ""
+        raise
 
 
 def write_crontab(content: str) -> None:
@@ -204,6 +222,9 @@ def remove_managed_block(crontab: str) -> str:
 
     Returns the crontab with the block (between BEGIN/END markers) removed.
     Preserves all other content.
+
+    Raises ValueError if a BEGIN marker exists without a matching END marker,
+    to prevent silent data loss from a corrupted crontab.
     """
     lines = crontab.splitlines(keepends=True)
     result: list[str] = []
@@ -219,6 +240,12 @@ def remove_managed_block(crontab: str) -> str:
             continue
         if not inside_block:
             result.append(line)
+
+    if inside_block:
+        raise ValueError(
+            "Corrupted crontab: found BEGIN marker without matching END marker. "
+            "Please fix your crontab manually (crontab -e)."
+        )
 
     # Clean up trailing blank lines
     text = "".join(result)
