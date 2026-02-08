@@ -234,3 +234,129 @@ class TestGenerateCronEntries:
         entries = generate_cron_entries()
         lock_names = [e.lock_name for e in entries]
         assert len(lock_names) == len(set(lock_names))
+
+
+# ---------------------------------------------------------------------------
+# Cron line formatting
+# ---------------------------------------------------------------------------
+
+class TestFormatCronLine:
+    """Tests for format_cron_line()."""
+
+    def test_contains_schedule(self):
+        """Formatted line should start with the cron schedule."""
+        from gdoc2netcfg.cli.cron import CronEntry, format_cron_line
+
+        entry = CronEntry(
+            schedule="*/15 * * * *",
+            command="gdoc2netcfg fetch",
+            lock_name="fetch",
+            comment="Fetch CSVs",
+        )
+        line = format_cron_line(entry, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        assert line.startswith("*/15 * * * *")
+
+    def test_contains_flock(self):
+        """Formatted line should include flock with non-blocking flag."""
+        from gdoc2netcfg.cli.cron import CronEntry, format_cron_line
+
+        entry = CronEntry(
+            schedule="*/15 * * * *",
+            command="gdoc2netcfg fetch",
+            lock_name="fetch",
+            comment="Fetch CSVs",
+        )
+        line = format_cron_line(entry, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        assert "flock -n" in line
+
+    def test_lock_file_path(self):
+        """Lock file should be in .cache/ under the project root."""
+        from gdoc2netcfg.cli.cron import CronEntry, format_cron_line
+
+        entry = CronEntry(
+            schedule="*/15 * * * *",
+            command="gdoc2netcfg fetch",
+            lock_name="fetch",
+            comment="Fetch CSVs",
+        )
+        line = format_cron_line(entry, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        assert "/opt/gdoc2netcfg/.cache/cron-fetch.lock" in line
+
+    def test_uses_uv_with_directory(self):
+        """Should use 'uv --directory <project> run <command>'."""
+        from gdoc2netcfg.cli.cron import CronEntry, format_cron_line
+
+        entry = CronEntry(
+            schedule="0 2 * * *",
+            command="gdoc2netcfg sshfp",
+            lock_name="sshfp",
+            comment="Scan SSH fingerprints",
+        )
+        line = format_cron_line(entry, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        assert "/usr/bin/uv --directory /opt/gdoc2netcfg run gdoc2netcfg sshfp" in line
+
+    def test_appends_to_log_file(self):
+        """Output should be appended to .cache/cron.log."""
+        from gdoc2netcfg.cli.cron import CronEntry, format_cron_line
+
+        entry = CronEntry(
+            schedule="*/15 * * * *",
+            command="gdoc2netcfg fetch",
+            lock_name="fetch",
+            comment="Fetch CSVs",
+        )
+        line = format_cron_line(entry, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        assert ">>/opt/gdoc2netcfg/.cache/cron.log 2>&1" in line
+
+
+# ---------------------------------------------------------------------------
+# Crontab block formatting
+# ---------------------------------------------------------------------------
+
+class TestFormatCrontabBlock:
+    """Tests for format_crontab_block()."""
+
+    def test_has_begin_marker(self):
+        """Block should start with BEGIN marker."""
+        from gdoc2netcfg.cli.cron import format_crontab_block, generate_cron_entries
+
+        entries = generate_cron_entries()
+        block = format_crontab_block(entries, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        assert "# BEGIN gdoc2netcfg managed entries" in block
+
+    def test_has_end_marker(self):
+        """Block should end with END marker."""
+        from gdoc2netcfg.cli.cron import format_crontab_block, generate_cron_entries
+
+        entries = generate_cron_entries()
+        block = format_crontab_block(entries, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        assert "# END gdoc2netcfg managed entries" in block
+
+    def test_has_project_path_comment(self):
+        """Block should include the project path as a comment."""
+        from gdoc2netcfg.cli.cron import format_crontab_block, generate_cron_entries
+
+        entries = generate_cron_entries()
+        block = format_crontab_block(entries, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        assert "# Project: /opt/gdoc2netcfg" in block
+
+    def test_contains_all_entries(self):
+        """Block should contain all 8 cron lines."""
+        from gdoc2netcfg.cli.cron import format_crontab_block, generate_cron_entries
+
+        entries = generate_cron_entries()
+        block = format_crontab_block(entries, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        # Count lines that start with a cron schedule (not comments)
+        cron_lines = [
+            line for line in block.splitlines()
+            if line and not line.startswith("#")
+        ]
+        assert len(cron_lines) == 8
+
+    def test_ends_with_newline(self):
+        """Block should end with a trailing newline."""
+        from gdoc2netcfg.cli.cron import format_crontab_block, generate_cron_entries
+
+        entries = generate_cron_entries()
+        block = format_crontab_block(entries, Path("/usr/bin/uv"), Path("/opt/gdoc2netcfg"))
+        assert block.endswith("\n")

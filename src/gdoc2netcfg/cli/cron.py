@@ -126,3 +126,46 @@ def generate_cron_entries() -> list[CronEntry]:
             comment="Scan BMC firmware information",
         ),
     ]
+
+
+_BEGIN_MARKER = "# BEGIN gdoc2netcfg managed entries - DO NOT EDIT THIS BLOCK"
+_END_MARKER = "# END gdoc2netcfg managed entries"
+
+
+def format_cron_line(entry: CronEntry, uv_path: Path, project_root: Path) -> str:
+    """Format a single CronEntry as a crontab line.
+
+    Uses flock for locking, uv --directory for working directory,
+    and appends output to .cache/cron.log.
+    """
+    lock_file = project_root / ".cache" / f"cron-{entry.lock_name}.lock"
+    log_file = project_root / ".cache" / "cron.log"
+    return (
+        f"{entry.schedule} "
+        f"flock -n {lock_file} "
+        f"{uv_path} --directory {project_root} run {entry.command} "
+        f">>{log_file} 2>&1"
+    )
+
+
+def format_crontab_block(
+    entries: list[CronEntry],
+    uv_path: Path,
+    project_root: Path,
+) -> str:
+    """Format all entries as a managed crontab block with BEGIN/END markers."""
+    lines = [
+        _BEGIN_MARKER,
+        f"# Project: {project_root}",
+        "",
+    ]
+
+    for entry in entries:
+        lines.append(f"# {entry.comment}")
+        lines.append(format_cron_line(entry, uv_path, project_root))
+
+    lines.append("")
+    lines.append(_END_MARKER)
+    lines.append("")  # trailing newline
+
+    return "\n".join(lines)
