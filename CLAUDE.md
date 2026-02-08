@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build and Test Commands
 
 ```bash
-uv run pytest                           # Run all tests (493 tests)
+uv run pytest                           # Run all tests
 uv run pytest tests/test_models/        # Run tests for a specific module
 uv run pytest tests/test_models/test_addressing.py::test_mac_parse  # Run single test
 uv run pytest -x                        # Stop on first failure
@@ -14,9 +14,20 @@ uv run gdoc2netcfg fetch                # Download CSVs from Google Sheets
 uv run gdoc2netcfg generate dnsmasq_internal  # Generate internal dnsmasq config
 uv run gdoc2netcfg generate dnsmasq_external  # Generate external dnsmasq config
 uv run gdoc2netcfg generate letsencrypt       # Generate certbot cert scripts
-uv run gdoc2netcfg sshfp --force        # Scan SSH fingerprints
-uv run gdoc2netcfg nsdp                # Scan Netgear switches via NSDP
+uv run gdoc2netcfg generate nagios            # Generate Nagios monitoring config
+uv run gdoc2netcfg generate nginx             # Generate nginx reverse proxy configs
+uv run gdoc2netcfg generate topology          # Generate Graphviz DOT topology diagram
 uv run gdoc2netcfg validate             # Run constraint validation
+uv run gdoc2netcfg info                 # Show pipeline configuration
+uv run gdoc2netcfg reachability         # Ping all hosts and report up/down
+uv run gdoc2netcfg sshfp --force        # Scan SSH fingerprints
+uv run gdoc2netcfg ssl-certs --force    # Scan SSL/TLS certificates
+uv run gdoc2netcfg snmp-host --force    # Scan hosts for SNMP system info
+uv run gdoc2netcfg snmp-switch --force  # Scan switches for bridge/topology via SNMP
+uv run gdoc2netcfg bmc-firmware --force # Probe BMC firmware versions via ipmitool
+uv run gdoc2netcfg bridge              # Unified switch data (SNMP + NSDP)
+uv run gdoc2netcfg nsdp                # Scan Netgear switches via NSDP
+uv run gdoc2netcfg cron                # Manage scheduled cron jobs
 ```
 
 Always use `uv run` to execute Python commands. Never use bare `python` or `pip`.
@@ -42,21 +53,32 @@ Make small, discrete commits as you work. Each logical unit of change (adding a 
 
 ### Pipeline
 
-The system is a six-stage data pipeline in `src/gdoc2netcfg/`:
+The system is a data pipeline in `src/gdoc2netcfg/`:
 
 ```
 Sources (sources/)     Fetch CSV from Google Sheets, cache locally, parse into DeviceRecord
+    │                  Also parses VLAN Allocations sheet (vlan_parser.py)
     │
-Derivations (derivations/)  Pure functions: IPv4→IPv6, IP→VLAN, hostname, DHCP name, DNS names, default IP
+Derivations (derivations/)  Pure functions: IPv4→IPv6, IP→VLAN, hostname, DHCP name, DNS names,
+    │                        default IP, hardware type detection, site IP remapping
     │                        host_builder.py orchestrates these into Host objects
-Supplements (supplements/)  External enrichment: SSHFP scanning via ssh-keyscan, SSL cert scanning (cached)
     │
-Constraints (constraints/)  Validation: field presence, BMC placement, MAC uniqueness, IPv6 consistency
+Supplements (supplements/)  External enrichment (all cached to .cache/):
+    │                        SSHFP (ssh-keyscan), SSL certs, SNMP host info, SNMP bridge/topology,
+    │                        BMC firmware (ipmitool), NSDP switch discovery, reachability (ping)
     │
-Generators (generators/)    Output: dnsmasq_internal, dnsmasq_external, nagios, nginx, letsencrypt
+Constraints (constraints/)  Validation: field presence, BMC placement, MAC uniqueness,
+    │                        IPv6 consistency, bridge/topology, SNMP availability, SSL certs
+    │
+Generators (generators/)    Output: dnsmasq_internal, dnsmasq_external, nagios, nginx,
+    │                        letsencrypt, topology (Graphviz DOT)
     │
 Config files               Per-host .conf files in output directories
 ```
+
+Supporting modules:
+- `utils/` — shared helpers: IP sort/classification (`ip.py`), DNS/path injection guards (`dns.py`), terminal colours (`terminal.py`)
+- `audit/` — compare spreadsheet data against live network state
 
 The CLI (`cli/main.py`) wires the pipeline via `_build_pipeline()` which returns `(records, hosts, inventory, validation_result)`. Generators receive a `NetworkInventory` — the fully enriched model with all derivations applied.
 
@@ -90,6 +112,10 @@ The nginx generator (`nginx.py`) produces per-host reverse proxy server blocks u
 
 Multi-interface hosts get a combined config file (per variant) containing an `upstream` block listing all interface IPs for round-robin failover with `proxy_next_upstream`, a root server block using the upstream, and per-interface server blocks with direct `proxy_pass`. Single-interface hosts produce simple direct `proxy_pass` configs.
 
+### Network Topology
+
+The topology generator (`topology.py`) produces a Graphviz DOT diagram of the physical network from bridge supplement data. Switch nodes (hosts with bridge data) are boxes; host nodes (whose MACs appear in switch MAC tables) are ellipses. LLDP-learned edges are bold and bidirectional; MAC-learned edges are dashed. Locally administered MACs are filtered out.
+
 ### Configuration
 
 `gdoc2netcfg.toml` (gitignored, site-specific) defines site topology (domain, VLANs, IPv6 prefixes, network subdomains), sheet URLs, cache directory, and generator settings. Loaded by `config.py` into a `PipelineConfig` dataclass containing a `Site` object.
@@ -99,8 +125,14 @@ Multi-interface hosts get a combined config file (per variant) containing an `up
 ### Models
 
 - `MACAddress`, `IPv4Address`, `IPv6Address` — frozen, validated, normalized value types in `models/addressing.py`
-- `Host` — groups `NetworkInterface` entries for one machine, with default IP selection
+- `Host` — groups `NetworkInterface` entries for one machine, with default IP selection; `VirtualInterface` for derived interfaces
 - `NetworkInventory` — the complete enriched model passed to generators
+- `VLAN`, `Site` — network topology definitions in `models/network.py`, loaded from config + VLAN Allocations sheet
+- `PortLinkStatus`, `PortTrafficStats`, `SwitchData`, `SwitchDataSource` — unified switch data model in `models/switch_data.py`, populated from SNMP or NSDP sources
+
+### NSDP Protocol Library
+
+`src/nsdp/` is a standalone pure-Python implementation of the Netgear Switch Discovery Protocol (NSDP). It has no external dependencies. The `supplements/nsdp.py` module bridges this library into the gdoc2netcfg supplement pipeline. See `docs/nsdp-protocol.md` for the protocol specification.
 
 ## Production Deployment
 
