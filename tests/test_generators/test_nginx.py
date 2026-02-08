@@ -824,6 +824,15 @@ class TestHealthcheck:
                     "HTTP upstream should not have ssl_verify"
                 )
 
+    def test_healthcheck_lua_omits_valid_statuses(self):
+        """valid_statuses is omitted so any HTTP response means healthy."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        assert "valid_statuses" not in lua
+
     def test_mixed_hosts_only_multi_interface_in_healthcheck(self):
         """Single-interface hosts are excluded from healthcheck files."""
         single = _make_host(hostname="desktop", ip="10.1.10.100")

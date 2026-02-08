@@ -639,9 +639,9 @@ def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
             "timeout = 2000",
             "fall = 3",
             "rise = 2",
-            # 401/403 are valid because backends use auth_basic — a
-            # rejected-but-responding backend is still healthy.
-            "valid_statuses = {200, 301, 302, 401, 403}",
+            # Omit valid_statuses: when nil, lua-resty-upstream-healthcheck
+            # skips status code validation — any HTTP response means the
+            # backend is alive. Only connection failures mark it down.
         ]
         if us.hc_type == "https":
             checker_args.append("ssl_verify = false")
