@@ -872,6 +872,14 @@ class TestStreamHealthcheck:
         # Has status file writing for the HTTP status endpoint
         assert "write_status" in checker
         assert "set_status_file" in checker
+        # Peers start DOWN (pessimistic) — must prove healthy via rise checks
+        # The register function sets initial state to false
+        register_func = checker.split("function _M.register")[1].split("\nend")[0]
+        assert ':healthy", false)' in register_func
+        assert ':healthy", true)' not in register_func
+        # Uses concurrent threads for checking peers
+        assert "ngx.thread.spawn" in checker
+        assert "ngx.thread.wait" in checker
 
     def test_per_host_balancer_lua_generated(self):
         """Each multi-interface host gets its own balancer with hardcoded upstream name."""

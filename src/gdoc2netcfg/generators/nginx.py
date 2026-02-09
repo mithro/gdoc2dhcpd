@@ -755,11 +755,14 @@ function _M.register(opts)
         rise = opts.rise or 2,
     }
     upstream_order[#upstream_order + 1] = opts.upstream
-    -- Initialise health state for each peer
+    -- Initialise health state: start DOWN (pessimistic).
+    -- Peers must pass `rise` consecutive checks before being marked UP.
+    -- This avoids showing all peers as UP before any check has run.
     for _, ip in ipairs(opts.peers) do
         local key = opts.upstream .. ":" .. ip
-        if not shm:get(key .. ":healthy") then
-            shm:set(key .. ":healthy", true)
+        if not shm:get(key .. ":init") then
+            shm:set(key .. ":init", true)
+            shm:set(key .. ":healthy", false)
             shm:set(key .. ":fail_count", 0)
             shm:set(key .. ":ok_count", 0)
         end
@@ -777,6 +780,26 @@ local function check_peer(upstream_name, info, ip)
 
     -- TCP connect success = backend is accepting connections on port 443
     return ok, err
+end
+
+local function update_peer(upstream_name, info, ip, healthy)
+    local key = upstream_name .. ":" .. ip
+
+    if healthy then
+        shm:set(key .. ":fail_count", 0)
+        local ok_count = (shm:get(key .. ":ok_count") or 0) + 1
+        shm:set(key .. ":ok_count", ok_count)
+        if ok_count >= info.rise then
+            shm:set(key .. ":healthy", true)
+        end
+    else
+        shm:set(key .. ":ok_count", 0)
+        local fail_count = (shm:get(key .. ":fail_count") or 0) + 1
+        shm:set(key .. ":fail_count", fail_count)
+        if fail_count >= info.fall then
+            shm:set(key .. ":healthy", false)
+        end
+    end
 end
 
 local function write_status()
@@ -804,28 +827,38 @@ local function write_status()
 end
 
 local function run_checks()
+    -- Spawn all peer checks concurrently using lightweight threads.
+    -- Each ngx.thread runs as a coroutine on the nginx event loop,
+    -- so connect timeouts don't block other checks.
+    local threads = {}
+    local thread_meta = {}  -- {upstream_name, info, ip} per thread
+
     for upstream_name, info in pairs(registry) do
         for _, ip in ipairs(info.peers) do
-            local key = upstream_name .. ":" .. ip
-            local healthy, err = check_peer(upstream_name, info, ip)
-
-            if healthy then
-                shm:set(key .. ":fail_count", 0)
-                local ok_count = (shm:get(key .. ":ok_count") or 0) + 1
-                shm:set(key .. ":ok_count", ok_count)
-                if ok_count >= info.rise then
-                    shm:set(key .. ":healthy", true)
-                end
+            local th, err = ngx.thread.spawn(check_peer, upstream_name, info, ip)
+            if th then
+                threads[#threads + 1] = th
+                thread_meta[#thread_meta + 1] = {upstream_name, info, ip}
             else
-                shm:set(key .. ":ok_count", 0)
-                local fail_count = (shm:get(key .. ":fail_count") or 0) + 1
-                shm:set(key .. ":fail_count", fail_count)
-                if fail_count >= info.fall then
-                    shm:set(key .. ":healthy", false)
-                end
+                -- spawn failed: treat as check failure
+                ngx.log(ngx.WARN, "thread spawn failed for ", ip, ": ", err)
+                update_peer(upstream_name, info, ip, false)
             end
         end
     end
+
+    -- Wait for all threads and collect results
+    for i, th in ipairs(threads) do
+        local ok, healthy, _ = ngx.thread.wait(th)
+        local meta = thread_meta[i]
+        if ok then
+            update_peer(meta[1], meta[2], meta[3], healthy)
+        else
+            -- thread aborted
+            update_peer(meta[1], meta[2], meta[3], false)
+        end
+    end
+
     write_status()
 end
 
