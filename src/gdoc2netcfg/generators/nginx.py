@@ -133,7 +133,7 @@ def _https_map_entries(
 
     Each line maps a DNS name to the host's HTTPS upstream. These are
     included by the admin's hand-crafted map block via:
-        include /etc/nginx/sites-enabled/*-https-map;
+        include /etc/nginx/sites-enabled/*/https-map.conf;
     """
     lines = []
     for name in dns_names:
