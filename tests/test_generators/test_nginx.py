@@ -827,6 +827,21 @@ class TestHTTPSHealthcheck:
         assert "10.1.90.150" in lua
         assert f"{fqdn}-tls" in lua
 
+    def test_https_per_host_lua_registers_per_interface_upstreams(self):
+        """Per-host HTTPS health check registers combined + per-interface upstreams."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        lua = files[f"sites-available/{fqdn}/https-healthcheck.lua"]
+        # Combined upstream registered with all IPs
+        assert f'upstream = "{fqdn}-tls"' in lua
+        # Per-interface upstreams registered with single IP each
+        assert f'upstream = "eth0.{fqdn}-tls"' in lua
+        assert f'upstream = "wlan0.{fqdn}-tls"' in lua
+        # Should have 3 checker.register() calls total
+        assert lua.count("checker.register(") == 3
+
     def test_https_checker_lua_generated(self):
         """Shared checker.lua module is generated at top level."""
         host = _make_multi_iface_host()
