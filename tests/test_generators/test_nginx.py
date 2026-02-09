@@ -834,26 +834,26 @@ class TestStreamHealthcheck:
         assert "stream-healthcheck.d" in conf
 
     def test_stream_healthcheck_init_generated(self):
-        """Init worker block loads per-host files from hosts/ subdirectory."""
+        """Init worker block loads from hosts-enabled/ subdirectory."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         assert "stream.d/generated-healthcheck-init.conf" in files
         init = files["stream.d/generated-healthcheck-init.conf"]
         assert "init_worker_by_lua_block" in init
-        # Scans hosts/ subdirectory, not top-level (avoids loading checker/balancer)
-        assert "/hosts" in init
+        # Loads from hosts-enabled/ (admin symlinks from hosts-available/)
+        assert "/hosts-enabled" in init
         # Sets status file path for health status output
         assert "set_status_file" in init
         assert "status.txt" in init
 
-    def test_stream_per_host_lua_in_hosts_subdir(self):
-        """Per-host Lua files live in hosts/ subdirectory."""
+    def test_stream_per_host_lua_in_hosts_available(self):
+        """Per-host Lua files are generated to hosts-available/."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        key = f"stream-healthcheck.d/hosts/{fqdn}.lua"
+        key = f"stream-healthcheck.d/hosts-available/{fqdn}.lua"
         assert key in files
         lua = files[key]
         assert "10.1.90.149" in lua
@@ -914,7 +914,7 @@ class TestStreamHealthcheck:
         assert "/opt/nginx/stream-hc.d" in conf
 
         init = files["stream.d/generated-healthcheck-init.conf"]
-        assert "/opt/nginx/stream-hc.d/hosts" in init
+        assert "/opt/nginx/stream-hc.d/hosts-enabled" in init
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         stream = files[f"sites-available/{fqdn}-stream"]

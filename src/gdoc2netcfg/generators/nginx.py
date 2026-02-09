@@ -333,7 +333,7 @@ def generate_nginx(
         )
         files["stream-healthcheck.d/checker.lua"] = _stream_checker_lua()
         for fqdn, upstream_name, ips in stream_healthcheck_hosts:
-            files[f"stream-healthcheck.d/hosts/{fqdn}.lua"] = (
+            files[f"stream-healthcheck.d/hosts-available/{fqdn}.lua"] = (
                 _stream_healthcheck_host_lua(upstream_name, fqdn, ips)
             )
             files[f"stream-healthcheck.d/{fqdn}-balancer.lua"] = (
@@ -654,23 +654,28 @@ def _stream_lua_healthcheck_conf(stream_healthcheck_dir: str) -> str:
 def _stream_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
     """Generate a stream-level init_worker_by_lua_block.
 
-    Scans stream_healthcheck_dir/hosts/ for per-host .lua config files
-    and loads each one. Per-host files register their peers and health
-    check parameters with the shared checker module.
+    Loads per-host .lua config files from hosts-enabled/. This follows
+    the same available/enabled symlink pattern as nginx sites: all
+    per-host configs are generated to hosts-available/, and the admin
+    symlinks enabled ones into hosts-enabled/.
 
-    The hosts/ subdirectory is scanned (not the top level) to avoid
-    accidentally loading checker.lua and per-host balancer files as
-    config files — those are Lua modules, not init_worker scripts.
+    Unlike HTTP healthchecks (which use ngx.upstream.get_primary_peers()
+    to detect whether an upstream exists), stream upstreams have no
+    equivalent API. The available/enabled pattern gives the admin
+    explicit control over which stream hosts get health-checked.
     """
-    hosts_dir = f"{stream_healthcheck_dir}/hosts"
+    hosts_enabled_dir = f"{stream_healthcheck_dir}/hosts-enabled"
     status_file = f"{stream_healthcheck_dir}/status.txt"
     return (
         "init_worker_by_lua_block {\n"
-        f'    local dir = "{hosts_dir}"\n'
+        f'    local dir = "{hosts_enabled_dir}"\n'
         '    local checker = require "checker"\n'
         f'    checker.set_status_file("{status_file}")\n'
-        '    local pipe = io.popen("ls " .. dir .. "/*.lua")\n'
-        "    if not pipe then return end\n"
+        '    local pipe = io.popen("ls " .. dir .. "/*.lua 2>/dev/null")\n'
+        "    if not pipe then\n"
+        "        checker.start()\n"
+        "        return\n"
+        "    end\n"
         "    for path in pipe:lines() do\n"
         "        local fn, err = loadfile(path)\n"
         "        if fn then\n"
