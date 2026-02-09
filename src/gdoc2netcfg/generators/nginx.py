@@ -721,12 +721,12 @@ def _stream_healthcheck_host_lua(
 
 
 def _stream_checker_lua() -> str:
-    """Generate the shared checker.lua module for stream HTTPS health checks.
+    """Generate the shared checker.lua module for stream health checks.
 
     This module:
     1. Maintains a registry of upstreams and their peers
     2. Uses ngx.timer.every to probe each peer on port 443
-    3. Performs TLS handshake + HTTP/1.0 GET to verify backend health
+    3. Uses TCP connect to verify backend is accepting connections
     4. Tracks consecutive failures (fall) and recoveries (rise)
     5. Stores health status in lua_shared_dict stream_healthcheck
     """
@@ -761,27 +761,12 @@ local function check_peer(upstream_name, info, ip)
     sock:settimeout(info.timeout * 1000)
 
     local ok, err = sock:connect(ip, 443)
-    if not ok then
-        return false, err
-    end
-
-    local session, ssl_err = sock:sslhandshake(nil, info.host, false)
-    if not session then
+    if ok then
         sock:close()
-        return false, ssl_err
     end
 
-    local req = "GET / HTTP/1.0\\r\\nHost: " .. info.host .. "\\r\\n\\r\\n"
-    sock:send(req)
-    local line, read_err = sock:receive("*l")
-    sock:close()
-
-    if not line then
-        return false, read_err
-    end
-
-    -- Any HTTP response means alive
-    return true, nil
+    -- TCP connect success = backend is accepting connections on port 443
+    return ok, err
 end
 
 local function run_checks()

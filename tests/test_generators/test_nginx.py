@@ -864,7 +864,7 @@ class TestStreamHealthcheck:
 
         assert "stream-healthcheck.d/checker.lua" in files
         checker = files["stream-healthcheck.d/checker.lua"]
-        assert "sslhandshake" in checker
+        assert "sock:connect" in checker
         assert "stream_healthcheck" in checker
 
     def test_per_host_balancer_lua_generated(self):
