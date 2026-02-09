@@ -238,8 +238,10 @@ def generate_nginx(
 
     files: dict[str, str] = {}
     healthcheck_hosts: list[tuple[str, list[_UpstreamInfo]]] = []
-    # (upstream_name, fqdn, ips) for combined HTTPS health checks only
-    https_healthcheck_hosts: list[tuple[str, str, list[str]]] = []
+    # Active (upstream_name, fqdn, ips) + passive [(upstream_name, fqdn, ip), ...]
+    https_healthcheck_hosts: list[
+        tuple[str, str, list[str], list[tuple[str, str, str]]]
+    ] = []
 
     for host in inventory.hosts_sorted():
         fqdns = [
@@ -346,11 +348,17 @@ def generate_nginx(
             )]
             healthcheck_hosts.append((primary_fqdn, host_upstreams))
 
-            # Collect HTTPS healthcheck metadata: combined upstream only.
+            # Collect HTTPS healthcheck metadata: active combined upstream
+            # plus passive per-interface entries for status display.
             # Per-interface upstreams have a single peer so health checking
             # them is pointless — there is no failover decision to make.
+            passive: list[tuple[str, str, str]] = []
+            for _iface_fqdn_names, iface_ip, iface_fqdn in iface_https_configs:
+                passive.append(
+                    (f"{iface_fqdn}-https-backend", iface_fqdn, iface_ip)
+                )
             https_healthcheck_hosts.append(
-                (f"{primary_fqdn}-https-backend", primary_fqdn, all_ips)
+                (f"{primary_fqdn}-https-backend", primary_fqdn, all_ips, passive)
             )
 
     # Emit healthcheck config files if any multi-interface hosts exist
@@ -368,9 +376,11 @@ def generate_nginx(
             _https_healthcheck_setup_conf(gdoc2netcfg_dir, sites_enabled_dir)
         )
         files["scripts/checker.lua"] = _https_checker_lua()
-        for upstream_name, fqdn, ips in https_healthcheck_hosts:
+        for upstream_name, fqdn, ips, passive_upstreams in https_healthcheck_hosts:
             files[f"sites-available/{fqdn}/https-healthcheck.lua"] = (
-                _https_healthcheck_host_lua(upstream_name, fqdn, ips)
+                _https_healthcheck_host_lua(
+                    upstream_name, fqdn, ips, passive_upstreams,
+                )
             )
             files[f"sites-available/{fqdn}/https-balancer.lua"] = (
                 _https_balancer_lua(upstream_name)
@@ -665,12 +675,14 @@ def _https_healthcheck_host_lua(
     upstream_name: str,
     fqdn: str,
     ips: list[str],
+    passive_upstreams: list[tuple[str, str, str]] = (),
 ) -> str:
     """Generate a per-host Lua file for HTTPS health checking.
 
-    Registers the combined upstream's peers (IP addresses) with the
-    shared checker module.  Per-interface upstreams are not registered
-    because they have a single peer and no failover decision to make.
+    Registers the combined upstream for active health checking.
+    Per-interface upstreams are registered passively — they appear in
+    status output with ``(NO checkers)`` but are not probed, since they
+    have a single peer and no failover decision to make.
     """
     lines = [
         'local checker = require "checker"',
@@ -691,6 +703,15 @@ def _https_healthcheck_host_lua(
         "})",
         "",
     ])
+    for p_upstream, p_fqdn, p_ip in passive_upstreams:
+        lines.extend([
+            "checker.register_passive({",
+            f'    upstream = "{p_upstream}",',
+            f'    host = "{p_fqdn}",',
+            f'    peer = "{p_ip}",',
+            "})",
+            "",
+        ])
     return "\n".join(lines)
 
 
@@ -709,6 +730,7 @@ def _https_checker_lua() -> str:
 local _M = {}
 
 local registry = {}
+local passive_registry = {}
 local upstream_order = {}
 local shm = ngx.shared.stream_healthcheck
 local status_file = nil
@@ -739,6 +761,17 @@ function _M.register(opts)
             shm:set(key .. ":ok_count", 0)
         end
     end
+end
+
+function _M.register_passive(opts)
+    -- Display-only: appears in status output with (NO checkers)
+    -- but is not health-checked.  Used for single-peer upstreams
+    -- where there is no failover decision to make.
+    passive_registry[opts.upstream] = {
+        host = opts.host,
+        peer = opts.peer,
+    }
+    upstream_order[#upstream_order + 1] = opts.upstream
 end
 
 local function check_peer(upstream_name, info, ip)
@@ -779,6 +812,7 @@ local function write_status()
     local lines = {}
     for _, upstream_name in ipairs(upstream_order) do
         local info = registry[upstream_name]
+        local pinfo = passive_registry[upstream_name]
         if info then
             lines[#lines + 1] = "Upstream " .. upstream_name
             lines[#lines + 1] = "    Primary Peers"
@@ -788,6 +822,11 @@ local function write_status()
                 local status = healthy and "UP" or "DOWN"
                 lines[#lines + 1] = "        " .. ip .. ":443 " .. status
             end
+            lines[#lines + 1] = ""
+        elseif pinfo then
+            lines[#lines + 1] = "Upstream " .. upstream_name .. " (NO checkers)"
+            lines[#lines + 1] = "    Primary Peers"
+            lines[#lines + 1] = "        " .. pinfo.peer .. ":443 UP"
             lines[#lines + 1] = ""
         end
     end

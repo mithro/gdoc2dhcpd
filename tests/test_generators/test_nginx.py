@@ -827,23 +827,22 @@ class TestHTTPSHealthcheck:
         assert "10.1.90.150" in lua
         assert f"{fqdn}-https-backend" in lua
 
-    def test_https_healthcheck_only_registers_combined_upstream(self):
-        """Per-host HTTPS health check registers only the combined upstream.
-
-        Per-interface upstreams have a single peer so health checking
-        them is pointless — there is no failover decision to make.
-        """
+    def test_https_healthcheck_registers_combined_and_passive_interfaces(self):
+        """Combined upstream gets active health checks; per-interface get passive display."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         lua = files[f"sites-available/{fqdn}/https-healthcheck.lua"]
-        # Combined upstream registered with all IPs
+        # Combined upstream registered with active health checks
+        assert lua.count("checker.register(") == 1
         assert f'upstream = "{fqdn}-https-backend"' in lua
         assert "10.1.90.149" in lua
         assert "10.1.90.150" in lua
-        # Only 1 checker.register() — combined only, not per-interface
-        assert lua.count("checker.register(") == 1
+        # Per-interface upstreams registered passively for status display
+        assert lua.count("checker.register_passive(") == 2
+        assert f'upstream = "eth0.{fqdn}-https-backend"' in lua
+        assert f'upstream = "wlan0.{fqdn}-https-backend"' in lua
 
     def test_https_checker_lua_generated(self):
         """Shared checker.lua module is generated at top level."""
@@ -865,6 +864,10 @@ class TestHTTPSHealthcheck:
         # Uses concurrent threads for checking peers
         assert "ngx.thread.spawn" in checker
         assert "ngx.thread.wait" in checker
+        # Has register_passive for display-only upstreams
+        assert "function _M.register_passive" in checker
+        # Passive upstreams shown with (NO checkers) in status
+        assert "(NO checkers)" in checker
 
     def test_per_host_balancer_lua_generated(self):
         """Each multi-interface host gets its own balancer with hardcoded upstream name."""
