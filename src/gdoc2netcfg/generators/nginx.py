@@ -330,12 +330,8 @@ def generate_nginx(
             )
             balancer_path = f"{gdoc2netcfg_dir}/sites-available/{primary_fqdn}/https-balancer.lua"
 
-            root_fqdn_names = [
-                dn.name for dn in root_dns
-                if dn.is_fqdn and _is_nginx_name(dn)
-            ]
             _emit_combined_https_files(
-                files, primary_fqdn, root_fqdn_names,
+                files, primary_fqdn, root_fqdns,
                 all_ips, iface_https_configs,
                 balancer_lua_path=balancer_path,
             )
@@ -648,7 +644,7 @@ def _https_healthcheck_setup_conf(
         "init_worker_by_lua_block {\n"
         '    local checker = require "checker"\n'
         f'    checker.set_status_file("{status_file}")\n'
-        f'    local pipe = io.popen("ls {scan_pattern} 2>/dev/null")\n'
+        f'    local pipe = io.popen("ls {scan_pattern}")\n'
         "    if not pipe then\n"
         "        checker.start()\n"
         "        return\n"
