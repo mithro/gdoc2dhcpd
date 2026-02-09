@@ -80,23 +80,14 @@ deploy-dnsmasq-external: generate ## Generate and deploy external dnsmasq config
 deploy-dnsmasq: deploy-dnsmasq-internal deploy-dnsmasq-external ## Deploy both internal and external dnsmasq configs (run with sudo)
 
 NGINX_CONF_DIR := /etc/nginx
+NGINX_GEN_DIR := $(NGINX_CONF_DIR)/gdoc2netcfg
 
 .PHONY: deploy-nginx
 deploy-nginx: generate ## Generate and deploy nginx configs (run with sudo)
-	cp $(OUTPUT_DIR)/nginx/sites-available/* $(NGINX_CONF_DIR)/sites-available/
-	cp $(OUTPUT_DIR)/nginx/snippets/* $(NGINX_CONF_DIR)/snippets/
-	rm -f $(NGINX_CONF_DIR)/conf.d/lua-healthcheck.conf $(NGINX_CONF_DIR)/conf.d/healthcheck-init.conf $(NGINX_CONF_DIR)/conf.d/healthcheck-status.conf
-	test -d $(OUTPUT_DIR)/nginx/conf.d && cp $(OUTPUT_DIR)/nginx/conf.d/* $(NGINX_CONF_DIR)/conf.d/ || true
-	mkdir -p $(NGINX_CONF_DIR)/healthcheck.d
-	rm -f $(NGINX_CONF_DIR)/healthcheck.d/*.lua
-	test -d $(OUTPUT_DIR)/nginx/healthcheck.d && cp $(OUTPUT_DIR)/nginx/healthcheck.d/* $(NGINX_CONF_DIR)/healthcheck.d/ || true
-	mkdir -p $(NGINX_CONF_DIR)/stream.d $(NGINX_CONF_DIR)/stream-healthcheck.d $(NGINX_CONF_DIR)/stream-healthcheck.d/hosts-available $(NGINX_CONF_DIR)/stream-healthcheck.d/hosts-enabled
-	rm -f $(NGINX_CONF_DIR)/stream.d/generated-*.conf
-	rm -f $(NGINX_CONF_DIR)/stream-healthcheck.d/*.lua $(NGINX_CONF_DIR)/stream-healthcheck.d/hosts-available/*.lua
-	test -d $(OUTPUT_DIR)/nginx/stream.d && cp $(OUTPUT_DIR)/nginx/stream.d/* $(NGINX_CONF_DIR)/stream.d/ || true
-	test -d $(OUTPUT_DIR)/nginx/stream-healthcheck.d && cp $(OUTPUT_DIR)/nginx/stream-healthcheck.d/*.lua $(NGINX_CONF_DIR)/stream-healthcheck.d/ || true
-	test -d $(OUTPUT_DIR)/nginx/stream-healthcheck.d/hosts-available && cp $(OUTPUT_DIR)/nginx/stream-healthcheck.d/hosts-available/* $(NGINX_CONF_DIR)/stream-healthcheck.d/hosts-available/ || true
-	touch $(NGINX_CONF_DIR)/stream-healthcheck.d/status.txt && chown www-data:www-data $(NGINX_CONF_DIR)/stream-healthcheck.d/status.txt
+	rm -rf $(NGINX_GEN_DIR)/sites-available $(NGINX_GEN_DIR)/scripts $(NGINX_GEN_DIR)/conf.d $(NGINX_GEN_DIR)/stream.d
+	mkdir -p $(NGINX_GEN_DIR)
+	cp -r $(OUTPUT_DIR)/nginx/* $(NGINX_GEN_DIR)/
+	touch $(NGINX_GEN_DIR)/status.txt && chown www-data:www-data $(NGINX_GEN_DIR)/status.txt
 	nginx -t
 	systemctl reload nginx
 
