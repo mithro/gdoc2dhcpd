@@ -1,11 +1,11 @@
 """nginx reverse proxy configuration generator.
 
-Produces per-host nginx server blocks under sites-available/ and a
-shared ACME challenge snippet. Each host gets three config files:
+Produces per-host nginx config directories under sites-available/ and
+a shared ACME challenge snippet. Each host gets a directory containing:
 
-  - {fqdn}-http-public       HTTP reverse proxy (port 80)
-  - {fqdn}-https-upstream    TLS passthrough upstream (stream context)
-  - {fqdn}-https-map         SNI map entries for TLS routing
+  - http-proxy.conf           HTTP reverse proxy (port 80)
+  - https-upstream.conf       TLS passthrough upstream (stream context)
+  - https-map.conf            SNI map entries for TLS routing
 
 HTTPS is handled via stream SNI passthrough rather than http-module
 HTTPS blocks, ensuring consistent TLS behavior for both IPv4 (proxied)
@@ -157,10 +157,10 @@ def _emit_https_files(
     """
     upstream_name = f"{primary_fqdn}-tls"
 
-    files[f"sites-available/{primary_fqdn}-https-upstream"] = _https_upstream_block(
+    files[f"sites-available/{primary_fqdn}/https-upstream.conf"] = _https_upstream_block(
         upstream_name, ips, balancer_lua_path=balancer_lua_path,
     )
-    files[f"sites-available/{primary_fqdn}-https-map"] = _https_map_entries(
+    files[f"sites-available/{primary_fqdn}/https-map.conf"] = _https_map_entries(
         upstream_name, fqdn_names,
     )
 
@@ -316,7 +316,7 @@ def generate_nginx(
         )
         files["conf.d/healthcheck-status.conf"] = _healthcheck_status_conf()
         for fqdn, upstreams in healthcheck_hosts:
-            files[f"healthcheck.d/{fqdn}.lua"] = _healthcheck_host_lua(upstreams)
+            files[f"sites-available/{fqdn}/http-healthcheck.lua"] = _healthcheck_host_lua(upstreams)
 
     # Emit HTTPS health check files if any multi-interface hosts exist
     if https_healthcheck_hosts:
@@ -326,12 +326,12 @@ def generate_nginx(
         files["stream.d/generated-healthcheck-init.conf"] = (
             _https_healthcheck_init_conf(stream_healthcheck_dir)
         )
-        files["stream-healthcheck.d/checker.lua"] = _https_checker_lua()
+        files["scripts/checker.lua"] = _https_checker_lua()
         for fqdn, upstream_name, ips in https_healthcheck_hosts:
-            files[f"stream-healthcheck.d/hosts-available/{fqdn}.lua"] = (
+            files[f"sites-available/{fqdn}/https-healthcheck.lua"] = (
                 _https_healthcheck_host_lua(upstream_name, fqdn, ips)
             )
-            files[f"stream-healthcheck.d/{fqdn}-balancer.lua"] = (
+            files[f"sites-available/{fqdn}/https-balancer.lua"] = (
                 _https_balancer_lua(upstream_name)
             )
 
@@ -346,7 +346,7 @@ def _emit_http_files(
     acme_webroot: str = "/var/www/acme",
 ) -> None:
     """Emit the HTTP config file for a single-interface host."""
-    files[f"sites-available/{primary_fqdn}-http-public"] = _http_block(
+    files[f"sites-available/{primary_fqdn}/http-proxy.conf"] = _http_block(
         all_names, target_ip, acme_webroot=acme_webroot,
     )
 
@@ -393,7 +393,7 @@ def _emit_combined_http_files(
             upstream_name=iface_upstream,
         ))
 
-    files[f"sites-available/{primary_fqdn}-http-public"] = "\n".join(parts)
+    files[f"sites-available/{primary_fqdn}/http-proxy.conf"] = "\n".join(parts)
 
 
 

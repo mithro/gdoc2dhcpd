@@ -69,10 +69,9 @@ class TestNginxFileStructure:
         site_files = [k for k in files if k.startswith("sites-available/")]
         assert len(site_files) == 3
 
-        prefixes = {f.split("/")[1] for f in site_files}
-        assert f"{fqdn}-http-public" in prefixes
-        assert f"{fqdn}-https-upstream" in prefixes
-        assert f"{fqdn}-https-map" in prefixes
+        assert f"sites-available/{fqdn}/http-proxy.conf" in site_files
+        assert f"sites-available/{fqdn}/https-upstream.conf" in site_files
+        assert f"sites-available/{fqdn}/https-map.conf" in site_files
 
     def test_https_files_are_stream_not_http(self):
         """HTTPS files are stream upstream/map, not http-module blocks."""
@@ -129,7 +128,7 @@ class TestHTTPBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "listen 80;" in block
         assert "listen [::]:80;" in block
 
@@ -137,7 +136,7 @@ class TestHTTPBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "desktop.welland.mithis.com" in block
         assert "desktop.int.welland.mithis.com" in block
         assert "server_name" in block
@@ -146,7 +145,7 @@ class TestHTTPBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "ipv4.desktop.welland.mithis.com" in block
         assert "ipv6.desktop.welland.mithis.com" not in block
 
@@ -154,14 +153,14 @@ class TestHTTPBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "proxy_pass http://10.1.10.100;" in block
 
     def test_http_public_no_auth_in_main_location(self):
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         # auth_basic "Restricted" should NOT appear (that's the private variant)
         assert 'auth_basic "Restricted"' not in block
         # auth_basic off IS present in the ACME challenge block
@@ -172,7 +171,7 @@ class TestHTTPBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert 'auth_basic "Restricted"' not in block
         assert "auth_basic_user_file" not in block
 
@@ -180,7 +179,7 @@ class TestHTTPBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "location /.well-known/acme-challenge/" in block
         assert "root /var/www/acme;" in block
         assert "auth_basic off;" in block
@@ -190,7 +189,7 @@ class TestHTTPBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "location @acme_fallback {" in block
         assert "proxy_pass http://10.1.10.100;" in block
 
@@ -198,7 +197,7 @@ class TestHTTPBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "proxy_set_header Host $host;" in block
         assert "proxy_set_header X-Real-IP $remote_addr;" in block
         assert "proxy_set_header X-Forwarded-For" in block
@@ -208,7 +207,7 @@ class TestHTTPBlock:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "proxy_http_version 1.1;" in block
         assert "proxy_set_header Upgrade $http_upgrade;" in block
         assert 'proxy_set_header Connection "upgrade";' in block
@@ -220,7 +219,7 @@ class TestAcmeFallback:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         # Find the fallback section
         fallback_start = block.index("@acme_fallback")
         fallback = block[fallback_start:]
@@ -236,7 +235,7 @@ class TestAcmeFallback:
             _make_inventory(host), acme_webroot="/srv/acme",
         )
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "root /srv/acme;" in block
 
     def test_multi_interface_fallback_uses_upstream(self):
@@ -245,7 +244,7 @@ class TestAcmeFallback:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        block = files[f"sites-available/{fqdn}-http-public"]
+        block = files[f"sites-available/{fqdn}/http-proxy.conf"]
         fallback_start = block.index("@acme_fallback")
         fallback = block[fallback_start:]
         # Should proxy to the upstream, not a bare IP
@@ -256,7 +255,7 @@ class TestAcmeFallback:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "include snippets/acme-challenge.conf;" not in block
 
     def test_snippet_file_still_generated(self):
@@ -274,17 +273,17 @@ class TestMultipleHosts:
         files = generate_nginx(_make_inventory(h1, h2))
 
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 6  # 3 per host (1 HTTP + 2 stream)
+        assert len(site_files) == 6  # 3 per host (1 HTTP + 2 HTTPS)
 
     def test_each_host_uses_own_ip(self):
         h1 = _make_host(hostname="desktop", ip="10.1.10.100")
         h2 = _make_host(hostname="server", ip="10.1.10.200")
         files = generate_nginx(_make_inventory(h1, h2))
 
-        desktop_http = files["sites-available/desktop.welland.mithis.com-http-public"]
+        desktop_http = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "proxy_pass http://10.1.10.100;" in desktop_http
 
-        server_http = files["sites-available/server.welland.mithis.com-http-public"]
+        server_http = files["sites-available/server.welland.mithis.com/http-proxy.conf"]
         assert "proxy_pass http://10.1.10.200;" in server_http
 
 
@@ -354,19 +353,26 @@ def _extract_server_blocks(config_text: str) -> list[str]:
 
 
 class TestMultiInterfaceHost:
-    def test_produces_three_files(self):
-        """Multi-interface hosts produce 1 HTTP + 2 stream files."""
+    def test_produces_six_site_files(self):
+        """Multi-interface hosts produce 1 HTTP + 2 HTTPS + 3 healthcheck lua files."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 3
+        assert len(site_files) == 6
+        assert f"sites-available/{fqdn}/http-proxy.conf" in site_files
+        assert f"sites-available/{fqdn}/https-upstream.conf" in site_files
+        assert f"sites-available/{fqdn}/https-map.conf" in site_files
+        assert f"sites-available/{fqdn}/http-healthcheck.lua" in site_files
+        assert f"sites-available/{fqdn}/https-healthcheck.lua" in site_files
+        assert f"sites-available/{fqdn}/https-balancer.lua" in site_files
 
     def test_file_contains_upstream_block(self):
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com/http-proxy.conf"]
         assert "upstream rpi-sdr-kraken.welland.mithis.com-http-backend {" in conf
         assert "server 10.1.90.149:80;" in conf
         assert "server 10.1.90.150:80;" in conf
@@ -376,7 +382,7 @@ class TestMultiInterfaceHost:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com/http-proxy.conf"]
         blocks = _extract_server_blocks(conf)
         assert len(blocks) == 3
 
@@ -384,7 +390,7 @@ class TestMultiInterfaceHost:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com/http-proxy.conf"]
         blocks = _extract_server_blocks(conf)
         root_block = blocks[0]
         expected = "proxy_pass http://rpi-sdr-kraken.welland.mithis.com-http-backend;"
@@ -395,7 +401,7 @@ class TestMultiInterfaceHost:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com/http-proxy.conf"]
         blocks = _extract_server_blocks(conf)
         root_block = blocks[0]
         assert "rpi-sdr-kraken.welland.mithis.com" in root_block
@@ -407,7 +413,7 @@ class TestMultiInterfaceHost:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        conf = files[f"sites-available/{fqdn}-http-public"]
+        conf = files[f"sites-available/{fqdn}/http-proxy.conf"]
         blocks = _extract_server_blocks(conf)
         eth0_block = blocks[1]
         wlan0_block = blocks[2]
@@ -420,7 +426,7 @@ class TestMultiInterfaceHost:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
+        conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com/http-proxy.conf"]
         blocks = _extract_server_blocks(conf)
         eth0_block = blocks[1]
         wlan0_block = blocks[2]
@@ -433,7 +439,7 @@ class TestMultiInterfaceHost:
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "upstream" not in block
         assert "proxy_next_upstream" not in block
         assert "proxy_pass http://10.1.10.100;" in block
@@ -445,7 +451,7 @@ class TestAltNames:
         derive_all_dns_names(host, SITE)
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "alias.example.com" in block
 
     def test_wildcard_alt_names_in_server_name(self):
@@ -454,7 +460,7 @@ class TestAltNames:
         derive_all_dns_names(host, SITE)
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "*.example.com" in block
 
     def test_multiple_alt_names(self):
@@ -463,7 +469,7 @@ class TestAltNames:
         derive_all_dns_names(host, SITE)
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "a.example.com" in block
         assert "b.example.com" in block
 
@@ -498,7 +504,7 @@ class TestSharedIPHost:
         assert len(site_files) == 3  # 1 HTTP + 2 stream
 
         # Should use direct proxy_pass, not upstream
-        http_pub = files[f"sites-available/{fqdn}-http-public"]
+        http_pub = files[f"sites-available/{fqdn}/http-proxy.conf"]
         assert "upstream" not in http_pub
         assert "proxy_pass http://10.1.90.50;" in http_pub
 
@@ -513,7 +519,7 @@ class TestSharedIPHost:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "server.welland.mithis.com"
-        http_pub = files[f"sites-available/{fqdn}-http-public"]
+        http_pub = files[f"sites-available/{fqdn}/http-proxy.conf"]
         # Extract the main round-robin upstream block (first one)
         main_upstream_end = http_pub.index("}\n\n")
         main_upstream = http_pub[:main_upstream_end]
@@ -526,14 +532,14 @@ class TestHealthcheck:
     """Tests for lua-resty-upstream-healthcheck config generation."""
 
     def test_no_healthcheck_files_for_single_interface_only(self):
-        """No conf.d/ or healthcheck.d/ files when only single-interface hosts."""
+        """No conf.d/ or healthcheck lua files when only single-interface hosts."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         confd_files = [k for k in files if k.startswith("conf.d/")]
-        hcd_files = [k for k in files if k.startswith("healthcheck.d/")]
+        hc_lua_files = [k for k in files if k.endswith("http-healthcheck.lua")]
         assert len(confd_files) == 0
-        assert len(hcd_files) == 0
+        assert len(hc_lua_files) == 0
 
     def test_healthcheck_files_present_for_multi_interface_host(self):
         """conf.d/ files and per-host .lua emitted for multi-interface host."""
@@ -544,7 +550,7 @@ class TestHealthcheck:
         assert "conf.d/healthcheck-init.conf" in files
         assert "conf.d/healthcheck-status.conf" in files
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        assert f"healthcheck.d/{fqdn}.lua" in files
+        assert f"sites-available/{fqdn}/http-healthcheck.lua" in files
 
     def test_lua_healthcheck_conf_default_path(self):
         """Default lua_package_path uses /usr/share/lua/5.1/."""
@@ -583,7 +589,7 @@ class TestHealthcheck:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        lua = files[f"sites-available/{fqdn}/http-healthcheck.lua"]
         assert f"{fqdn}-http-backend" in lua
         assert "https" not in lua
 
@@ -600,8 +606,8 @@ class TestHealthcheck:
         files = generate_nginx(_make_inventory(h1, h2))
 
         # Separate per-host .lua files
-        assert "healthcheck.d/host-a.welland.mithis.com.lua" in files
-        assert "healthcheck.d/host-b.welland.mithis.com.lua" in files
+        assert "sites-available/host-a.welland.mithis.com/http-healthcheck.lua" in files
+        assert "sites-available/host-b.welland.mithis.com/http-healthcheck.lua" in files
         # Single generic init_worker block (no host-specific content)
         init = files["conf.d/healthcheck-init.conf"]
         assert init.count("init_worker_by_lua_block") == 1
@@ -609,7 +615,7 @@ class TestHealthcheck:
         assert "host-b" not in init
 
     def test_init_conf_scans_healthcheck_dir(self):
-        """Init conf is a generic loader that scans healthcheck.d/."""
+        """Init conf is a generic loader that scans healthcheck dir."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
@@ -646,7 +652,7 @@ class TestHealthcheck:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        lua = files[f"sites-available/{fqdn}/http-healthcheck.lua"]
         assert "get_primary_peers" in lua
 
     def test_status_conf_has_listener_and_endpoint(self):
@@ -665,7 +671,7 @@ class TestHealthcheck:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        lua = files[f"sites-available/{fqdn}/http-healthcheck.lua"]
         assert "valid_statuses" not in lua
 
     def test_mixed_hosts_only_multi_interface_in_healthcheck(self):
@@ -675,9 +681,9 @@ class TestHealthcheck:
         files = generate_nginx(_make_inventory(single, multi))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        assert f"healthcheck.d/{fqdn}.lua" in files
-        hcd_files = [k for k in files if k.startswith("healthcheck.d/")]
-        assert len(hcd_files) == 1  # only the multi-interface host
+        assert f"sites-available/{fqdn}/http-healthcheck.lua" in files
+        hc_lua_files = [k for k in files if k.endswith("http-healthcheck.lua")]
+        assert len(hc_lua_files) == 1  # only the multi-interface host
 
     def test_shared_ip_host_no_healthcheck(self):
         """Shared-IP hosts (treated as single-interface) don't trigger healthcheck."""
@@ -689,29 +695,29 @@ class TestHealthcheck:
         files = generate_nginx(_make_inventory(shared))
 
         confd_files = [k for k in files if k.startswith("conf.d/")]
-        hcd_files = [k for k in files if k.startswith("healthcheck.d/")]
+        hc_lua_files = [k for k in files if k.endswith("http-healthcheck.lua")]
         assert len(confd_files) == 0
-        assert len(hcd_files) == 0
+        assert len(hc_lua_files) == 0
 
 
 class TestHTTPSSNI:
     """Tests for HTTPS SNI passthrough config generation."""
 
     def test_per_host_https_upstream_file(self):
-        """Each host gets a sites-available/{fqdn}-https-upstream file."""
+        """Each host gets a sites-available/{fqdn}/https-upstream.conf file."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        assert f"sites-available/{fqdn}-https-upstream" in files
+        assert f"sites-available/{fqdn}/https-upstream.conf" in files
 
     def test_per_host_https_map_file(self):
-        """Each host gets a sites-available/{fqdn}-https-map file."""
+        """Each host gets a sites-available/{fqdn}/https-map.conf file."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        assert f"sites-available/{fqdn}-https-map" in files
+        assert f"sites-available/{fqdn}/https-map.conf" in files
 
     def test_single_host_https_upstream(self):
         """Single-interface host gets direct server entry in HTTPS upstream."""
@@ -719,7 +725,7 @@ class TestHTTPSSNI:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        upstream = files[f"sites-available/{fqdn}-https-upstream"]
+        upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
         assert f"upstream {fqdn}-tls {{" in upstream
         assert "server 10.1.10.100:443;" in upstream
         assert "balancer_by_lua_file" not in upstream
@@ -730,7 +736,7 @@ class TestHTTPSSNI:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        upstream = files[f"sites-available/{fqdn}-https-upstream"]
+        upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
         assert f"upstream {fqdn}-tls {{" in upstream
         assert "server 0.0.0.1:443;" in upstream
         assert "balancer_by_lua_file" in upstream
@@ -741,7 +747,7 @@ class TestHTTPSSNI:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        https_map = files[f"sites-available/{fqdn}-https-map"]
+        https_map = files[f"sites-available/{fqdn}/https-map.conf"]
         # Root FQDN and subdomain variant
         assert f"desktop.welland.mithis.com {fqdn}-tls;" in https_map
         assert f"desktop.int.welland.mithis.com {fqdn}-tls;" in https_map
@@ -754,7 +760,7 @@ class TestHTTPSSNI:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        https_map = files[f"sites-available/{fqdn}-https-map"]
+        https_map = files[f"sites-available/{fqdn}/https-map.conf"]
         assert "ipv6.desktop.welland.mithis.com" not in https_map
 
     def test_no_bare_hostnames_in_https_map(self):
@@ -763,7 +769,7 @@ class TestHTTPSSNI:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        https_map = files[f"sites-available/{fqdn}-https-map"]
+        https_map = files[f"sites-available/{fqdn}/https-map.conf"]
         # "desktop" without domain should not appear as its own map entry
         for line in https_map.strip().splitlines():
             name = line.split()[0]
@@ -775,7 +781,7 @@ class TestHTTPSSNI:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        lua = files[f"healthcheck.d/{fqdn}.lua"]
+        lua = files[f"sites-available/{fqdn}/http-healthcheck.lua"]
         # 1 try_spawn call (http-backend) + 1 function def
         assert lua.count("try_spawn({\n") == 1
         # upstream name says "http-backend", not "https"
@@ -791,9 +797,11 @@ class TestHTTPSHealthcheck:
         files = generate_nginx(_make_inventory(host))
 
         stream_d = [k for k in files if k.startswith("stream.d/")]
-        stream_hc = [k for k in files if k.startswith("stream-healthcheck.d/")]
+        https_hc = [k for k in files if k.endswith(("https-healthcheck.lua", "https-balancer.lua"))]
+        scripts = [k for k in files if k.startswith("scripts/")]
         assert len(stream_d) == 0
-        assert len(stream_hc) == 0
+        assert len(https_hc) == 0
+        assert len(scripts) == 0
 
     def test_https_healthcheck_lua_conf_generated(self):
         """Multi-interface host triggers stream.d/ lua config with package path."""
@@ -804,7 +812,6 @@ class TestHTTPSHealthcheck:
         conf = files["stream.d/generated-lua-healthcheck.conf"]
         assert "lua_shared_dict stream_healthcheck" in conf
         assert "lua_package_path" in conf
-        assert "stream-healthcheck.d" in conf
 
     def test_https_healthcheck_init_generated(self):
         """Init worker block loads from hosts-enabled/ subdirectory."""
@@ -820,13 +827,13 @@ class TestHTTPSHealthcheck:
         assert "set_status_file" in init
         assert "status.txt" in init
 
-    def test_https_per_host_lua_in_hosts_available(self):
-        """Per-host Lua files are generated to hosts-available/."""
+    def test_https_per_host_lua_in_host_dir(self):
+        """Per-host HTTPS health check Lua files are in host directory."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        key = f"stream-healthcheck.d/hosts-available/{fqdn}.lua"
+        key = f"sites-available/{fqdn}/https-healthcheck.lua"
         assert key in files
         lua = files[key]
         assert "10.1.90.149" in lua
@@ -838,8 +845,8 @@ class TestHTTPSHealthcheck:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        assert "stream-healthcheck.d/checker.lua" in files
-        checker = files["stream-healthcheck.d/checker.lua"]
+        assert "scripts/checker.lua" in files
+        checker = files["scripts/checker.lua"]
         assert "sock:connect" in checker
         assert "stream_healthcheck" in checker
         # Has status file writing for the HTTP status endpoint
@@ -860,7 +867,7 @@ class TestHTTPSHealthcheck:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        key = f"stream-healthcheck.d/{fqdn}-balancer.lua"
+        key = f"sites-available/{fqdn}/https-balancer.lua"
         assert key in files
         balancer = files[key]
         assert f"{fqdn}-tls" in balancer
@@ -872,8 +879,8 @@ class TestHTTPSHealthcheck:
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        upstream = files[f"sites-available/{fqdn}-https-upstream"]
-        assert f"stream-healthcheck.d/{fqdn}-balancer.lua" in upstream
+        upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
+        assert f"{fqdn}-balancer.lua" in upstream
 
     def test_https_healthcheck_custom_dir(self):
         """Custom stream_healthcheck_dir flows through to generated files."""
@@ -890,7 +897,7 @@ class TestHTTPSHealthcheck:
         assert "/opt/nginx/stream-hc.d/hosts-enabled" in init
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        upstream = files[f"sites-available/{fqdn}-https-upstream"]
+        upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
         assert f"/opt/nginx/stream-hc.d/{fqdn}-balancer.lua" in upstream
 
     def test_no_shared_balancer_lua(self):
@@ -898,7 +905,7 @@ class TestHTTPSHealthcheck:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        assert "stream-healthcheck.d/balancer.lua" not in files
+        assert "scripts/balancer.lua" not in files
 
     def test_rejects_unsafe_stream_healthcheck_dir(self):
         """Path injection in stream_healthcheck_dir is rejected."""
@@ -916,5 +923,5 @@ class TestHTTPSHealthcheck:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        checker = files["stream-healthcheck.d/checker.lua"]
+        checker = files["scripts/checker.lua"]
         assert "rr_index" in checker or "round" in checker.lower()
