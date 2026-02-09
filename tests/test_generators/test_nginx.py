@@ -54,12 +54,6 @@ def _make_inventory(*hosts):
 
 
 class TestNginxFileStructure:
-    def test_produces_acme_snippet(self):
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        assert "snippets/acme-challenge.conf" in files
-
     def test_produces_three_site_files_per_host(self):
         """Each host gets 1 HTTP + 2 HTTPS files."""
         host = _make_host()
@@ -99,28 +93,9 @@ class TestNginxFileStructure:
         )
         files = generate_nginx(_make_inventory(host))
 
-        # Only the acme snippet, no sites-available
+        # No sites-available files for non-FQDN hosts
         site_files = [k for k in files if k.startswith("sites-available/")]
         assert len(site_files) == 0
-
-
-class TestAcmeSnippet:
-    def test_default_webroot(self):
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        snippet = files["snippets/acme-challenge.conf"]
-        assert "root /var/www/acme;" in snippet
-        assert "auth_basic off;" in snippet
-
-    def test_custom_webroot(self):
-        host = _make_host()
-        files = generate_nginx(
-            _make_inventory(host), acme_webroot="/srv/acme"
-        )
-
-        snippet = files["snippets/acme-challenge.conf"]
-        assert "root /srv/acme;" in snippet
 
 
 class TestHTTPBlock:
@@ -257,13 +232,6 @@ class TestAcmeFallback:
 
         block = files["sites-available/desktop.welland.mithis.com/http-proxy.conf"]
         assert "include snippets/acme-challenge.conf;" not in block
-
-    def test_snippet_file_still_generated(self):
-        """The snippet file is still generated for deployment compatibility."""
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        assert "snippets/acme-challenge.conf" in files
 
 
 class TestMultipleHosts:

@@ -1,7 +1,7 @@
 """nginx reverse proxy configuration generator.
 
-Produces per-host nginx config directories under sites-available/ and
-a shared ACME challenge snippet. Each host gets a directory containing:
+Produces per-host nginx config directories under sites-available/.
+Each host gets a directory containing:
 
   - http-proxy.conf           HTTP reverse proxy (port 80)
   - https-upstream.conf       TLS passthrough upstream (stream context)
@@ -204,9 +204,6 @@ def generate_nginx(
     # (fqdn, upstream_name, ips) for multi-interface HTTPS health checks
     https_healthcheck_hosts: list[tuple[str, str, list[str]]] = []
 
-    # Shared ACME challenge snippet
-    files["snippets/acme-challenge.conf"] = _acme_challenge_snippet(acme_webroot)
-
     for host in inventory.hosts_sorted():
         fqdns = [
             dn.name for dn in host.dns_names
@@ -389,16 +386,6 @@ def _emit_combined_http_files(
 
     files[f"sites-available/{primary_fqdn}/http-proxy.conf"] = "\n".join(parts)
 
-
-
-def _acme_challenge_snippet(acme_webroot: str) -> str:
-    """Generate the shared ACME challenge location snippet."""
-    return (
-        f"location /.well-known/acme-challenge/ {{\n"
-        f"    root {acme_webroot};\n"
-        f"    auth_basic off;\n"
-        f"}}\n"
-    )
 
 
 def _server_names(names: list[str]) -> str:
