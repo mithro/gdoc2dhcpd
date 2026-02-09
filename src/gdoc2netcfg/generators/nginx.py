@@ -663,10 +663,12 @@ def _stream_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
     config files — those are Lua modules, not init_worker scripts.
     """
     hosts_dir = f"{stream_healthcheck_dir}/hosts"
+    status_file = f"{stream_healthcheck_dir}/status.txt"
     return (
         "init_worker_by_lua_block {\n"
         f'    local dir = "{hosts_dir}"\n'
         '    local checker = require "checker"\n'
+        f'    checker.set_status_file("{status_file}")\n'
         '    local pipe = io.popen("ls " .. dir .. "/*.lua")\n'
         "    if not pipe then return end\n"
         "    for path in pipe:lines() do\n"
@@ -729,12 +731,19 @@ def _stream_checker_lua() -> str:
     3. Uses TCP connect to verify backend is accepting connections
     4. Tracks consecutive failures (fall) and recoveries (rise)
     5. Stores health status in lua_shared_dict stream_healthcheck
+    6. Writes status to a file for the HTTP status endpoint
     """
     return '''\
 local _M = {}
 
 local registry = {}
+local upstream_order = {}
 local shm = ngx.shared.stream_healthcheck
+local status_file = nil
+
+function _M.set_status_file(path)
+    status_file = path
+end
 
 function _M.register(opts)
     registry[opts.upstream] = {
@@ -745,6 +754,7 @@ function _M.register(opts)
         fall = opts.fall or 3,
         rise = opts.rise or 2,
     }
+    upstream_order[#upstream_order + 1] = opts.upstream
     -- Initialise health state for each peer
     for _, ip in ipairs(opts.peers) do
         local key = opts.upstream .. ":" .. ip
@@ -767,6 +777,30 @@ local function check_peer(upstream_name, info, ip)
 
     -- TCP connect success = backend is accepting connections on port 443
     return ok, err
+end
+
+local function write_status()
+    if not status_file then return end
+    local lines = {}
+    for _, upstream_name in ipairs(upstream_order) do
+        local info = registry[upstream_name]
+        if info then
+            lines[#lines + 1] = "Upstream " .. upstream_name
+            lines[#lines + 1] = "    Primary Peers"
+            for _, ip in ipairs(info.peers) do
+                local key = upstream_name .. ":" .. ip
+                local healthy = shm:get(key .. ":healthy")
+                local status = healthy and "UP" or "DOWN"
+                lines[#lines + 1] = "        " .. ip .. ":443 " .. status
+            end
+            lines[#lines + 1] = ""
+        end
+    end
+    local f = io.open(status_file, "w")
+    if f then
+        f:write(table.concat(lines, "\\n") .. "\\n")
+        f:close()
+    end
 end
 
 local function run_checks()
@@ -792,6 +826,7 @@ local function run_checks()
             end
         end
     end
+    write_status()
 end
 
 function _M.start()
@@ -801,6 +836,8 @@ function _M.start()
             min_interval = info.interval
         end
     end
+    -- Write initial status before first check cycle
+    write_status()
     ngx.timer.every(min_interval, function(premature)
         if premature then return end
         run_checks()

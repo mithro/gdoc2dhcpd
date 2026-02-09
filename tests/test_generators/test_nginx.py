@@ -843,6 +843,9 @@ class TestStreamHealthcheck:
         assert "init_worker_by_lua_block" in init
         # Scans hosts/ subdirectory, not top-level (avoids loading checker/balancer)
         assert "/hosts" in init
+        # Sets status file path for health status output
+        assert "set_status_file" in init
+        assert "status.txt" in init
 
     def test_stream_per_host_lua_in_hosts_subdir(self):
         """Per-host Lua files live in hosts/ subdirectory."""
@@ -866,6 +869,9 @@ class TestStreamHealthcheck:
         checker = files["stream-healthcheck.d/checker.lua"]
         assert "sock:connect" in checker
         assert "stream_healthcheck" in checker
+        # Has status file writing for the HTTP status endpoint
+        assert "write_status" in checker
+        assert "set_status_file" in checker
 
     def test_per_host_balancer_lua_generated(self):
         """Each multi-interface host gets its own balancer with hardcoded upstream name."""
