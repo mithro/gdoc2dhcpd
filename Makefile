@@ -96,6 +96,7 @@ deploy-nginx: generate ## Generate and deploy nginx configs (run with sudo)
 	test -d $(OUTPUT_DIR)/nginx/stream.d && cp $(OUTPUT_DIR)/nginx/stream.d/* $(NGINX_CONF_DIR)/stream.d/ || true
 	test -d $(OUTPUT_DIR)/nginx/stream-healthcheck.d && cp $(OUTPUT_DIR)/nginx/stream-healthcheck.d/*.lua $(NGINX_CONF_DIR)/stream-healthcheck.d/ || true
 	test -d $(OUTPUT_DIR)/nginx/stream-healthcheck.d/hosts && cp $(OUTPUT_DIR)/nginx/stream-healthcheck.d/hosts/* $(NGINX_CONF_DIR)/stream-healthcheck.d/hosts/ || true
+	touch $(NGINX_CONF_DIR)/stream-healthcheck.d/status.txt && chown www-data:www-data $(NGINX_CONF_DIR)/stream-healthcheck.d/status.txt
 	nginx -t
 	systemctl reload nginx
 
