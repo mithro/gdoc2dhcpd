@@ -155,7 +155,7 @@ def _emit_https_files(
     fqdn_names must be FQDN-only (not bare hostnames) because SNI
     values in TLS ClientHello are always fully qualified domain names.
     """
-    upstream_name = f"{primary_fqdn}-tls"
+    upstream_name = f"{primary_fqdn}-https-backend"
 
     files[f"sites-available/{primary_fqdn}/https-upstream.conf"] = _https_upstream_block(
         upstream_name, ips, balancer_lua_path=balancer_lua_path,
@@ -181,14 +181,14 @@ def _emit_combined_https_files(
     to the combined upstream and interface-specific names to their direct
     upstream.
     """
-    upstream_name = f"{primary_fqdn}-tls"
+    upstream_name = f"{primary_fqdn}-https-backend"
 
     # Combined upstream with balancer
     parts = [_https_upstream_block(upstream_name, all_ips, balancer_lua_path=balancer_lua_path)]
 
     # Per-interface direct upstreams
     for _iface_fqdn_names, iface_ip, iface_fqdn in iface_configs:
-        iface_upstream = f"{iface_fqdn}-tls"
+        iface_upstream = f"{iface_fqdn}-https-backend"
         parts.append(_https_upstream_block(iface_upstream, [iface_ip]))
 
     files[f"sites-available/{primary_fqdn}/https-upstream.conf"] = "\n".join(parts)
@@ -196,7 +196,7 @@ def _emit_combined_https_files(
     # Map entries: root names → combined, interface names → direct
     map_parts = [_https_map_entries(upstream_name, root_fqdn_names)]
     for iface_fqdn_names, _iface_ip, iface_fqdn in iface_configs:
-        iface_upstream = f"{iface_fqdn}-tls"
+        iface_upstream = f"{iface_fqdn}-https-backend"
         map_parts.append(_https_map_entries(iface_upstream, iface_fqdn_names))
 
     files[f"sites-available/{primary_fqdn}/https-map.conf"] = "".join(map_parts)
@@ -238,8 +238,8 @@ def generate_nginx(
 
     files: dict[str, str] = {}
     healthcheck_hosts: list[tuple[str, list[_UpstreamInfo]]] = []
-    # (fqdn, [(upstream_name, host, ips), ...]) for multi-interface HTTPS health checks
-    https_healthcheck_hosts: list[tuple[str, list[tuple[str, str, list[str]]]]] = []
+    # (upstream_name, fqdn, ips) for combined HTTPS health checks only
+    https_healthcheck_hosts: list[tuple[str, str, list[str]]] = []
 
     for host in inventory.hosts_sorted():
         fqdns = [
@@ -346,15 +346,12 @@ def generate_nginx(
             )]
             healthcheck_hosts.append((primary_fqdn, host_upstreams))
 
-            # Collect HTTPS healthcheck metadata: combined + per-interface
-            https_upstreams: list[tuple[str, str, list[str]]] = [
-                (f"{primary_fqdn}-tls", primary_fqdn, all_ips),
-            ]
-            for _iface_fqdn_names, iface_ip, iface_fqdn in iface_https_configs:
-                https_upstreams.append(
-                    (f"{iface_fqdn}-tls", iface_fqdn, [iface_ip])
-                )
-            https_healthcheck_hosts.append((primary_fqdn, https_upstreams))
+            # Collect HTTPS healthcheck metadata: combined upstream only.
+            # Per-interface upstreams have a single peer so health checking
+            # them is pointless — there is no failover decision to make.
+            https_healthcheck_hosts.append(
+                (f"{primary_fqdn}-https-backend", primary_fqdn, all_ips)
+            )
 
     # Emit healthcheck config files if any multi-interface hosts exist
     if healthcheck_hosts:
@@ -371,14 +368,12 @@ def generate_nginx(
             _https_healthcheck_setup_conf(gdoc2netcfg_dir, sites_enabled_dir)
         )
         files["scripts/checker.lua"] = _https_checker_lua()
-        for fqdn, upstreams in https_healthcheck_hosts:
+        for upstream_name, fqdn, ips in https_healthcheck_hosts:
             files[f"sites-available/{fqdn}/https-healthcheck.lua"] = (
-                _https_healthcheck_host_lua(upstreams)
+                _https_healthcheck_host_lua(upstream_name, fqdn, ips)
             )
-            # Balancer is for the combined (first) upstream only
-            combined_upstream_name = upstreams[0][0]
             files[f"sites-available/{fqdn}/https-balancer.lua"] = (
-                _https_balancer_lua(combined_upstream_name)
+                _https_balancer_lua(upstream_name)
             )
 
     return files
@@ -667,34 +662,35 @@ def _https_healthcheck_setup_conf(
 
 
 def _https_healthcheck_host_lua(
-    upstreams: list[tuple[str, str, list[str]]],
+    upstream_name: str,
+    fqdn: str,
+    ips: list[str],
 ) -> str:
     """Generate a per-host Lua file for HTTPS health checking.
 
-    Each entry in *upstreams* is (upstream_name, host, ips).  Registers
-    every upstream's peers with the shared checker module, which runs
-    periodic HTTPS probes to each peer.
+    Registers the combined upstream's peers (IP addresses) with the
+    shared checker module.  Per-interface upstreams are not registered
+    because they have a single peer and no failover decision to make.
     """
     lines = [
         'local checker = require "checker"',
         "",
+        "checker.register({",
+        f'    upstream = "{upstream_name}",',
+        f'    host = "{fqdn}",',
+        "    peers = {",
     ]
-    for upstream_name, fqdn, ips in upstreams:
-        lines.append("checker.register({")
-        lines.append(f'    upstream = "{upstream_name}",')
-        lines.append(f'    host = "{fqdn}",')
-        lines.append("    peers = {")
-        for ip in ips:
-            lines.append(f'        "{ip}",')
-        lines.extend([
-            "    },",
-            "    interval = 5,",
-            "    timeout = 2,",
-            "    fall = 3,",
-            "    rise = 2,",
-            "})",
-            "",
-        ])
+    for ip in ips:
+        lines.append(f'        "{ip}",')
+    lines.extend([
+        "    },",
+        "    interval = 5,",
+        "    timeout = 2,",
+        "    fall = 3,",
+        "    rise = 2,",
+        "})",
+        "",
+    ])
     return "\n".join(lines)
 
 

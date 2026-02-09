@@ -694,7 +694,7 @@ class TestHTTPSSNI:
 
         fqdn = "desktop.welland.mithis.com"
         upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
-        assert f"upstream {fqdn}-tls {{" in upstream
+        assert f"upstream {fqdn}-https-backend {{" in upstream
         assert "server 10.1.10.100:443;" in upstream
         assert "balancer_by_lua_file" not in upstream
 
@@ -705,7 +705,7 @@ class TestHTTPSSNI:
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
-        assert f"upstream {fqdn}-tls {{" in upstream
+        assert f"upstream {fqdn}-https-backend {{" in upstream
         assert "server 0.0.0.1:443;" in upstream
         assert "balancer_by_lua_file" in upstream
 
@@ -717,9 +717,9 @@ class TestHTTPSSNI:
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
         # Per-interface upstreams with direct server entries
-        assert f"upstream eth0.{fqdn}-tls {{" in upstream
+        assert f"upstream eth0.{fqdn}-https-backend {{" in upstream
         assert "server 10.1.90.149:443;" in upstream
-        assert f"upstream wlan0.{fqdn}-tls {{" in upstream
+        assert f"upstream wlan0.{fqdn}-https-backend {{" in upstream
         assert "server 10.1.90.150:443;" in upstream
 
     def test_multi_interface_https_map_routes_interfaces_to_direct_upstream(self):
@@ -730,10 +730,10 @@ class TestHTTPSSNI:
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         https_map = files[f"sites-available/{fqdn}/https-map.conf"]
         # Root names → combined upstream with balancer
-        assert f"rpi-sdr-kraken.welland.mithis.com {fqdn}-tls;" in https_map
+        assert f"rpi-sdr-kraken.welland.mithis.com {fqdn}-https-backend;" in https_map
         # Interface names → direct per-interface upstream
-        assert f"eth0.{fqdn} eth0.{fqdn}-tls;" in https_map
-        assert f"wlan0.{fqdn} wlan0.{fqdn}-tls;" in https_map
+        assert f"eth0.{fqdn} eth0.{fqdn}-https-backend;" in https_map
+        assert f"wlan0.{fqdn} wlan0.{fqdn}-https-backend;" in https_map
 
     def test_https_map_entries_for_all_fqdns(self):
         """HTTPS map file has entries for all FQDN DNS names."""
@@ -743,10 +743,10 @@ class TestHTTPSSNI:
         fqdn = "desktop.welland.mithis.com"
         https_map = files[f"sites-available/{fqdn}/https-map.conf"]
         # Root FQDN and subdomain variant
-        assert f"desktop.welland.mithis.com {fqdn}-tls;" in https_map
-        assert f"desktop.int.welland.mithis.com {fqdn}-tls;" in https_map
+        assert f"desktop.welland.mithis.com {fqdn}-https-backend;" in https_map
+        assert f"desktop.int.welland.mithis.com {fqdn}-https-backend;" in https_map
         # ipv4 prefix variant
-        assert f"ipv4.desktop.welland.mithis.com {fqdn}-tls;" in https_map
+        assert f"ipv4.desktop.welland.mithis.com {fqdn}-https-backend;" in https_map
 
     def test_no_ipv6_only_names_in_https_map(self):
         """IPv6-only DNS names are excluded from HTTPS map."""
@@ -825,22 +825,25 @@ class TestHTTPSHealthcheck:
         lua = files[key]
         assert "10.1.90.149" in lua
         assert "10.1.90.150" in lua
-        assert f"{fqdn}-tls" in lua
+        assert f"{fqdn}-https-backend" in lua
 
-    def test_https_per_host_lua_registers_per_interface_upstreams(self):
-        """Per-host HTTPS health check registers combined + per-interface upstreams."""
+    def test_https_healthcheck_only_registers_combined_upstream(self):
+        """Per-host HTTPS health check registers only the combined upstream.
+
+        Per-interface upstreams have a single peer so health checking
+        them is pointless — there is no failover decision to make.
+        """
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         lua = files[f"sites-available/{fqdn}/https-healthcheck.lua"]
         # Combined upstream registered with all IPs
-        assert f'upstream = "{fqdn}-tls"' in lua
-        # Per-interface upstreams registered with single IP each
-        assert f'upstream = "eth0.{fqdn}-tls"' in lua
-        assert f'upstream = "wlan0.{fqdn}-tls"' in lua
-        # Should have 3 checker.register() calls total
-        assert lua.count("checker.register(") == 3
+        assert f'upstream = "{fqdn}-https-backend"' in lua
+        assert "10.1.90.149" in lua
+        assert "10.1.90.150" in lua
+        # Only 1 checker.register() — combined only, not per-interface
+        assert lua.count("checker.register(") == 1
 
     def test_https_checker_lua_generated(self):
         """Shared checker.lua module is generated at top level."""
@@ -872,7 +875,7 @@ class TestHTTPSHealthcheck:
         key = f"sites-available/{fqdn}/https-balancer.lua"
         assert key in files
         balancer = files[key]
-        assert f"{fqdn}-tls" in balancer
+        assert f"{fqdn}-https-backend" in balancer
         assert "set_current_peer" in balancer
 
     def test_https_upstream_references_per_host_balancer(self):
