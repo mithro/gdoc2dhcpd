@@ -165,6 +165,43 @@ def _emit_https_files(
     )
 
 
+def _emit_combined_https_files(
+    files: dict[str, str],
+    primary_fqdn: str,
+    root_fqdn_names: list[str],
+    all_ips: list[str],
+    iface_configs: list[tuple[list[str], str, str]],
+    balancer_lua_path: str,
+) -> None:
+    """Emit HTTPS upstream and SNI map files for a multi-interface host.
+
+    Like the HTTP combined config, generates a combined upstream for the
+    root hostname (with balancer_by_lua_file for health-aware peer selection)
+    plus per-interface direct upstreams. The SNI map routes root FQDN names
+    to the combined upstream and interface-specific names to their direct
+    upstream.
+    """
+    upstream_name = f"{primary_fqdn}-tls"
+
+    # Combined upstream with balancer
+    parts = [_https_upstream_block(upstream_name, all_ips, balancer_lua_path=balancer_lua_path)]
+
+    # Per-interface direct upstreams
+    for _iface_fqdn_names, iface_ip, iface_fqdn in iface_configs:
+        iface_upstream = f"{iface_fqdn}-tls"
+        parts.append(_https_upstream_block(iface_upstream, [iface_ip]))
+
+    files[f"sites-available/{primary_fqdn}/https-upstream.conf"] = "\n".join(parts)
+
+    # Map entries: root names → combined, interface names → direct
+    map_parts = [_https_map_entries(upstream_name, root_fqdn_names)]
+    for iface_fqdn_names, _iface_ip, iface_fqdn in iface_configs:
+        iface_upstream = f"{iface_fqdn}-tls"
+        map_parts.append(_https_map_entries(iface_upstream, iface_fqdn_names))
+
+    files[f"sites-available/{primary_fqdn}/https-map.conf"] = "".join(map_parts)
+
+
 def generate_nginx(
     inventory: NetworkInventory,
     acme_webroot: str = "/var/www/acme",
@@ -284,9 +321,25 @@ def generate_nginx(
                 acme_webroot,
             )
             balancer_path = f"{gdoc2netcfg_dir}/sites-available/{primary_fqdn}/https-balancer.lua"
-            _emit_https_files(
-                files, primary_fqdn, all_fqdn_names,
-                ips=all_ips, balancer_lua_path=balancer_path,
+
+            # Build per-interface FQDN lists for HTTPS SNI routing
+            iface_https_configs: list[tuple[list[str], str, str]] = []
+            for iface_names, iface_ip, iface_fqdn in iface_configs:
+                # Re-derive FQDN-only names from the stored all-names list
+                iface_fqdn_names = [n for n in iface_names if "." in n]
+                if iface_fqdn_names:
+                    iface_https_configs.append(
+                        (iface_fqdn_names, iface_ip, iface_fqdn)
+                    )
+
+            root_fqdn_names = [
+                dn.name for dn in root_dns
+                if dn.is_fqdn and _is_nginx_name(dn)
+            ]
+            _emit_combined_https_files(
+                files, primary_fqdn, root_fqdn_names,
+                all_ips, iface_https_configs,
+                balancer_lua_path=balancer_path,
             )
 
             # Collect upstream metadata for per-host healthcheck config

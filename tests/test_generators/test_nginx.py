@@ -709,6 +709,32 @@ class TestHTTPSSNI:
         assert "server 0.0.0.1:443;" in upstream
         assert "balancer_by_lua_file" in upstream
 
+    def test_multi_interface_https_has_per_interface_upstreams(self):
+        """Multi-interface hosts get per-interface direct HTTPS upstreams."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
+        # Per-interface upstreams with direct server entries
+        assert f"upstream eth0.{fqdn}-tls {{" in upstream
+        assert "server 10.1.90.149:443;" in upstream
+        assert f"upstream wlan0.{fqdn}-tls {{" in upstream
+        assert "server 10.1.90.150:443;" in upstream
+
+    def test_multi_interface_https_map_routes_interfaces_to_direct_upstream(self):
+        """Interface-specific SNI names route to direct per-interface HTTPS upstreams."""
+        host = _make_multi_iface_host()
+        files = generate_nginx(_make_inventory(host))
+
+        fqdn = "rpi-sdr-kraken.welland.mithis.com"
+        https_map = files[f"sites-available/{fqdn}/https-map.conf"]
+        # Root names → combined upstream with balancer
+        assert f"rpi-sdr-kraken.welland.mithis.com {fqdn}-tls;" in https_map
+        # Interface names → direct per-interface upstream
+        assert f"eth0.{fqdn} eth0.{fqdn}-tls;" in https_map
+        assert f"wlan0.{fqdn} wlan0.{fqdn}-tls;" in https_map
+
     def test_https_map_entries_for_all_fqdns(self):
         """HTTPS map file has entries for all FQDN DNS names."""
         host = _make_host()
