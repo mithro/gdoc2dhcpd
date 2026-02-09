@@ -295,8 +295,11 @@ def generate_nginx(
                 str(vi.ipv4) for vi in host.virtual_interfaces
             ]
 
-            # Collect per-interface (name_list, ip, fqdn) tuples.
-            iface_configs: list[tuple[list[str], str, str]] = []
+            # Collect per-interface config tuples:
+            #   http_configs: (all_names, ip, first_fqdn) for HTTP server blocks
+            #   https_configs: (fqdn_names, ip, first_fqdn) for HTTPS SNI routing
+            iface_http_configs: list[tuple[list[str], str, str]] = []
+            iface_https_configs: list[tuple[list[str], str, str]] = []
             for iface in host.interfaces:
                 if iface.name is None:
                     continue
@@ -311,26 +314,19 @@ def generate_nginx(
                 ]
                 if not iface_names or not iface_fqdns:
                     continue
-                iface_configs.append(
+                iface_http_configs.append(
                     (iface_names, str(iface.ipv4), iface_fqdns[0])
+                )
+                iface_https_configs.append(
+                    (iface_fqdns, str(iface.ipv4), iface_fqdns[0])
                 )
 
             _emit_combined_http_files(
                 files, primary_fqdn, root_names,
-                all_ips, iface_configs,
+                all_ips, iface_http_configs,
                 acme_webroot,
             )
             balancer_path = f"{gdoc2netcfg_dir}/sites-available/{primary_fqdn}/https-balancer.lua"
-
-            # Build per-interface FQDN lists for HTTPS SNI routing
-            iface_https_configs: list[tuple[list[str], str, str]] = []
-            for iface_names, iface_ip, iface_fqdn in iface_configs:
-                # Re-derive FQDN-only names from the stored all-names list
-                iface_fqdn_names = [n for n in iface_names if "." in n]
-                if iface_fqdn_names:
-                    iface_https_configs.append(
-                        (iface_fqdn_names, iface_ip, iface_fqdn)
-                    )
 
             root_fqdn_names = [
                 dn.name for dn in root_dns
