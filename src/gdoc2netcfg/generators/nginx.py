@@ -4,8 +4,8 @@ Produces per-host nginx server blocks under sites-available/ and a
 shared ACME challenge snippet. Each host gets three config files:
 
   - {fqdn}-http-public       HTTP reverse proxy (port 80)
-  - {fqdn}-stream            Stream upstream block (TLS passthrough)
-  - {fqdn}-stream-map        SNI map entries for stream routing
+  - {fqdn}-https-upstream    TLS passthrough upstream (stream context)
+  - {fqdn}-https-map         SNI map entries for TLS routing
 
 HTTPS is handled via stream SNI passthrough rather than http-module
 HTTPS blocks, ensuring consistent TLS behavior for both IPv4 (proxied)
@@ -37,7 +37,7 @@ from gdoc2netcfg.utils.dns import is_safe_dns_name, is_safe_path
 class _UpstreamInfo(NamedTuple):
     """Metadata for a generated upstream block, used for healthcheck config."""
 
-    name: str       # e.g. "tweed.welland.mithis.com-http-public-backend"
+    name: str       # e.g. "tweed.welland.mithis.com-http-backend"
     host: str       # e.g. "tweed.welland.mithis.com"
 
 
@@ -101,12 +101,12 @@ def _upstream_block(upstream_name: str, ips: list[str], port: int = 80) -> str:
     return "\n".join(lines)
 
 
-def _stream_upstream_block(
+def _https_upstream_block(
     upstream_name: str,
     ips: list[str],
     balancer_lua_path: str = "",
 ) -> str:
-    """Generate a stream upstream block for TLS passthrough.
+    """Generate an HTTPS upstream block for TLS passthrough.
 
     Single-interface hosts get a direct server entry.
     Multi-interface hosts use a placeholder server with
@@ -125,15 +125,15 @@ def _stream_upstream_block(
     return "\n".join(lines)
 
 
-def _stream_map_entries(
+def _https_map_entries(
     upstream_name: str,
     dns_names: list[str],
 ) -> str:
     """Generate bare SNI map entries for a host.
 
-    Each line maps a DNS name to the host's stream upstream. These are
+    Each line maps a DNS name to the host's HTTPS upstream. These are
     included by the admin's hand-crafted map block via:
-        include /etc/nginx/sites-enabled/*-stream-map;
+        include /etc/nginx/sites-enabled/*-https-map;
     """
     lines = []
     for name in dns_names:
@@ -143,24 +143,24 @@ def _stream_map_entries(
     return "\n".join(lines)
 
 
-def _emit_stream_files(
+def _emit_https_files(
     files: dict[str, str],
     primary_fqdn: str,
     fqdn_names: list[str],
     ips: list[str],
     balancer_lua_path: str = "",
 ) -> None:
-    """Emit stream upstream and SNI map files for a host.
+    """Emit HTTPS upstream and SNI map files for a host.
 
     fqdn_names must be FQDN-only (not bare hostnames) because SNI
     values in TLS ClientHello are always fully qualified domain names.
     """
     upstream_name = f"{primary_fqdn}-tls"
 
-    files[f"sites-available/{primary_fqdn}-stream"] = _stream_upstream_block(
+    files[f"sites-available/{primary_fqdn}-https-upstream"] = _https_upstream_block(
         upstream_name, ips, balancer_lua_path=balancer_lua_path,
     )
-    files[f"sites-available/{primary_fqdn}-stream-map"] = _stream_map_entries(
+    files[f"sites-available/{primary_fqdn}-https-map"] = _https_map_entries(
         upstream_name, fqdn_names,
     )
 
@@ -182,8 +182,8 @@ def generate_nginx(
         healthcheck_dir: Runtime directory where nginx loads per-host
             healthcheck .lua files from. The init_worker block scans this
             directory at startup.
-        stream_healthcheck_dir: Runtime directory for stream health check
-            Lua files. Used as the balancer_by_lua_file path in stream
+        stream_healthcheck_dir: Runtime directory for HTTPS health check
+            Lua files. Used as the balancer_by_lua_file path in HTTPS
             upstream blocks for multi-interface hosts.
 
     Raises:
@@ -201,8 +201,8 @@ def generate_nginx(
 
     files: dict[str, str] = {}
     healthcheck_hosts: list[tuple[str, list[_UpstreamInfo]]] = []
-    # (fqdn, upstream_name, ips) for multi-interface stream health checks
-    stream_healthcheck_hosts: list[tuple[str, str, list[str]]] = []
+    # (fqdn, upstream_name, ips) for multi-interface HTTPS health checks
+    https_healthcheck_hosts: list[tuple[str, str, list[str]]] = []
 
     # Shared ACME challenge snippet
     files["snippets/acme-challenge.conf"] = _acme_challenge_snippet(acme_webroot)
@@ -220,7 +220,7 @@ def generate_nginx(
             dn.name for dn in host.dns_names
             if _is_nginx_name(dn)
         ]
-        # FQDN-only subset for stream SNI map (TLS ClientHello uses FQDNs)
+        # FQDN-only subset for HTTPS SNI map (TLS ClientHello uses FQDNs)
         all_fqdn_names = [
             dn.name for dn in host.dns_names
             if dn.is_fqdn and _is_nginx_name(dn)
@@ -235,7 +235,7 @@ def generate_nginx(
                 files, primary_fqdn, all_nginx_names, target_ip,
                 acme_webroot,
             )
-            _emit_stream_files(
+            _emit_https_files(
                 files, primary_fqdn, all_fqdn_names,
                 ips=[target_ip],
             )
@@ -287,7 +287,7 @@ def generate_nginx(
                 acme_webroot,
             )
             balancer_path = f"{stream_healthcheck_dir}/{primary_fqdn}-balancer.lua"
-            _emit_stream_files(
+            _emit_https_files(
                 files, primary_fqdn, all_fqdn_names,
                 ips=all_ips, balancer_lua_path=balancer_path,
             )
@@ -300,10 +300,10 @@ def generate_nginx(
             )]
             healthcheck_hosts.append((primary_fqdn, host_upstreams))
 
-            # Collect stream healthcheck metadata
-            stream_upstream_name = f"{primary_fqdn}-tls"
-            stream_healthcheck_hosts.append(
-                (primary_fqdn, stream_upstream_name, all_ips)
+            # Collect HTTPS healthcheck metadata
+            https_upstream_name = f"{primary_fqdn}-tls"
+            https_healthcheck_hosts.append(
+                (primary_fqdn, https_upstream_name, all_ips)
             )
 
     # Emit healthcheck config files if any multi-interface hosts exist
@@ -318,21 +318,21 @@ def generate_nginx(
         for fqdn, upstreams in healthcheck_hosts:
             files[f"healthcheck.d/{fqdn}.lua"] = _healthcheck_host_lua(upstreams)
 
-    # Emit stream health check files if any multi-interface hosts exist
-    if stream_healthcheck_hosts:
+    # Emit HTTPS health check files if any multi-interface hosts exist
+    if https_healthcheck_hosts:
         files["stream.d/generated-lua-healthcheck.conf"] = (
-            _stream_lua_healthcheck_conf(stream_healthcheck_dir)
+            _https_lua_healthcheck_conf(stream_healthcheck_dir)
         )
         files["stream.d/generated-healthcheck-init.conf"] = (
-            _stream_healthcheck_init_conf(stream_healthcheck_dir)
+            _https_healthcheck_init_conf(stream_healthcheck_dir)
         )
-        files["stream-healthcheck.d/checker.lua"] = _stream_checker_lua()
-        for fqdn, upstream_name, ips in stream_healthcheck_hosts:
+        files["stream-healthcheck.d/checker.lua"] = _https_checker_lua()
+        for fqdn, upstream_name, ips in https_healthcheck_hosts:
             files[f"stream-healthcheck.d/hosts-available/{fqdn}.lua"] = (
-                _stream_healthcheck_host_lua(upstream_name, fqdn, ips)
+                _https_healthcheck_host_lua(upstream_name, fqdn, ips)
             )
             files[f"stream-healthcheck.d/{fqdn}-balancer.lua"] = (
-                _stream_balancer_lua(upstream_name)
+                _https_balancer_lua(upstream_name)
             )
 
     return files
@@ -588,8 +588,8 @@ def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
     return "\n".join(lines)
 
 
-def _stream_lua_healthcheck_conf(stream_healthcheck_dir: str) -> str:
-    """Generate the stream-level Lua config.
+def _https_lua_healthcheck_conf(stream_healthcheck_dir: str) -> str:
+    """Generate the HTTPS-level Lua config.
 
     This is included in the stream {} block (via stream.d/) and sets up:
     - lua_package_path so require "checker" resolves to checker.lua
@@ -603,8 +603,8 @@ def _stream_lua_healthcheck_conf(stream_healthcheck_dir: str) -> str:
     )
 
 
-def _stream_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
-    """Generate a stream-level init_worker_by_lua_block.
+def _https_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
+    """Generate an HTTPS-level init_worker_by_lua_block.
 
     Loads per-host .lua config files from hosts-enabled/. This follows
     the same available/enabled symlink pattern as nginx sites: all
@@ -614,7 +614,7 @@ def _stream_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
     Unlike HTTP healthchecks (which use ngx.upstream.get_primary_peers()
     to detect whether an upstream exists), stream upstreams have no
     equivalent API. The available/enabled pattern gives the admin
-    explicit control over which stream hosts get health-checked.
+    explicit control over which HTTPS hosts get health-checked.
     """
     hosts_enabled_dir = f"{stream_healthcheck_dir}/hosts-enabled"
     status_file = f"{stream_healthcheck_dir}/status.txt"
@@ -633,7 +633,7 @@ def _stream_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
         "        if fn then\n"
         "            local ok, exec_err = pcall(fn)\n"
         "            if not ok then\n"
-        '                ngx.log(ngx.ERR, "stream healthcheck config error in ", '
+        '                ngx.log(ngx.ERR, "https healthcheck config error in ", '
         "path, \": \", exec_err)\n"
         "            end\n"
         "        else\n"
@@ -646,12 +646,12 @@ def _stream_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
     )
 
 
-def _stream_healthcheck_host_lua(
+def _https_healthcheck_host_lua(
     upstream_name: str,
     fqdn: str,
     ips: list[str],
 ) -> str:
-    """Generate a per-host Lua file for stream health checking.
+    """Generate a per-host Lua file for HTTPS health checking.
 
     Registers the upstream's peers (IP addresses) and health check
     parameters with the shared checker module. The checker module
@@ -679,8 +679,8 @@ def _stream_healthcheck_host_lua(
     return "\n".join(lines)
 
 
-def _stream_checker_lua() -> str:
-    """Generate the shared checker.lua module for stream health checks.
+def _https_checker_lua() -> str:
+    """Generate the shared checker.lua module for HTTPS health checks.
 
     This module:
     1. Maintains a registry of upstreams and their peers
@@ -863,12 +863,12 @@ return _M
 '''
 
 
-def _stream_balancer_lua(upstream_name: str) -> str:
+def _https_balancer_lua(upstream_name: str) -> str:
     """Generate a per-host balancer Lua file for balancer_by_lua_file.
 
     Each multi-interface host gets its own balancer file with the
     upstream name hardcoded. This avoids the problem of trying to
-    discover the upstream name at runtime in the stream balancer
+    discover the upstream name at runtime in the HTTPS balancer
     context, where nginx variables like ngx.var.upstream_name are
     not available.
     """
@@ -878,13 +878,13 @@ local balancer = require "ngx.balancer"
 
 local peer, err = checker.get_healthy_peer("{upstream_name}")
 if not peer then
-    ngx.log(ngx.ERR, "no healthy peer for stream upstream {upstream_name}: ", err)
+    ngx.log(ngx.ERR, "no healthy peer for https upstream {upstream_name}: ", err)
     return ngx.exit(502)
 end
 
 local ok, set_err = balancer.set_current_peer(peer, 443)
 if not ok then
-    ngx.log(ngx.ERR, "failed to set stream peer: ", set_err)
+    ngx.log(ngx.ERR, "failed to set https peer: ", set_err)
     return ngx.exit(502)
 end
 '''

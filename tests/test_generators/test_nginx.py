@@ -61,7 +61,7 @@ class TestNginxFileStructure:
         assert "snippets/acme-challenge.conf" in files
 
     def test_produces_three_site_files_per_host(self):
-        """Each host gets 1 HTTP + 2 stream files."""
+        """Each host gets 1 HTTP + 2 HTTPS files."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
@@ -71,16 +71,18 @@ class TestNginxFileStructure:
 
         prefixes = {f.split("/")[1] for f in site_files}
         assert f"{fqdn}-http-public" in prefixes
-        assert f"{fqdn}-stream" in prefixes
-        assert f"{fqdn}-stream-map" in prefixes
+        assert f"{fqdn}-https-upstream" in prefixes
+        assert f"{fqdn}-https-map" in prefixes
 
-    def test_no_https_http_files_generated(self):
-        """HTTPS is handled by stream SNI, not http-module blocks."""
+    def test_https_files_are_stream_not_http(self):
+        """HTTPS files are stream upstream/map, not http-module blocks."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         https_files = [k for k in files if "https" in k and k.startswith("sites-available/")]
-        assert len(https_files) == 0
+        assert len(https_files) == 2
+        assert any("https-upstream" in f for f in https_files)
+        assert any("https-map" in f for f in https_files)
 
     def test_host_with_no_fqdns_skipped(self):
         host = Host(
@@ -692,91 +694,83 @@ class TestHealthcheck:
         assert len(hcd_files) == 0
 
 
-class TestStreamSNI:
-    """Tests for stream SNI passthrough config generation."""
+class TestHTTPSSNI:
+    """Tests for HTTPS SNI passthrough config generation."""
 
-    def test_per_host_stream_file(self):
-        """Each host gets a sites-available/{fqdn}-stream file."""
+    def test_per_host_https_upstream_file(self):
+        """Each host gets a sites-available/{fqdn}-https-upstream file."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        assert f"sites-available/{fqdn}-stream" in files
+        assert f"sites-available/{fqdn}-https-upstream" in files
 
-    def test_per_host_stream_map_file(self):
-        """Each host gets a sites-available/{fqdn}-stream-map file."""
+    def test_per_host_https_map_file(self):
+        """Each host gets a sites-available/{fqdn}-https-map file."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        assert f"sites-available/{fqdn}-stream-map" in files
+        assert f"sites-available/{fqdn}-https-map" in files
 
-    def test_single_host_stream_upstream(self):
-        """Single-interface host gets direct server entry in stream upstream."""
+    def test_single_host_https_upstream(self):
+        """Single-interface host gets direct server entry in HTTPS upstream."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        stream = files[f"sites-available/{fqdn}-stream"]
-        assert f"upstream {fqdn}-tls {{" in stream
-        assert "server 10.1.10.100:443;" in stream
-        assert "balancer_by_lua_file" not in stream
+        upstream = files[f"sites-available/{fqdn}-https-upstream"]
+        assert f"upstream {fqdn}-tls {{" in upstream
+        assert "server 10.1.10.100:443;" in upstream
+        assert "balancer_by_lua_file" not in upstream
 
-    def test_multi_interface_stream_upstream_has_balancer(self):
-        """Multi-interface host uses balancer_by_lua_file in stream upstream."""
+    def test_multi_interface_https_upstream_has_balancer(self):
+        """Multi-interface host uses balancer_by_lua_file in HTTPS upstream."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        stream = files[f"sites-available/{fqdn}-stream"]
-        assert f"upstream {fqdn}-tls {{" in stream
-        assert "server 0.0.0.1:443;" in stream
-        assert "balancer_by_lua_file" in stream
+        upstream = files[f"sites-available/{fqdn}-https-upstream"]
+        assert f"upstream {fqdn}-tls {{" in upstream
+        assert "server 0.0.0.1:443;" in upstream
+        assert "balancer_by_lua_file" in upstream
 
-    def test_stream_map_entries_for_all_fqdns(self):
-        """Stream map file has entries for all FQDN DNS names."""
+    def test_https_map_entries_for_all_fqdns(self):
+        """HTTPS map file has entries for all FQDN DNS names."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        stream_map = files[f"sites-available/{fqdn}-stream-map"]
+        https_map = files[f"sites-available/{fqdn}-https-map"]
         # Root FQDN and subdomain variant
-        assert f"desktop.welland.mithis.com {fqdn}-tls;" in stream_map
-        assert f"desktop.int.welland.mithis.com {fqdn}-tls;" in stream_map
+        assert f"desktop.welland.mithis.com {fqdn}-tls;" in https_map
+        assert f"desktop.int.welland.mithis.com {fqdn}-tls;" in https_map
         # ipv4 prefix variant
-        assert f"ipv4.desktop.welland.mithis.com {fqdn}-tls;" in stream_map
+        assert f"ipv4.desktop.welland.mithis.com {fqdn}-tls;" in https_map
 
-    def test_no_ipv6_only_names_in_stream_map(self):
-        """IPv6-only DNS names are excluded from stream map."""
+    def test_no_ipv6_only_names_in_https_map(self):
+        """IPv6-only DNS names are excluded from HTTPS map."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        stream_map = files[f"sites-available/{fqdn}-stream-map"]
-        assert "ipv6.desktop.welland.mithis.com" not in stream_map
+        https_map = files[f"sites-available/{fqdn}-https-map"]
+        assert "ipv6.desktop.welland.mithis.com" not in https_map
 
-    def test_no_bare_hostnames_in_stream_map(self):
-        """Bare (non-FQDN) hostnames excluded from stream map (SNI is always FQDN)."""
+    def test_no_bare_hostnames_in_https_map(self):
+        """Bare (non-FQDN) hostnames excluded from HTTPS map (SNI is always FQDN)."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
-        stream_map = files[f"sites-available/{fqdn}-stream-map"]
+        https_map = files[f"sites-available/{fqdn}-https-map"]
         # "desktop" without domain should not appear as its own map entry
-        for line in stream_map.strip().splitlines():
+        for line in https_map.strip().splitlines():
             name = line.split()[0]
-            assert "." in name, f"bare hostname in stream map: {name}"
-
-    def test_no_https_http_files_generated(self):
-        """No *-https-* files in sites-available (stream replaces HTTPS)."""
-        host = _make_host()
-        files = generate_nginx(_make_inventory(host))
-
-        https_files = [k for k in files if "https" in k and k.startswith("sites-available/")]
-        assert len(https_files) == 0
+            assert "." in name, f"bare hostname in HTTPS map: {name}"
 
     def test_healthcheck_lua_only_http_variant(self):
-        """HTTP health check .lua files have single HTTP variant, no HTTPS."""
+        """HTTP health check .lua files have single HTTP variant, not HTTPS."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
@@ -784,14 +778,15 @@ class TestStreamSNI:
         lua = files[f"healthcheck.d/{fqdn}.lua"]
         # 1 try_spawn call (http-backend) + 1 function def
         assert lua.count("try_spawn({\n") == 1
-        assert "https" not in lua
+        # upstream name says "http-backend", not "https"
+        assert f"{fqdn}-http-backend" in lua
 
 
-class TestStreamHealthcheck:
-    """Tests for custom HTTPS health checker for stream upstreams."""
+class TestHTTPSHealthcheck:
+    """Tests for custom HTTPS health checker for TLS passthrough upstreams."""
 
-    def test_no_stream_healthcheck_for_single_interface(self):
-        """Single-interface hosts don't generate stream health check files."""
+    def test_no_https_healthcheck_for_single_interface(self):
+        """Single-interface hosts don't generate HTTPS health check files."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
@@ -800,7 +795,7 @@ class TestStreamHealthcheck:
         assert len(stream_d) == 0
         assert len(stream_hc) == 0
 
-    def test_stream_healthcheck_lua_conf_generated(self):
+    def test_https_healthcheck_lua_conf_generated(self):
         """Multi-interface host triggers stream.d/ lua config with package path."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
@@ -811,7 +806,7 @@ class TestStreamHealthcheck:
         assert "lua_package_path" in conf
         assert "stream-healthcheck.d" in conf
 
-    def test_stream_healthcheck_init_generated(self):
+    def test_https_healthcheck_init_generated(self):
         """Init worker block loads from hosts-enabled/ subdirectory."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
@@ -825,7 +820,7 @@ class TestStreamHealthcheck:
         assert "set_status_file" in init
         assert "status.txt" in init
 
-    def test_stream_per_host_lua_in_hosts_available(self):
+    def test_https_per_host_lua_in_hosts_available(self):
         """Per-host Lua files are generated to hosts-available/."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
@@ -838,7 +833,7 @@ class TestStreamHealthcheck:
         assert "10.1.90.150" in lua
         assert f"{fqdn}-tls" in lua
 
-    def test_stream_checker_lua_generated(self):
+    def test_https_checker_lua_generated(self):
         """Shared checker.lua module is generated at top level."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
@@ -871,16 +866,16 @@ class TestStreamHealthcheck:
         assert f"{fqdn}-tls" in balancer
         assert "set_current_peer" in balancer
 
-    def test_stream_upstream_references_per_host_balancer(self):
-        """Multi-interface stream upstream references per-host balancer."""
+    def test_https_upstream_references_per_host_balancer(self):
+        """Multi-interface HTTPS upstream references per-host balancer."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        stream = files[f"sites-available/{fqdn}-stream"]
-        assert f"stream-healthcheck.d/{fqdn}-balancer.lua" in stream
+        upstream = files[f"sites-available/{fqdn}-https-upstream"]
+        assert f"stream-healthcheck.d/{fqdn}-balancer.lua" in upstream
 
-    def test_stream_healthcheck_custom_dir(self):
+    def test_https_healthcheck_custom_dir(self):
         """Custom stream_healthcheck_dir flows through to generated files."""
         host = _make_multi_iface_host()
         files = generate_nginx(
@@ -895,8 +890,8 @@ class TestStreamHealthcheck:
         assert "/opt/nginx/stream-hc.d/hosts-enabled" in init
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
-        stream = files[f"sites-available/{fqdn}-stream"]
-        assert f"/opt/nginx/stream-hc.d/{fqdn}-balancer.lua" in stream
+        upstream = files[f"sites-available/{fqdn}-https-upstream"]
+        assert f"/opt/nginx/stream-hc.d/{fqdn}-balancer.lua" in upstream
 
     def test_no_shared_balancer_lua(self):
         """No shared balancer.lua — each host gets its own per-host balancer."""
