@@ -169,8 +169,8 @@ def generate_nginx(
     inventory: NetworkInventory,
     acme_webroot: str = "/var/www/acme",
     lua_healthcheck_path: str = "/usr/share/lua/5.1/",
-    healthcheck_dir: str = "/etc/nginx/healthcheck.d",
-    stream_healthcheck_dir: str = "/etc/nginx/stream-healthcheck.d",
+    gdoc2netcfg_dir: str = "/etc/nginx/gdoc2netcfg",
+    sites_enabled_dir: str = "/etc/nginx/sites-enabled",
 ) -> dict[str, str]:
     """Generate nginx reverse proxy configs for each host.
 
@@ -179,25 +179,25 @@ def generate_nginx(
     Args:
         lua_healthcheck_path: Base directory for lua-resty-upstream-healthcheck.
             Used to set lua_package_path in nginx config.
-        healthcheck_dir: Runtime directory where nginx loads per-host
-            healthcheck .lua files from. The init_worker block scans this
-            directory at startup.
-        stream_healthcheck_dir: Runtime directory for HTTPS health check
-            Lua files. Used as the balancer_by_lua_file path in HTTPS
-            upstream blocks for multi-interface hosts.
+        gdoc2netcfg_dir: Deployment root for all generated nginx files.
+            Used to derive runtime paths for balancer_by_lua_file,
+            lua_package_path (scripts/), and status file.
+        sites_enabled_dir: Where nginx loads enabled site configs from.
+            Used by init_worker blocks to scan for healthcheck lua files
+            via glob pattern {sites_enabled_dir}/*/http-healthcheck.lua.
 
     Raises:
         ValueError: If acme_webroot, lua_healthcheck_path,
-            healthcheck_dir, or stream_healthcheck_dir contain unsafe characters.
+            gdoc2netcfg_dir, or sites_enabled_dir contain unsafe characters.
     """
     if not is_safe_path(acme_webroot):
         raise ValueError(f"Unsafe acme_webroot path: {acme_webroot!r}")
     if not is_safe_path(lua_healthcheck_path):
         raise ValueError(f"Unsafe lua_healthcheck_path: {lua_healthcheck_path!r}")
-    if not is_safe_path(healthcheck_dir):
-        raise ValueError(f"Unsafe healthcheck_dir: {healthcheck_dir!r}")
-    if not is_safe_path(stream_healthcheck_dir):
-        raise ValueError(f"Unsafe stream_healthcheck_dir: {stream_healthcheck_dir!r}")
+    if not is_safe_path(gdoc2netcfg_dir):
+        raise ValueError(f"Unsafe gdoc2netcfg_dir: {gdoc2netcfg_dir!r}")
+    if not is_safe_path(sites_enabled_dir):
+        raise ValueError(f"Unsafe sites_enabled_dir: {sites_enabled_dir!r}")
 
     files: dict[str, str] = {}
     healthcheck_hosts: list[tuple[str, list[_UpstreamInfo]]] = []
@@ -286,7 +286,7 @@ def generate_nginx(
                 all_ips, iface_configs,
                 acme_webroot,
             )
-            balancer_path = f"{stream_healthcheck_dir}/{primary_fqdn}-balancer.lua"
+            balancer_path = f"{gdoc2netcfg_dir}/sites-available/{primary_fqdn}/https-balancer.lua"
             _emit_https_files(
                 files, primary_fqdn, all_fqdn_names,
                 ips=all_ips, balancer_lua_path=balancer_path,
@@ -308,11 +308,8 @@ def generate_nginx(
 
     # Emit healthcheck config files if any multi-interface hosts exist
     if healthcheck_hosts:
-        files["conf.d/lua-healthcheck.conf"] = _lua_healthcheck_conf(
-            lua_healthcheck_path,
-        )
-        files["conf.d/healthcheck-init.conf"] = _healthcheck_init_conf(
-            healthcheck_dir,
+        files["conf.d/healthcheck-setup.conf"] = _http_healthcheck_setup_conf(
+            lua_healthcheck_path, sites_enabled_dir,
         )
         files["conf.d/healthcheck-status.conf"] = _healthcheck_status_conf()
         for fqdn, upstreams in healthcheck_hosts:
@@ -320,11 +317,8 @@ def generate_nginx(
 
     # Emit HTTPS health check files if any multi-interface hosts exist
     if https_healthcheck_hosts:
-        files["stream.d/generated-lua-healthcheck.conf"] = (
-            _https_lua_healthcheck_conf(stream_healthcheck_dir)
-        )
-        files["stream.d/generated-healthcheck-init.conf"] = (
-            _https_healthcheck_init_conf(stream_healthcheck_dir)
+        files["stream.d/healthcheck-setup.conf"] = (
+            _https_healthcheck_setup_conf(gdoc2netcfg_dir, sites_enabled_dir)
         )
         files["scripts/checker.lua"] = _https_checker_lua()
         for fqdn, upstream_name, ips in https_healthcheck_hosts:
@@ -490,34 +484,27 @@ def _http_block(
     return "\n".join(lines)
 
 
-def _lua_healthcheck_conf(lua_path: str) -> str:
-    """Generate the lua-resty-upstream-healthcheck global config.
+def _http_healthcheck_setup_conf(lua_path: str, sites_enabled_dir: str) -> str:
+    """Generate the combined HTTP healthcheck setup config.
 
-    Sets up lua_package_path, shared memory zone for healthcheck state,
-    and disables socket logging errors (healthcheck probes to down
-    backends are expected to fail).
+    Merges lua_package_path, shared memory zone, socket error suppression,
+    and the init_worker_by_lua_block into a single conf.d/ file.
+
+    The init_worker block scans {sites_enabled_dir}/*/http-healthcheck.lua
+    for per-host healthcheck configs. Per-host files contain their own
+    upstream existence guards, so files for disabled hosts are safely
+    skipped at runtime.
     """
+    scan_pattern = f"{sites_enabled_dir}/*/http-healthcheck.lua"
     return (
         f"lua_package_path \"{lua_path}?.lua;{lua_path}?/init.lua;;\";\n"
         "lua_shared_dict healthcheck 1m;\n"
         "# NB: lua_socket_log_errors is a global setting — it suppresses\n"
         "# socket errors for ALL Lua modules, not just healthcheck probes.\n"
         "lua_socket_log_errors off;\n"
-    )
-
-
-def _healthcheck_init_conf(healthcheck_dir: str) -> str:
-    """Generate a generic init_worker_by_lua_block that loads per-host files.
-
-    Scans the healthcheck_dir for .lua files and executes each one.
-    Per-host files contain their own upstream existence guards, so files
-    for disabled hosts (no upstream block in running config) are safely
-    skipped at runtime.
-    """
-    return (
+        "\n"
         "init_worker_by_lua_block {\n"
-        f'    local dir = "{healthcheck_dir}"\n'
-        '    local pipe = io.popen("ls " .. dir .. "/*.lua")\n'
+        f'    local pipe = io.popen("ls {scan_pattern}")\n'
         "    if not pipe then return end\n"
         "    for path in pipe:lines() do\n"
         "        local fn, err = loadfile(path)\n"
@@ -588,42 +575,33 @@ def _healthcheck_host_lua(upstreams: list[_UpstreamInfo]) -> str:
     return "\n".join(lines)
 
 
-def _https_lua_healthcheck_conf(stream_healthcheck_dir: str) -> str:
-    """Generate the HTTPS-level Lua config.
+def _https_healthcheck_setup_conf(
+    gdoc2netcfg_dir: str,
+    sites_enabled_dir: str,
+) -> str:
+    """Generate the combined HTTPS healthcheck setup config.
 
-    This is included in the stream {} block (via stream.d/) and sets up:
-    - lua_package_path so require "checker" resolves to checker.lua
-    - lua_shared_dict for health check state
-    - Suppresses socket errors (expected from health probes to down backends)
+    Merges lua_package_path, shared memory zone, socket error suppression,
+    and the init_worker_by_lua_block into a single stream.d/ file.
+
+    The init_worker block scans {sites_enabled_dir}/*/https-healthcheck.lua
+    for per-host healthcheck configs. Unlike HTTP healthchecks (which use
+    ngx.upstream.get_primary_peers() to detect whether an upstream exists),
+    stream upstreams have no equivalent API. Only hosts symlinked into
+    sites-enabled/ get their healthcheck lua loaded.
     """
+    scripts_dir = f"{gdoc2netcfg_dir}/scripts"
+    status_file = f"{gdoc2netcfg_dir}/status.txt"
+    scan_pattern = f"{sites_enabled_dir}/*/https-healthcheck.lua"
     return (
-        f'lua_package_path "{stream_healthcheck_dir}/?.lua;;";\n'
+        f'lua_package_path "{scripts_dir}/?.lua;;";\n'
         "lua_shared_dict stream_healthcheck 1m;\n"
         "lua_socket_log_errors off;\n"
-    )
-
-
-def _https_healthcheck_init_conf(stream_healthcheck_dir: str) -> str:
-    """Generate an HTTPS-level init_worker_by_lua_block.
-
-    Loads per-host .lua config files from hosts-enabled/. This follows
-    the same available/enabled symlink pattern as nginx sites: all
-    per-host configs are generated to hosts-available/, and the admin
-    symlinks enabled ones into hosts-enabled/.
-
-    Unlike HTTP healthchecks (which use ngx.upstream.get_primary_peers()
-    to detect whether an upstream exists), stream upstreams have no
-    equivalent API. The available/enabled pattern gives the admin
-    explicit control over which HTTPS hosts get health-checked.
-    """
-    hosts_enabled_dir = f"{stream_healthcheck_dir}/hosts-enabled"
-    status_file = f"{stream_healthcheck_dir}/status.txt"
-    return (
+        "\n"
         "init_worker_by_lua_block {\n"
-        f'    local dir = "{hosts_enabled_dir}"\n'
         '    local checker = require "checker"\n'
         f'    checker.set_status_file("{status_file}")\n'
-        '    local pipe = io.popen("ls " .. dir .. "/*.lua 2>/dev/null")\n'
+        f'    local pipe = io.popen("ls {scan_pattern} 2>/dev/null")\n'
         "    if not pipe then\n"
         "        checker.start()\n"
         "        return\n"

@@ -546,22 +546,21 @@ class TestHealthcheck:
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        assert "conf.d/lua-healthcheck.conf" in files
-        assert "conf.d/healthcheck-init.conf" in files
+        assert "conf.d/healthcheck-setup.conf" in files
         assert "conf.d/healthcheck-status.conf" in files
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         assert f"sites-available/{fqdn}/http-healthcheck.lua" in files
 
-    def test_lua_healthcheck_conf_default_path(self):
+    def test_healthcheck_setup_has_default_lua_path(self):
         """Default lua_package_path uses /usr/share/lua/5.1/."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        conf = files["conf.d/lua-healthcheck.conf"]
+        conf = files["conf.d/healthcheck-setup.conf"]
         assert "lua_package_path" in conf
         assert "/usr/share/lua/5.1/" in conf
 
-    def test_lua_healthcheck_conf_custom_path(self):
+    def test_healthcheck_setup_has_custom_lua_path(self):
         """Custom lua_healthcheck_path flows through to lua_package_path."""
         host = _make_multi_iface_host()
         files = generate_nginx(
@@ -569,7 +568,7 @@ class TestHealthcheck:
             lua_healthcheck_path="/opt/lua/lib/",
         )
 
-        conf = files["conf.d/lua-healthcheck.conf"]
+        conf = files["conf.d/healthcheck-setup.conf"]
         assert "/opt/lua/lib/" in conf
 
     def test_rejects_unsafe_lua_healthcheck_path(self):
@@ -608,42 +607,43 @@ class TestHealthcheck:
         # Separate per-host .lua files
         assert "sites-available/host-a.welland.mithis.com/http-healthcheck.lua" in files
         assert "sites-available/host-b.welland.mithis.com/http-healthcheck.lua" in files
-        # Single generic init_worker block (no host-specific content)
-        init = files["conf.d/healthcheck-init.conf"]
-        assert init.count("init_worker_by_lua_block") == 1
-        assert "host-a" not in init
-        assert "host-b" not in init
+        # Single merged setup conf with init_worker (no host-specific content)
+        setup = files["conf.d/healthcheck-setup.conf"]
+        assert setup.count("init_worker_by_lua_block") == 1
+        assert "host-a" not in setup
+        assert "host-b" not in setup
 
-    def test_init_conf_scans_healthcheck_dir(self):
-        """Init conf is a generic loader that scans healthcheck dir."""
+    def test_setup_conf_scans_sites_enabled(self):
+        """Setup conf has init_worker that scans sites-enabled for healthcheck lua."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        init = files["conf.d/healthcheck-init.conf"]
-        assert "init_worker_by_lua_block" in init
-        assert "healthcheck.d" in init
-        assert "loadfile" in init
+        setup = files["conf.d/healthcheck-setup.conf"]
+        assert "init_worker_by_lua_block" in setup
+        assert "sites-enabled" in setup
+        assert "http-healthcheck.lua" in setup
+        assert "loadfile" in setup
 
-    def test_init_conf_custom_healthcheck_dir(self):
-        """Custom healthcheck_dir flows through to init conf."""
+    def test_setup_conf_custom_sites_enabled_dir(self):
+        """Custom sites_enabled_dir flows through to setup conf."""
         host = _make_multi_iface_host()
         files = generate_nginx(
             _make_inventory(host),
-            healthcheck_dir="/opt/nginx/hc.d",
+            sites_enabled_dir="/opt/nginx/enabled",
         )
 
-        init = files["conf.d/healthcheck-init.conf"]
-        assert "/opt/nginx/hc.d" in init
+        setup = files["conf.d/healthcheck-setup.conf"]
+        assert "/opt/nginx/enabled" in setup
 
-    def test_rejects_unsafe_healthcheck_dir(self):
-        """Path injection in healthcheck_dir is rejected."""
+    def test_rejects_unsafe_sites_enabled_dir(self):
+        """Path injection in sites_enabled_dir is rejected."""
         import pytest
 
         host = _make_multi_iface_host()
-        with pytest.raises(ValueError, match="Unsafe healthcheck_dir"):
+        with pytest.raises(ValueError, match="Unsafe sites_enabled_dir"):
             generate_nginx(
                 _make_inventory(host),
-                healthcheck_dir="/etc/nginx/hc'; rm -rf /;",
+                sites_enabled_dir="/etc/nginx/hc'; rm -rf /;",
             )
 
     def test_per_host_lua_checks_upstream_exists(self):
@@ -803,29 +803,22 @@ class TestHTTPSHealthcheck:
         assert len(https_hc) == 0
         assert len(scripts) == 0
 
-    def test_https_healthcheck_lua_conf_generated(self):
-        """Multi-interface host triggers stream.d/ lua config with package path."""
+    def test_https_healthcheck_setup_generated(self):
+        """Multi-interface host triggers merged stream.d/ healthcheck setup."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
-        assert "stream.d/generated-lua-healthcheck.conf" in files
-        conf = files["stream.d/generated-lua-healthcheck.conf"]
-        assert "lua_shared_dict stream_healthcheck" in conf
-        assert "lua_package_path" in conf
-
-    def test_https_healthcheck_init_generated(self):
-        """Init worker block loads from hosts-enabled/ subdirectory."""
-        host = _make_multi_iface_host()
-        files = generate_nginx(_make_inventory(host))
-
-        assert "stream.d/generated-healthcheck-init.conf" in files
-        init = files["stream.d/generated-healthcheck-init.conf"]
-        assert "init_worker_by_lua_block" in init
-        # Loads from hosts-enabled/ (admin symlinks from hosts-available/)
-        assert "/hosts-enabled" in init
+        assert "stream.d/healthcheck-setup.conf" in files
+        setup = files["stream.d/healthcheck-setup.conf"]
+        assert "lua_shared_dict stream_healthcheck" in setup
+        assert "lua_package_path" in setup
+        assert "init_worker_by_lua_block" in setup
+        # Scans sites-enabled for HTTPS healthcheck lua files
+        assert "sites-enabled" in setup
+        assert "https-healthcheck.lua" in setup
         # Sets status file path for health status output
-        assert "set_status_file" in init
-        assert "status.txt" in init
+        assert "set_status_file" in setup
+        assert "status.txt" in setup
 
     def test_https_per_host_lua_in_host_dir(self):
         """Per-host HTTPS health check Lua files are in host directory."""
@@ -874,31 +867,35 @@ class TestHTTPSHealthcheck:
         assert "set_current_peer" in balancer
 
     def test_https_upstream_references_per_host_balancer(self):
-        """Multi-interface HTTPS upstream references per-host balancer."""
+        """Multi-interface HTTPS upstream references per-host balancer via gdoc2netcfg_dir."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
-        assert f"{fqdn}-balancer.lua" in upstream
+        assert f"/etc/nginx/gdoc2netcfg/sites-available/{fqdn}/https-balancer.lua" in upstream
 
-    def test_https_healthcheck_custom_dir(self):
-        """Custom stream_healthcheck_dir flows through to generated files."""
+    def test_https_healthcheck_custom_dirs(self):
+        """Custom gdoc2netcfg_dir and sites_enabled_dir flow through."""
         host = _make_multi_iface_host()
         files = generate_nginx(
             _make_inventory(host),
-            stream_healthcheck_dir="/opt/nginx/stream-hc.d",
+            gdoc2netcfg_dir="/opt/nginx/gen",
+            sites_enabled_dir="/opt/nginx/enabled",
         )
 
-        conf = files["stream.d/generated-lua-healthcheck.conf"]
-        assert "/opt/nginx/stream-hc.d" in conf
-
-        init = files["stream.d/generated-healthcheck-init.conf"]
-        assert "/opt/nginx/stream-hc.d/hosts-enabled" in init
+        setup = files["stream.d/healthcheck-setup.conf"]
+        # lua_package_path uses gdoc2netcfg_dir/scripts/
+        assert "/opt/nginx/gen/scripts" in setup
+        # init_worker scans sites_enabled_dir for HTTPS healthcheck lua
+        assert "/opt/nginx/enabled" in setup
+        # status file uses gdoc2netcfg_dir
+        assert "/opt/nginx/gen/status.txt" in setup
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         upstream = files[f"sites-available/{fqdn}/https-upstream.conf"]
-        assert f"/opt/nginx/stream-hc.d/{fqdn}-balancer.lua" in upstream
+        # balancer_by_lua_file uses gdoc2netcfg_dir
+        assert f"/opt/nginx/gen/sites-available/{fqdn}/https-balancer.lua" in upstream
 
     def test_no_shared_balancer_lua(self):
         """No shared balancer.lua — each host gets its own per-host balancer."""
@@ -907,15 +904,15 @@ class TestHTTPSHealthcheck:
 
         assert "scripts/balancer.lua" not in files
 
-    def test_rejects_unsafe_stream_healthcheck_dir(self):
-        """Path injection in stream_healthcheck_dir is rejected."""
+    def test_rejects_unsafe_gdoc2netcfg_dir(self):
+        """Path injection in gdoc2netcfg_dir is rejected."""
         import pytest
 
         host = _make_multi_iface_host()
-        with pytest.raises(ValueError, match="Unsafe stream_healthcheck_dir"):
+        with pytest.raises(ValueError, match="Unsafe gdoc2netcfg_dir"):
             generate_nginx(
                 _make_inventory(host),
-                stream_healthcheck_dir="/etc/nginx/hc'; rm -rf /;",
+                gdoc2netcfg_dir="/etc/nginx/hc'; rm -rf /;",
             )
 
     def test_checker_lua_has_round_robin(self):
