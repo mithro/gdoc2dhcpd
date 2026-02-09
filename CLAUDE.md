@@ -112,11 +112,13 @@ The letsencrypt generator (`letsencrypt.py`) produces per-host certbot scripts i
 
 ### Nginx Reverse Proxy
 
-The nginx generator (`nginx.py`) produces per-host config files under `sites-available/`. Each host gets four files: `{fqdn}-http-public`, `{fqdn}-http-private` (HTTP reverse proxy), `{fqdn}-stream` (stream upstream for TLS passthrough), and `{fqdn}-stream-map` (SNI map entries).
+The nginx generator (`nginx.py`) produces per-host config directories under `sites-available/{fqdn}/`. Each host gets three files: `http-proxy.conf` (HTTP reverse proxy on port 80), `https-upstream.conf` (stream upstream for TLS passthrough), and `https-map.conf` (SNI map entries). Multi-interface hosts additionally get `http-healthcheck.lua`, `https-healthcheck.lua`, and `https-balancer.lua` in their directory.
 
 HTTPS is handled via stream SNI passthrough rather than http-module HTTPS blocks, ensuring consistent TLS behaviour for both IPv4 (proxied) and IPv6 (direct) paths. HTTP blocks include inline ACME challenge locations with `try_files` fallback to the backend for hosts handling their own ACME challenges.
 
-Multi-interface hosts get a combined HTTP config file (per variant) containing an `upstream` block listing all interface IPs for round-robin failover with `proxy_next_upstream`, a root server block using the upstream, and per-interface server blocks with direct `proxy_pass`. Their stream upstream uses `balancer_by_lua_file` for health-aware peer selection via a custom Lua HTTPS health checker (`stream-healthcheck.d/`). Single-interface hosts produce simple direct `proxy_pass` configs and direct stream server entries.
+Multi-interface hosts get a combined HTTP config file containing an `upstream` block listing all interface IPs for round-robin failover with `proxy_next_upstream`, a root server block using the upstream, and per-interface server blocks with direct `proxy_pass`. Their HTTPS upstream uses `balancer_by_lua_file` for health-aware peer selection via a custom Lua HTTPS health checker (`scripts/checker.lua`). Single-interface hosts produce simple direct `proxy_pass` configs and direct stream server entries.
+
+All generated files live under a single deployment root (`gdoc2netcfg_dir`, default `/etc/nginx/gdoc2netcfg/`). Enabling a host is a single symlink: `ln -s /etc/nginx/gdoc2netcfg/sites-available/{fqdn} /etc/nginx/sites-enabled/{fqdn}`. Removing all generated configs is `rm -rf /etc/nginx/gdoc2netcfg`.
 
 ### Network Topology
 
@@ -232,7 +234,7 @@ The two sites forward DNS queries to each other via WireGuard tunnel (`10.255.0.
 
 ### nginx
 
-Generated nginx configs are written to `/etc/nginx/sites-available/` and activated via symlinks in `/etc/nginx/sites-enabled/`. Welland only.
+Generated nginx configs are deployed to `/etc/nginx/gdoc2netcfg/` (per-host directories under `sites-available/`, plus `scripts/`, `conf.d/`, `stream.d/` for healthcheck infrastructure). Hosts are activated via symlinks: `ln -s /etc/nginx/gdoc2netcfg/sites-available/{fqdn} /etc/nginx/sites-enabled/{fqdn}`. Welland only.
 
 ### Let's Encrypt
 
