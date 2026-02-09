@@ -50,7 +50,6 @@ output_dir = "external"
 
 [generators.nginx]
 acme_webroot = "/var/www/acme"
-htpasswd_file = "/etc/nginx/.htpasswd"
 # lua_healthcheck_path = "/usr/share/lua/5.1/"  # Path to lua-resty-upstream-healthcheck
 # healthcheck_dir = "/etc/nginx/healthcheck.d"  # Runtime dir for per-host HTTP healthcheck .lua files
 # stream_healthcheck_dir = "/etc/nginx/stream-healthcheck.d"  # Runtime dir for stream HTTPS healthcheck .lua files

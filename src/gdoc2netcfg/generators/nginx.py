@@ -1,18 +1,18 @@
 """nginx reverse proxy configuration generator.
 
 Produces per-host nginx server blocks under sites-available/ and a
-shared ACME challenge snippet. Each host gets four config file variants:
+shared ACME challenge snippet. Each host gets three config files:
 
-  - {fqdn}-http-public       HTTP, no auth
-  - {fqdn}-http-private      HTTP, auth_basic
+  - {fqdn}-http-public       HTTP reverse proxy (port 80)
   - {fqdn}-stream            Stream upstream block (TLS passthrough)
   - {fqdn}-stream-map        SNI map entries for stream routing
 
 HTTPS is handled via stream SNI passthrough rather than http-module
 HTTPS blocks, ensuring consistent TLS behavior for both IPv4 (proxied)
-and IPv6 (direct) paths.
+and IPv6 (direct) paths. HTTP blocks include inline ACME challenge
+locations with try_files fallback to the backend.
 
-Multi-interface hosts get a combined config file (per variant) containing:
+Multi-interface hosts get a combined HTTP config file containing:
 
   - An upstream block listing all interface IPs for round-robin failover
   - A root server block using the upstream with proxy_next_upstream
@@ -20,8 +20,8 @@ Multi-interface hosts get a combined config file (per variant) containing:
   - A server block per named interface using direct proxy_pass to
     that interface's IP, with interface-specific DNS names
 
-Single-interface hosts produce one set of two files with direct
-proxy_pass (no upstream block).
+Single-interface hosts produce a simple direct proxy_pass config
+(no upstream block).
 
 Admins activate configs via symlinks in sites-enabled/.
 """
@@ -168,7 +168,6 @@ def _emit_stream_files(
 def generate_nginx(
     inventory: NetworkInventory,
     acme_webroot: str = "/var/www/acme",
-    htpasswd_file: str = "/etc/nginx/.htpasswd",
     lua_healthcheck_path: str = "/usr/share/lua/5.1/",
     healthcheck_dir: str = "/etc/nginx/healthcheck.d",
     stream_healthcheck_dir: str = "/etc/nginx/stream-healthcheck.d",
@@ -188,13 +187,11 @@ def generate_nginx(
             upstream blocks for multi-interface hosts.
 
     Raises:
-        ValueError: If acme_webroot, htpasswd_file, lua_healthcheck_path,
+        ValueError: If acme_webroot, lua_healthcheck_path,
             healthcheck_dir, or stream_healthcheck_dir contain unsafe characters.
     """
     if not is_safe_path(acme_webroot):
         raise ValueError(f"Unsafe acme_webroot path: {acme_webroot!r}")
-    if not is_safe_path(htpasswd_file):
-        raise ValueError(f"Unsafe htpasswd_file path: {htpasswd_file!r}")
     if not is_safe_path(lua_healthcheck_path):
         raise ValueError(f"Unsafe lua_healthcheck_path: {lua_healthcheck_path!r}")
     if not is_safe_path(healthcheck_dir):
@@ -236,7 +233,7 @@ def generate_nginx(
 
             _emit_http_files(
                 files, primary_fqdn, all_nginx_names, target_ip,
-                htpasswd_file, acme_webroot,
+                acme_webroot,
             )
             _emit_stream_files(
                 files, primary_fqdn, all_fqdn_names,
@@ -287,7 +284,7 @@ def generate_nginx(
             _emit_combined_http_files(
                 files, primary_fqdn, root_names,
                 all_ips, iface_configs,
-                htpasswd_file, acme_webroot,
+                acme_webroot,
             )
             balancer_path = f"{stream_healthcheck_dir}/{primary_fqdn}-balancer.lua"
             _emit_stream_files(
@@ -296,13 +293,11 @@ def generate_nginx(
             )
 
             # Collect upstream metadata for per-host healthcheck config
-            host_upstreams = []
-            for suffix, _builder in _VARIANT_BUILDERS:
-                upstream_name = f"{primary_fqdn}-{suffix}-backend"
-                host_upstreams.append(_UpstreamInfo(
-                    name=upstream_name,
-                    host=primary_fqdn,
-                ))
+            upstream_name = f"{primary_fqdn}-http-backend"
+            host_upstreams = [_UpstreamInfo(
+                name=upstream_name,
+                host=primary_fqdn,
+            )]
             healthcheck_hosts.append((primary_fqdn, host_upstreams))
 
             # Collect stream healthcheck metadata
@@ -348,16 +343,11 @@ def _emit_http_files(
     primary_fqdn: str,
     all_names: list[str],
     target_ip: str,
-    htpasswd_file: str,
     acme_webroot: str = "/var/www/acme",
 ) -> None:
-    """Emit the two HTTP config file variants for a single-interface host."""
+    """Emit the HTTP config file for a single-interface host."""
     files[f"sites-available/{primary_fqdn}-http-public"] = _http_block(
-        all_names, target_ip, private=False, acme_webroot=acme_webroot,
-    )
-    files[f"sites-available/{primary_fqdn}-http-private"] = _http_block(
-        all_names, target_ip, private=True,
-        htpasswd_file=htpasswd_file, acme_webroot=acme_webroot,
+        all_names, target_ip, acme_webroot=acme_webroot,
     )
 
 
@@ -367,76 +357,44 @@ def _emit_combined_http_files(
     root_names: list[str],
     all_ips: list[str],
     iface_configs: list[tuple[list[str], str, str]],
-    htpasswd_file: str,
     acme_webroot: str = "/var/www/acme",
 ) -> None:
-    """Emit two HTTP config files for a multi-interface host.
+    """Emit one HTTP config file for a multi-interface host.
 
-    Each file contains upstream blocks (a round-robin failover upstream
+    The file contains upstream blocks (a round-robin failover upstream
     for the root, plus one single-server upstream per interface named by
     its FQDN), the root server block, and one server block per named
     interface.
     """
-    for suffix, builder in _VARIANT_BUILDERS:
-        upstream_name = f"{primary_fqdn}-{suffix}-backend"
-        upstream_text = _upstream_block(upstream_name, all_ips, port=80)
-        parts = [upstream_text]
+    upstream_name = f"{primary_fqdn}-http-backend"
+    upstream_text = _upstream_block(upstream_name, all_ips, port=80)
+    parts = [upstream_text]
 
-        # Per-interface upstream blocks (single server, named by FQDN)
-        for _iface_names, iface_ip, iface_fqdn in iface_configs:
-            iface_upstream = f"{iface_fqdn}-{suffix}-backend"
-            parts.append(
-                _upstream_block(iface_upstream, [iface_ip], port=80)
-            )
+    # Per-interface upstream blocks (single server, named by FQDN)
+    for _iface_names, iface_ip, iface_fqdn in iface_configs:
+        iface_upstream = f"{iface_fqdn}-http-backend"
+        parts.append(
+            _upstream_block(iface_upstream, [iface_ip], port=80)
+        )
 
-        # Root server block (upstream failover)
-        parts.append(builder(
-            root_names, htpasswd_file,
+    # Root server block (upstream failover)
+    parts.append(_http_block(
+        root_names, "",
+        acme_webroot=acme_webroot,
+        upstream_name=upstream_name,
+    ))
+
+    # Per-interface server blocks (proxy_pass via named upstream)
+    for iface_names, _iface_ip, iface_fqdn in iface_configs:
+        iface_upstream = f"{iface_fqdn}-http-backend"
+        parts.append(_http_block(
+            iface_names, "",
             acme_webroot=acme_webroot,
-            upstream_name=upstream_name,
+            upstream_name=iface_upstream,
         ))
 
-        # Per-interface server blocks (proxy_pass via named upstream)
-        for iface_names, _iface_ip, iface_fqdn in iface_configs:
-            iface_upstream = f"{iface_fqdn}-{suffix}-backend"
-            parts.append(builder(
-                iface_names, htpasswd_file,
-                acme_webroot=acme_webroot,
-                upstream_name=iface_upstream,
-            ))
+    files[f"sites-available/{primary_fqdn}-http-public"] = "\n".join(parts)
 
-        files[f"sites-available/{primary_fqdn}-{suffix}"] = "\n".join(parts)
-
-
-def _build_http_public(
-    names: list[str],
-    htpasswd_file: str,
-    acme_webroot: str = "/var/www/acme",
-    upstream_name: str = "",
-) -> str:
-    return _http_block(
-        names, "", private=False,
-        acme_webroot=acme_webroot, upstream_name=upstream_name,
-    )
-
-
-def _build_http_private(
-    names: list[str],
-    htpasswd_file: str,
-    acme_webroot: str = "/var/www/acme",
-    upstream_name: str = "",
-) -> str:
-    return _http_block(
-        names, "", private=True,
-        acme_webroot=acme_webroot,
-        htpasswd_file=htpasswd_file, upstream_name=upstream_name,
-    )
-
-
-_VARIANT_BUILDERS = [
-    ("http-public", _build_http_public),
-    ("http-private", _build_http_private),
-]
 
 
 def _acme_challenge_snippet(acme_webroot: str) -> str:
@@ -489,9 +447,7 @@ def _acme_challenge_block(
 def _http_block(
     names: list[str],
     target_ip: str,
-    private: bool,
     acme_webroot: str = "/var/www/acme",
-    htpasswd_file: str = "",
     upstream_name: str = "",
 ) -> str:
     """Generate an HTTP (port 80) server block.
@@ -512,10 +468,6 @@ def _http_block(
     lines.append("")
 
     lines.append("    location / {")
-
-    if private:
-        lines.append('        auth_basic "Restricted";')
-        lines.append(f"        auth_basic_user_file {htpasswd_file};")
 
     if upstream_name:
         lines.append(f"        proxy_pass http://{upstream_name};")

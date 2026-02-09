@@ -60,18 +60,17 @@ class TestNginxFileStructure:
 
         assert "snippets/acme-challenge.conf" in files
 
-    def test_produces_four_site_files_per_host(self):
-        """Each host gets 2 HTTP + 2 stream files."""
+    def test_produces_three_site_files_per_host(self):
+        """Each host gets 1 HTTP + 2 stream files."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "desktop.welland.mithis.com"
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 4
+        assert len(site_files) == 3
 
         prefixes = {f.split("/")[1] for f in site_files}
         assert f"{fqdn}-http-public" in prefixes
-        assert f"{fqdn}-http-private" in prefixes
         assert f"{fqdn}-stream" in prefixes
         assert f"{fqdn}-stream-map" in prefixes
 
@@ -166,13 +165,14 @@ class TestHTTPBlock:
         # auth_basic off IS present in the ACME challenge block
         assert "auth_basic off;" in block
 
-    def test_http_private_has_auth(self):
+    def test_http_public_no_auth_basic(self):
+        """HTTP block should not have auth_basic (backends handle their own auth)."""
         host = _make_host()
         files = generate_nginx(_make_inventory(host))
 
-        block = files["sites-available/desktop.welland.mithis.com-http-private"]
-        assert 'auth_basic "Restricted";' in block
-        assert "auth_basic_user_file" in block
+        block = files["sites-available/desktop.welland.mithis.com-http-public"]
+        assert 'auth_basic "Restricted"' not in block
+        assert "auth_basic_user_file" not in block
 
     def test_http_has_inline_acme_with_try_files(self):
         host = _make_host()
@@ -247,7 +247,7 @@ class TestAcmeFallback:
         fallback_start = block.index("@acme_fallback")
         fallback = block[fallback_start:]
         # Should proxy to the upstream, not a bare IP
-        assert f"proxy_pass http://{fqdn}-http-public-backend;" in fallback
+        assert f"proxy_pass http://{fqdn}-http-backend;" in fallback
 
     def test_no_include_snippet_in_http_block(self):
         """HTTP blocks no longer use include for ACME — it's inline."""
@@ -265,26 +265,14 @@ class TestAcmeFallback:
         assert "snippets/acme-challenge.conf" in files
 
 
-class TestCustomHtpasswd:
-    def test_custom_htpasswd_file(self):
-        host = _make_host()
-        files = generate_nginx(
-            _make_inventory(host),
-            htpasswd_file="/etc/nginx/custom.htpasswd",
-        )
-
-        block = files["sites-available/desktop.welland.mithis.com-http-private"]
-        assert "auth_basic_user_file /etc/nginx/custom.htpasswd;" in block
-
-
 class TestMultipleHosts:
-    def test_two_hosts_produce_eight_site_files(self):
+    def test_two_hosts_produce_six_site_files(self):
         h1 = _make_host(hostname="desktop", ip="10.1.10.100")
         h2 = _make_host(hostname="server", ip="10.1.10.200")
         files = generate_nginx(_make_inventory(h1, h2))
 
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 8  # 4 per host (2 HTTP + 2 stream)
+        assert len(site_files) == 6  # 3 per host (1 HTTP + 2 stream)
 
     def test_each_host_uses_own_ip(self):
         h1 = _make_host(hostname="desktop", ip="10.1.10.100")
@@ -364,20 +352,20 @@ def _extract_server_blocks(config_text: str) -> list[str]:
 
 
 class TestMultiInterfaceHost:
-    def test_produces_four_files(self):
-        """Multi-interface hosts produce 2 HTTP + 2 stream files."""
+    def test_produces_three_files(self):
+        """Multi-interface hosts produce 1 HTTP + 2 stream files."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 4
+        assert len(site_files) == 3
 
     def test_file_contains_upstream_block(self):
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
-        assert "upstream rpi-sdr-kraken.welland.mithis.com-http-public-backend {" in conf
+        assert "upstream rpi-sdr-kraken.welland.mithis.com-http-backend {" in conf
         assert "server 10.1.90.149:80;" in conf
         assert "server 10.1.90.150:80;" in conf
 
@@ -397,7 +385,7 @@ class TestMultiInterfaceHost:
         conf = files["sites-available/rpi-sdr-kraken.welland.mithis.com-http-public"]
         blocks = _extract_server_blocks(conf)
         root_block = blocks[0]
-        expected = "proxy_pass http://rpi-sdr-kraken.welland.mithis.com-http-public-backend;"
+        expected = "proxy_pass http://rpi-sdr-kraken.welland.mithis.com-http-backend;"
         assert expected in root_block
         assert "proxy_next_upstream error timeout http_502;" in root_block
 
@@ -423,8 +411,8 @@ class TestMultiInterfaceHost:
         wlan0_block = blocks[2]
 
         # Per-interface blocks use named upstreams, not bare IPs
-        assert f"proxy_pass http://eth0.{fqdn}-http-public-backend;" in eth0_block
-        assert f"proxy_pass http://wlan0.{fqdn}-http-public-backend;" in wlan0_block
+        assert f"proxy_pass http://eth0.{fqdn}-http-backend;" in eth0_block
+        assert f"proxy_pass http://wlan0.{fqdn}-http-backend;" in wlan0_block
 
     def test_interface_server_blocks_have_interface_names(self):
         host = _make_multi_iface_host()
@@ -489,15 +477,6 @@ class TestPathValidation:
                 acme_webroot="/var/www/acme; rm -rf /",
             )
 
-    def test_rejects_malicious_htpasswd_file(self):
-        import pytest
-
-        host = _make_host()
-        with pytest.raises(ValueError, match="Unsafe htpasswd_file"):
-            generate_nginx(
-                _make_inventory(host),
-                htpasswd_file="/etc/passwd\n    evil_directive;",
-            )
 
 
 class TestSharedIPHost:
@@ -514,7 +493,7 @@ class TestSharedIPHost:
 
         fqdn = "roku.welland.mithis.com"
         site_files = [k for k in files if k.startswith("sites-available/")]
-        assert len(site_files) == 4  # 2 HTTP + 2 stream
+        assert len(site_files) == 3  # 1 HTTP + 2 stream
 
         # Should use direct proxy_pass, not upstream
         http_pub = files[f"sites-available/{fqdn}-http-public"]
@@ -596,15 +575,14 @@ class TestHealthcheck:
                 lua_healthcheck_path="/opt/lua'; evil;",
             )
 
-    def test_per_host_lua_has_two_http_variants(self):
-        """Per-host .lua file contains spawn_checker for 2 HTTP variants."""
+    def test_per_host_lua_has_one_http_variant(self):
+        """Per-host .lua file contains spawn_checker for single HTTP upstream."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         lua = files[f"healthcheck.d/{fqdn}.lua"]
-        assert f"{fqdn}-http-public-backend" in lua
-        assert f"{fqdn}-http-private-backend" in lua
+        assert f"{fqdn}-http-backend" in lua
         assert "https" not in lua
 
     def test_separate_lua_files_per_host(self):
@@ -797,15 +775,15 @@ class TestStreamSNI:
         https_files = [k for k in files if "https" in k and k.startswith("sites-available/")]
         assert len(https_files) == 0
 
-    def test_healthcheck_lua_only_http_variants(self):
-        """HTTP health check .lua files have only HTTP variants, no HTTPS."""
+    def test_healthcheck_lua_only_http_variant(self):
+        """HTTP health check .lua files have single HTTP variant, no HTTPS."""
         host = _make_multi_iface_host()
         files = generate_nginx(_make_inventory(host))
 
         fqdn = "rpi-sdr-kraken.welland.mithis.com"
         lua = files[f"healthcheck.d/{fqdn}.lua"]
-        # 2 try_spawn calls (http-public + http-private) + 1 function def
-        assert lua.count("try_spawn({\n") == 2
+        # 1 try_spawn call (http-backend) + 1 function def
+        assert lua.count("try_spawn({\n") == 1
         assert "https" not in lua
 
 

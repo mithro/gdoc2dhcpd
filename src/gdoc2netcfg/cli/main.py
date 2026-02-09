@@ -322,8 +322,6 @@ def cmd_generate(args: argparse.Namespace) -> int:
         elif name == "nginx" and gen_config:
             if gen_config.params.get("acme_webroot"):
                 kwargs["acme_webroot"] = gen_config.params["acme_webroot"]
-            if gen_config.params.get("htpasswd_file"):
-                kwargs["htpasswd_file"] = gen_config.params["htpasswd_file"]
             if gen_config.params.get("lua_healthcheck_path"):
                 kwargs["lua_healthcheck_path"] = gen_config.params["lua_healthcheck_path"]
             if gen_config.params.get("healthcheck_dir"):
