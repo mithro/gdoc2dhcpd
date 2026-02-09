@@ -322,14 +322,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
         elif name == "nginx" and gen_config:
             if gen_config.params.get("acme_webroot"):
                 kwargs["acme_webroot"] = gen_config.params["acme_webroot"]
-            if gen_config.params.get("htpasswd_file"):
-                kwargs["htpasswd_file"] = gen_config.params["htpasswd_file"]
-            if gen_config.params.get("https_listen"):
-                kwargs["https_listen"] = gen_config.params["https_listen"]
             if gen_config.params.get("lua_healthcheck_path"):
                 kwargs["lua_healthcheck_path"] = gen_config.params["lua_healthcheck_path"]
-            if gen_config.params.get("healthcheck_dir"):
-                kwargs["healthcheck_dir"] = gen_config.params["healthcheck_dir"]
+            if gen_config.params.get("gdoc2netcfg_dir"):
+                kwargs["gdoc2netcfg_dir"] = gen_config.params["gdoc2netcfg_dir"]
+            if gen_config.params.get("sites_enabled_dir"):
+                kwargs["sites_enabled_dir"] = gen_config.params["sites_enabled_dir"]
         elif name == "topology" and gen_config:
             if gen_config.params.get("show_unknown_macs"):
                 kwargs["show_unknown_macs"] = (
