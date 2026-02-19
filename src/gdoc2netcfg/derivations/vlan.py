@@ -19,7 +19,9 @@ def ip_to_vlan_id(ipv4: IPv4Address, site: Site) -> int | None:
 
     Uses the site's VLAN definitions to match:
     1. Global VLANs: second octet matches a global VLAN's ID (e.g. 10.31.X.X → VLAN 31)
-    2. Site VLANs: second octet matches site_octet, third octet falls within
+    2. Transit VLANs: (second_octet, third_octet) matches transit_match
+       (e.g. 10.99.21.X → VLAN 121)
+    3. Site VLANs: second octet matches site_octet, third octet falls within
        a VLAN's covered_third_octets (e.g. 10.1.10.X → VLAN 10 for site_octet=1)
 
     Returns None if the IP doesn't map to a known VLAN.
@@ -34,12 +36,19 @@ def ip_to_vlan_id(ipv4: IPv4Address, site: Site) -> int | None:
         if vlan.is_global and b == vlan.id:
             return vlan.id
 
+    # Check transit VLANs (match on second + third octet pair)
+    for vlan in site.vlans.values():
+        if vlan.is_transit and vlan.transit_match:
+            match_b, match_c = vlan.transit_match
+            if b == match_b and c == match_c:
+                return vlan.id
+
     # Check site-local VLANs (second octet must match site_octet)
     if b != site.site_octet:
         return None
 
     for vlan in site.vlans.values():
-        if not vlan.is_global and c in vlan.covered_third_octets:
+        if not vlan.is_global and not vlan.is_transit and c in vlan.covered_third_octets:
             return vlan.id
 
     return None
@@ -96,6 +105,38 @@ def _compute_third_octets(ip_range: str, cidr: str, site_octet: int) -> tuple[in
     return tuple(range(first_third, last_third + 1))
 
 
+def _is_transit_vlan(cidr: str) -> bool:
+    """Determine if a VLAN is a point-to-point transit link based on CIDR.
+
+    Transit VLANs use /30 or /31 prefixes (point-to-point links between
+    two routers). They are matched by a (second_octet, third_octet) pair
+    rather than by second octet alone (global) or site_octet + third octet
+    (site-local).
+    """
+    if not cidr.startswith("/"):
+        return False
+    try:
+        prefix = int(cidr[1:])
+        return prefix >= 30
+    except ValueError:
+        return False
+
+
+def _parse_transit_match(ip_range: str) -> tuple[int, int] | None:
+    """Extract (second_octet, third_octet) from a transit VLAN IP range.
+
+    For example, '10.99.21.X' → (99, 21).
+    Returns None if the IP range can't be parsed.
+    """
+    parts = ip_range.replace("X", "0").split(".")
+    if len(parts) >= 3:
+        try:
+            return (int(parts[1]), int(parts[2]))
+        except ValueError:
+            pass
+    return None
+
+
 def _is_global_vlan(cidr: str) -> bool:
     """Determine if a VLAN is global based on its CIDR prefix length.
 
@@ -131,12 +172,15 @@ def build_vlans_from_definitions(
     """
     vlans: dict[int, VLAN] = {}
     for defn in definitions:
-        is_global = _is_global_vlan(defn.cidr)
+        is_transit = _is_transit_vlan(defn.cidr)
+        is_global = not is_transit and _is_global_vlan(defn.cidr)
 
-        if is_global:
+        if is_global or is_transit:
             third_octets: tuple[int, ...] = ()
         else:
             third_octets = _compute_third_octets(defn.ip_range, defn.cidr, site_octet)
+
+        transit_match = _parse_transit_match(defn.ip_range) if is_transit else None
 
         vlans[defn.id] = VLAN(
             id=defn.id,
@@ -144,6 +188,8 @@ def build_vlans_from_definitions(
             subdomain=defn.name,
             third_octets=third_octets,
             is_global=is_global,
+            is_transit=is_transit,
+            transit_match=transit_match,
         )
     return vlans
 

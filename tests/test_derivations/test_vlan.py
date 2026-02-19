@@ -18,10 +18,14 @@ SITE = Site(
         7: VLAN(id=7, name="store", subdomain="store", third_octets=(7,)),
         10: VLAN(id=10, name="int", subdomain="int", third_octets=(8, 9, 10, 11, 12, 13, 14, 15)),
         20: VLAN(id=20, name="roam", subdomain="roam", third_octets=(20,)),
-        31: VLAN(id=31, name="fpgas", subdomain="fpgas", is_global=True),
+        21: VLAN(id=21, name="fpgas", subdomain="fpgas", is_global=True),
         41: VLAN(id=41, name="sm", subdomain="sm", is_global=True),
         90: VLAN(id=90, name="iot", subdomain="iot", third_octets=(90,)),
         99: VLAN(id=99, name="guest", subdomain="guest", third_octets=(99,)),
+        121: VLAN(id=121, name="t-fpgas", subdomain="t-fpgas",
+                  is_transit=True, transit_match=(99, 21)),
+        141: VLAN(id=141, name="t-sm", subdomain="t-sm",
+                  is_transit=True, transit_match=(99, 41)),
     },
     network_subdomains={
         1: "tmp", 5: "net", 6: "pwr", 7: "store",
@@ -69,12 +73,26 @@ class TestIpToVlanId:
         assert ip_to_vlan_id(IPv4Address("10.1.99.1"), SITE) == 99
 
     def test_fpgas_vlan(self):
-        """10.31.x.x → VLAN 31 (fpgas) — global VLAN."""
-        assert ip_to_vlan_id(IPv4Address("10.31.1.1"), SITE) == 31
+        """10.21.x.x → VLAN 21 (fpgas) — global VLAN."""
+        assert ip_to_vlan_id(IPv4Address("10.21.1.1"), SITE) == 21
 
     def test_sm_vlan(self):
         """10.41.x.x → VLAN 41 (sm) — global VLAN."""
         assert ip_to_vlan_id(IPv4Address("10.41.1.1"), SITE) == 41
+
+    def test_transit_fpgas_vlan(self):
+        """10.99.21.x → VLAN 121 (t-fpgas) — transit VLAN."""
+        assert ip_to_vlan_id(IPv4Address("10.99.21.1"), SITE) == 121
+        assert ip_to_vlan_id(IPv4Address("10.99.21.2"), SITE) == 121
+
+    def test_transit_sm_vlan(self):
+        """10.99.41.x → VLAN 141 (t-sm) — transit VLAN."""
+        assert ip_to_vlan_id(IPv4Address("10.99.41.1"), SITE) == 141
+        assert ip_to_vlan_id(IPv4Address("10.99.41.2"), SITE) == 141
+
+    def test_transit_wrong_third_octet(self):
+        """10.99.22.x should NOT match any transit VLAN."""
+        assert ip_to_vlan_id(IPv4Address("10.99.22.1"), SITE) is None
 
     def test_non_10_returns_none(self):
         assert ip_to_vlan_id(IPv4Address("192.168.1.1"), SITE) is None
@@ -100,7 +118,9 @@ class TestIpToVlanIdMonarto:
                 id=10, name="int", subdomain="int",
                 third_octets=(8, 9, 10, 11, 12, 13, 14, 15),
             ),
-            31: VLAN(id=31, name="fpgas", subdomain="fpgas", is_global=True),
+            21: VLAN(id=21, name="fpgas", subdomain="fpgas", is_global=True),
+            121: VLAN(id=121, name="t-fpgas", subdomain="t-fpgas",
+                      is_transit=True, transit_match=(99, 21)),
         },
         network_subdomains={
             5: "net", 8: "int", 9: "int", 10: "int", 11: "int",
@@ -118,7 +138,11 @@ class TestIpToVlanIdMonarto:
 
     def test_monarto_global_vlan(self):
         """Global VLANs work regardless of site_octet."""
-        assert ip_to_vlan_id(IPv4Address("10.31.1.1"), self.MONARTO) == 31
+        assert ip_to_vlan_id(IPv4Address("10.21.1.1"), self.MONARTO) == 21
+
+    def test_monarto_transit_vlan(self):
+        """Transit VLANs work regardless of site_octet."""
+        assert ip_to_vlan_id(IPv4Address("10.99.21.1"), self.MONARTO) == 121
 
     def test_monarto_rejects_welland(self):
         """10.1.X.X is not valid for Monarto."""

@@ -2,6 +2,8 @@
 
 from gdoc2netcfg.derivations.vlan import (
     _is_global_vlan,
+    _is_transit_vlan,
+    _parse_transit_match,
     build_network_subdomains,
     build_vlans_from_definitions,
 )
@@ -36,8 +38,16 @@ def _welland_definitions() -> list[VLANDefinition]:
             netmask="255.255.255.0", cidr="/24",
         ),
         VLANDefinition(
-            id=31, name="fpgas", ip_range="10.31.X.X",
+            id=121, name="t-fpgas", ip_range="10.99.21.X",
+            netmask="255.255.255.252", cidr="/30",
+        ),
+        VLANDefinition(
+            id=21, name="fpgas", ip_range="10.21.X.X",
             netmask="255.255.0.0", cidr="/16",
+        ),
+        VLANDefinition(
+            id=141, name="t-sm", ip_range="10.99.41.X",
+            netmask="255.255.255.252", cidr="/30",
         ),
         VLANDefinition(
             id=41, name="sm", ip_range="10.41.X.X",
@@ -87,22 +97,72 @@ class TestIsGlobalVlan:
     def test_prefix_out_of_ipv4_range(self):
         assert _is_global_vlan("/33") is False
 
+    def test_slash_30_is_not_global(self):
+        """Transit VLANs (/30) should not be classified as global."""
+        assert _is_global_vlan("/30") is False
+
+
+class TestIsTransitVlan:
+    """Unit tests for CIDR-based transit VLAN detection."""
+
+    def test_slash_30_is_transit(self):
+        assert _is_transit_vlan("/30") is True
+
+    def test_slash_31_is_transit(self):
+        assert _is_transit_vlan("/31") is True
+
+    def test_slash_32_is_transit(self):
+        assert _is_transit_vlan("/32") is True
+
+    def test_slash_29_is_not_transit(self):
+        assert _is_transit_vlan("/29") is False
+
+    def test_slash_24_is_not_transit(self):
+        assert _is_transit_vlan("/24") is False
+
+    def test_slash_16_is_not_transit(self):
+        assert _is_transit_vlan("/16") is False
+
+    def test_empty_string(self):
+        assert _is_transit_vlan("") is False
+
+    def test_invalid_cidr(self):
+        assert _is_transit_vlan("/abc") is False
+
+
+class TestParseTransitMatch:
+    """Unit tests for transit match extraction from IP range."""
+
+    def test_standard_transit(self):
+        assert _parse_transit_match("10.99.21.X") == (99, 21)
+
+    def test_sm_transit(self):
+        assert _parse_transit_match("10.99.41.X") == (99, 41)
+
+    def test_invalid_format(self):
+        assert _parse_transit_match("invalid") is None
+
+    def test_short_range(self):
+        assert _parse_transit_match("10.99") is None
+
 
 class TestBuildVlansFromDefinitions:
     def test_builds_all_vlans(self):
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
-        assert len(vlans) == 10
+        assert len(vlans) == 12
 
     def test_vlan_ids(self):
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
-        assert sorted(vlans.keys()) == [1, 5, 6, 7, 10, 20, 31, 41, 90, 99]
+        assert sorted(vlans.keys()) == [1, 5, 6, 7, 10, 20, 21, 41, 90, 99, 121, 141]
 
     def test_vlan_names(self):
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
         assert vlans[5].name == "net"
         assert vlans[10].name == "int"
-        assert vlans[31].name == "fpgas"
+        assert vlans[21].name == "fpgas"
         assert vlans[41].name == "sm"
+        assert vlans[121].name == "t-fpgas"
+        assert vlans[141].name == "t-sm"
 
     def test_subdomain_equals_name(self):
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
@@ -124,20 +184,39 @@ class TestBuildVlansFromDefinitions:
         assert vlans[10].third_octets == (8, 9, 10, 11, 12, 13, 14, 15)
 
     def test_global_vlans_detected(self):
-        """VLANs 31 and 41 are global (/16 prefix)."""
+        """VLANs 21 and 41 are global (/16 prefix)."""
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
-        assert vlans[31].is_global is True
+        assert vlans[21].is_global is True
         assert vlans[41].is_global is True
+
+    def test_transit_vlans_detected(self):
+        """VLANs 121 and 141 are transit (/30 prefix)."""
+        vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
+        assert vlans[121].is_transit is True
+        assert vlans[121].transit_match == (99, 21)
+        assert vlans[141].is_transit is True
+        assert vlans[141].transit_match == (99, 41)
+
+    def test_transit_vlans_not_global(self):
+        vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
+        assert vlans[121].is_global is False
+        assert vlans[141].is_global is False
 
     def test_site_vlans_not_global(self):
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
         for vid in [1, 5, 6, 7, 10, 20, 90, 99]:
             assert vlans[vid].is_global is False, f"VLAN {vid} should not be global"
+            assert vlans[vid].is_transit is False, f"VLAN {vid} should not be transit"
 
     def test_global_vlans_empty_third_octets(self):
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
-        assert vlans[31].third_octets == ()
+        assert vlans[21].third_octets == ()
         assert vlans[41].third_octets == ()
+
+    def test_transit_vlans_empty_third_octets(self):
+        vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
+        assert vlans[121].third_octets == ()
+        assert vlans[141].third_octets == ()
 
     def test_covered_third_octets_property(self):
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
@@ -145,20 +224,22 @@ class TestBuildVlansFromDefinitions:
         assert vlans[5].covered_third_octets == (5,)
         assert vlans[10].covered_third_octets == (8, 9, 10, 11, 12, 13, 14, 15)
         # Global VLANs return empty
-        assert vlans[31].covered_third_octets == ()
+        assert vlans[21].covered_third_octets == ()
+        # Transit VLANs return empty
+        assert vlans[121].covered_third_octets == ()
 
     def test_monarto_uses_same_definitions(self):
         """Welland definitions work for monarto (site_octet=2) without changes.
 
-        Global VLANs are detected by /16 CIDR, not by comparing the IP
-        range's second octet to site_octet.  This means the shared VLAN
-        Allocations sheet (which has 10.1.X.X IP ranges) produces correct
-        results for any site.
+        Global VLANs are detected by /16 CIDR, transit by /30, not by
+        comparing the IP range's second octet to site_octet.  This means
+        the shared VLAN Allocations sheet produces correct results for
+        any site.
         """
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=2)
 
-        # All 10 VLANs built
-        assert len(vlans) == 10
+        # All 12 VLANs built
+        assert len(vlans) == 12
 
         # Site-local VLANs: same third octets regardless of site_octet
         assert vlans[5].is_global is False
@@ -169,10 +250,16 @@ class TestBuildVlansFromDefinitions:
         assert vlans[90].third_octets == (90,)
 
         # Global VLANs: still detected by /16 CIDR
-        assert vlans[31].is_global is True
-        assert vlans[31].third_octets == ()
+        assert vlans[21].is_global is True
+        assert vlans[21].third_octets == ()
         assert vlans[41].is_global is True
         assert vlans[41].third_octets == ()
+
+        # Transit VLANs: detected by /30 CIDR
+        assert vlans[121].is_transit is True
+        assert vlans[121].transit_match == (99, 21)
+        assert vlans[141].is_transit is True
+        assert vlans[141].transit_match == (99, 41)
 
 
 class TestBuildNetworkSubdomains:
@@ -198,13 +285,15 @@ class TestBuildNetworkSubdomains:
             assert subdomains[octet] == "int", f"Octet {octet} should map to 'int'"
 
     def test_global_vlans_not_in_subdomains(self):
-        """Global VLANs (31, 41) should not appear in subdomains mapping."""
+        """Global VLANs (21, 41) should not appear in subdomains mapping."""
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)
         subdomains = build_network_subdomains(vlans)
 
-        # No third-octet mapping for global VLANs
-        assert 31 not in subdomains
+        # No third-octet mapping for global or transit VLANs
+        assert 21 not in subdomains
         assert 41 not in subdomains
+        assert 121 not in subdomains
+        assert 141 not in subdomains
 
     def test_unmapped_octets_absent(self):
         vlans = build_vlans_from_definitions(_welland_definitions(), site_octet=1)

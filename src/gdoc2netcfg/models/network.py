@@ -18,6 +18,10 @@ class VLAN:
             For example, VLAN 10 (int) with /21 covers octets 8-15.
         is_global: True for VLANs that use the second octet instead
             of third (e.g. 10.31.X.X for VLAN 31), typically /16 ranges.
+        is_transit: True for point-to-point transit VLANs (/30), which
+            use a unique (second_octet, third_octet) pair for matching.
+        transit_match: For transit VLANs, the (second_octet, third_octet)
+            pair to match against (e.g. (99, 21) for 10.99.21.X → VLAN 121).
     """
 
     id: int
@@ -25,6 +29,8 @@ class VLAN:
     subdomain: str
     third_octets: tuple[int, ...] = ()
     is_global: bool = False
+    is_transit: bool = False
+    transit_match: tuple[int, int] | None = None  # (second_octet, third_octet)
 
     @property
     def covered_third_octets(self) -> tuple[int, ...]:
@@ -35,7 +41,7 @@ class VLAN:
         For site VLANs, returns third_octets if set, otherwise falls
         back to (self.id,) as the default single-octet mapping.
         """
-        if self.is_global:
+        if self.is_global or self.is_transit:
             return ()
         return self.third_octets if self.third_octets else (self.id,)
 
@@ -107,7 +113,7 @@ class Site:
         the VLAN is not found, is global, or has no covered octets.
         """
         vlan = self.vlan_by_name(vlan_name)
-        if vlan is None or vlan.is_global:
+        if vlan is None or vlan.is_global or vlan.is_transit:
             return None
         octets = vlan.covered_third_octets
         if not octets:
