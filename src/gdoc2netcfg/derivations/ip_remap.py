@@ -56,11 +56,15 @@ def _validate_site_values(
     This catches spreadsheet columns (like "Location") being accidentally
     mapped to the site field with values like "Back Shed" that would
     silently drop records during site filtering.
+
+    Records without a machine name (section headers, empty rows) are
+    skipped — they won't become hosts and often carry section labels
+    like "Build Farm" in the Site column.
     """
     if not site.all_sites:
         return
     for record in records:
-        if not record.site:
+        if not record.site or not record.machine:
             continue
         if record.site.lower() not in site.all_sites:
             raise ValueError(

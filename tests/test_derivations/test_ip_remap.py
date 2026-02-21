@@ -244,6 +244,14 @@ class TestSiteValidation:
         result = filter_and_resolve_records(records, site)
         assert len(result) == 0  # Filtered out but not rejected
 
+    def test_section_header_without_machine_skipped(self):
+        """Rows without a machine name (section headers) skip validation."""
+        site = self._site_with_all()
+        records = [_record("", site="Build Farm", machine="")]
+        # Should not raise — no machine means it's a section header
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 0
+
     def test_error_message_includes_context(self):
         """Error message includes sheet, row, machine, and valid sites."""
         site = self._site_with_all()
