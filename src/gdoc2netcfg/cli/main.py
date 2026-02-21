@@ -1438,8 +1438,7 @@ def cmd_tasmota_show(args: argparse.Namespace) -> int:
     known = {k: v for k, v in tasmota_data.items() if not k.startswith(_UNKNOWN_PREFIX)}
     unknown = {k: v for k, v in tasmota_data.items() if k.startswith(_UNKNOWN_PREFIX)}
 
-    for hostname in sorted(known.keys()):
-        data = known[hostname]
+    for hostname, data in sorted(known.items(), key=lambda kv: _natural_sort_key(kv[1].get("device_name", ""))):
         print(f"\n{'='*60}")
         print(f"{hostname}")
         print("=" * 60)
