@@ -66,3 +66,15 @@ output = "nagios-switches.cfg"
 [generators.topology]
 output = "topology.dot"
 show_unknown_macs = "false"
+
+# ── Optional: Tasmota IoT device management ──────────────────
+[tasmota]
+mqtt_host = "ha.welland.mithis.com"
+mqtt_port = 1883
+mqtt_user = ""
+mqtt_password = ""
+
+# ── Optional: Home Assistant integration check ───────────────
+[homeassistant]
+url = "http://ha.welland.mithis.com:8123"
+# token = ""  # Long-lived access token from HA profile page

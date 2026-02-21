@@ -32,6 +32,11 @@ uv run gdoc2netcfg password <query>        # Look up device password by hostname
 uv run gdoc2netcfg password --type snmp <query>  # Look up SNMP community string
 uv run gdoc2netcfg password --type ipmi <query>  # Look up IPMI credentials
 uv run gdoc2netcfg password --quiet <query>      # Output password only (for piping)
+uv run gdoc2netcfg tasmota scan --force    # Scan IoT VLAN for Tasmota devices
+uv run gdoc2netcfg tasmota show            # Show cached Tasmota device data
+uv run gdoc2netcfg tasmota configure --dry-run --all  # Preview config changes
+uv run gdoc2netcfg tasmota configure <host>      # Push config to a specific device
+uv run gdoc2netcfg tasmota ha-status       # Check Home Assistant integration
 ```
 
 Always use `uv run` to execute Python commands. Never use bare `python` or `pip`.
