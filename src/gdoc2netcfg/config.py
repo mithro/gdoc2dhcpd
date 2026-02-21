@@ -41,6 +41,33 @@ class GeneratorConfig:
 
 
 @dataclass
+class TasmotaConfig:
+    """Configuration for Tasmota device management.
+
+    Defines the desired MQTT broker settings that Tasmota devices
+    should be configured to use. Used by the configure command to
+    compute drift and push correct settings.
+    """
+
+    mqtt_host: str = ""
+    mqtt_port: int = 1883
+    mqtt_user: str = ""
+    mqtt_password: str = ""
+
+
+@dataclass
+class HomeAssistantConfig:
+    """Configuration for Home Assistant integration checks.
+
+    Used by the ha-status command to verify Tasmota devices are
+    properly registered and reporting in Home Assistant.
+    """
+
+    url: str = ""
+    token: str = ""
+
+
+@dataclass
 class PipelineConfig:
     """Full pipeline configuration loaded from gdoc2netcfg.toml.
 
@@ -52,6 +79,8 @@ class PipelineConfig:
     sheets: list[SheetConfig] = field(default_factory=list)
     cache: CacheConfig = field(default_factory=CacheConfig)
     generators: dict[str, GeneratorConfig] = field(default_factory=dict)
+    tasmota: TasmotaConfig = field(default_factory=TasmotaConfig)
+    homeassistant: HomeAssistantConfig = field(default_factory=HomeAssistantConfig)
 
 
 def _build_site(data: dict) -> Site:
@@ -111,6 +140,30 @@ def _build_generators(data: dict) -> dict[str, GeneratorConfig]:
     return generators
 
 
+def _build_tasmota(data: dict) -> TasmotaConfig:
+    """Build Tasmota config from parsed TOML data."""
+    section = data.get("tasmota", {})
+    if not section:
+        return TasmotaConfig()
+    return TasmotaConfig(
+        mqtt_host=section.get("mqtt_host", ""),
+        mqtt_port=section.get("mqtt_port", 1883),
+        mqtt_user=section.get("mqtt_user", ""),
+        mqtt_password=section.get("mqtt_password", ""),
+    )
+
+
+def _build_homeassistant(data: dict) -> HomeAssistantConfig:
+    """Build Home Assistant config from parsed TOML data."""
+    section = data.get("homeassistant", {})
+    if not section:
+        return HomeAssistantConfig()
+    return HomeAssistantConfig(
+        url=section.get("url", ""),
+        token=section.get("token", ""),
+    )
+
+
 def load_config(config_path: Path | str | None = None) -> PipelineConfig:
     """Load pipeline configuration from a TOML file.
 
@@ -132,4 +185,6 @@ def load_config(config_path: Path | str | None = None) -> PipelineConfig:
             directory=Path(data.get("cache", {}).get("directory", ".cache")),
         ),
         generators=_build_generators(data),
+        tasmota=_build_tasmota(data),
+        homeassistant=_build_homeassistant(data),
     )
