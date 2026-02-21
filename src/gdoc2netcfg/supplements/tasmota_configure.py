@@ -1,0 +1,239 @@
+"""Tasmota device configuration push.
+
+This module handles the write-side of Tasmota management: computing
+the desired configuration from host data + pipeline config, detecting
+drift against actual device state, and pushing corrections via HTTP.
+
+Separated from tasmota.py (read-only scan/cache/enrich) to maintain
+the supplement pattern where supplements are read-only.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gdoc2netcfg.config import TasmotaConfig
+    from gdoc2netcfg.models.host import Host
+
+
+@dataclass(frozen=True)
+class ConfigDrift:
+    """A single configuration field that differs from desired state.
+
+    Attributes:
+        field: Tasmota command name (e.g. "DeviceName", "MqttHost").
+        current: Current value on the device.
+        desired: Desired value from pipeline config.
+    """
+
+    field: str
+    current: str
+    desired: str
+
+
+def compute_desired_config(host: Host, tasmota_config: TasmotaConfig) -> dict[str, str]:
+    """Derive the desired Tasmota configuration for a host.
+
+    Args:
+        host: Host object with tasmota_data and extra columns.
+        tasmota_config: MQTT broker settings from pipeline config.
+
+    Returns:
+        Mapping of Tasmota command name to desired value.
+    """
+    # FriendlyName: use Controls column if present, otherwise machine name
+    controls_str = host.extra.get("Controls", "")
+    if controls_str.strip():
+        friendly = f"Power for {controls_str.strip()}"
+    else:
+        friendly = host.machine_name
+
+    return {
+        "DeviceName": host.machine_name,
+        "FriendlyName1": friendly,
+        "Hostname": host.hostname,
+        "Topic": host.machine_name,
+        "MqttHost": tasmota_config.mqtt_host,
+        "MqttPort": str(tasmota_config.mqtt_port),
+        "MqttUser": tasmota_config.mqtt_user,
+        "MqttPassword": tasmota_config.mqtt_password,
+    }
+
+
+def _get_current_value(field: str, tasmota_data) -> str:
+    """Extract the current value for a Tasmota command from device data.
+
+    Maps Tasmota command names to TasmotaData field values.
+    """
+    field_map = {
+        "DeviceName": "device_name",
+        "FriendlyName1": "friendly_name",
+        "Hostname": "hostname",
+        "Topic": "mqtt_topic",
+        "MqttHost": "mqtt_host",
+        "MqttPort": "mqtt_port",
+        "MqttUser": None,  # Not stored in status response
+        "MqttPassword": None,  # Not stored in status response
+    }
+    attr = field_map.get(field)
+    if attr is None:
+        return ""
+    return str(getattr(tasmota_data, attr, ""))
+
+
+def compute_drift(host: Host, tasmota_config: TasmotaConfig) -> list[ConfigDrift]:
+    """Compare actual device state against desired configuration.
+
+    Args:
+        host: Host with tasmota_data attached.
+        tasmota_config: Desired MQTT settings.
+
+    Returns:
+        List of ConfigDrift entries for fields that need updating.
+    """
+    if host.tasmota_data is None:
+        raise ValueError(f"Host {host.hostname} has no tasmota_data")
+
+    desired = compute_desired_config(host, tasmota_config)
+    drifts: list[ConfigDrift] = []
+
+    for field, desired_value in desired.items():
+        current = _get_current_value(field, host.tasmota_data)
+        # Skip fields we can't read back (password, user)
+        if field in ("MqttUser", "MqttPassword"):
+            continue
+        if current != desired_value:
+            drifts.append(ConfigDrift(
+                field=field,
+                current=current,
+                desired=desired_value,
+            ))
+
+    return drifts
+
+
+def _send_tasmota_command(
+    ip: str,
+    command: str,
+    timeout: float = 5.0,
+) -> dict | None:
+    """Send a command to a Tasmota device via HTTP.
+
+    Args:
+        ip: Device IPv4 address.
+        command: Tasmota command string (e.g. "DeviceName my-device").
+        timeout: HTTP request timeout.
+
+    Returns:
+        Parsed JSON response, or None on failure.
+    """
+    encoded = urllib.parse.quote(command, safe="")
+    url = f"http://{ip}/cm?cmnd={encoded}"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, TimeoutError):
+        return None
+
+
+def configure_tasmota_device(
+    host: Host,
+    tasmota_config: TasmotaConfig,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> bool:
+    """Push desired configuration to a single Tasmota device.
+
+    Computes drift, sends corrective commands, and verifies the result.
+
+    Args:
+        host: Host with tasmota_data attached.
+        tasmota_config: Desired MQTT settings.
+        dry_run: If True, show changes without applying.
+        verbose: Print progress to stderr.
+
+    Returns:
+        True if all changes were applied (or no changes needed).
+    """
+    if host.tasmota_data is None:
+        if verbose:
+            print(f"  {host.hostname}: no Tasmota data, skipping", file=sys.stderr)
+        return False
+
+    ip = host.tasmota_data.ip
+    if not ip:
+        if verbose:
+            print(f"  {host.hostname}: no IP in Tasmota data", file=sys.stderr)
+        return False
+
+    drifts = compute_drift(host, tasmota_config)
+
+    if not drifts:
+        if verbose:
+            print(f"  {host.hostname}: OK (no drift)", file=sys.stderr)
+        return True
+
+    if verbose:
+        print(f"  {host.hostname} ({ip}):", file=sys.stderr)
+        for d in drifts:
+            print(
+                f"    {d.field}: {d.current!r} → {d.desired!r}",
+                file=sys.stderr,
+            )
+
+    if dry_run:
+        return True
+
+    # Apply each change
+    all_ok = True
+    desired = compute_desired_config(host, tasmota_config)
+    for field, value in desired.items():
+        command = f"{field} {value}"
+        result = _send_tasmota_command(ip, command)
+        if result is None:
+            if verbose:
+                print(f"    FAILED: {command}", file=sys.stderr)
+            all_ok = False
+        elif verbose:
+            print(f"    Applied: {field}", file=sys.stderr)
+
+    return all_ok
+
+
+def configure_all_tasmota_devices(
+    hosts: list[Host],
+    tasmota_config: TasmotaConfig,
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> tuple[int, int]:
+    """Push configuration to all Tasmota devices.
+
+    Args:
+        hosts: Hosts with tasmota_data attached.
+        tasmota_config: Desired MQTT settings.
+        dry_run: If True, show changes without applying.
+        verbose: Print progress to stderr.
+
+    Returns:
+        (success_count, fail_count) tuple.
+    """
+    success = 0
+    fail = 0
+    for host in sorted(hosts, key=lambda h: h.hostname):
+        ok = configure_tasmota_device(
+            host, tasmota_config, dry_run=dry_run, verbose=verbose,
+        )
+        if ok:
+            success += 1
+        else:
+            fail += 1
+
+    return success, fail
