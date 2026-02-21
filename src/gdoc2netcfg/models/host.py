@@ -252,6 +252,51 @@ class NSDPData:
     loop_detection: bool | None = None
 
 
+@dataclass(frozen=True)
+class TasmotaData:
+    """Tasmota device status data collected via HTTP API.
+
+    Populated by the tasmota supplement after querying Status 0.
+    Contains device identity, MQTT configuration, WiFi status,
+    and operational state.
+
+    Attributes:
+        device_name: Configured device name (DeviceName).
+        friendly_name: Display name for relays (FriendlyName1).
+        hostname: mDNS/network hostname.
+        firmware_version: Tasmota firmware version string.
+        mqtt_host: MQTT broker hostname.
+        mqtt_port: MQTT broker port.
+        mqtt_topic: MQTT topic for this device.
+        mqtt_client: MQTT client ID.
+        mac: Device MAC address as colon-separated hex.
+        ip: Device IPv4 address.
+        wifi_ssid: Connected WiFi SSID.
+        wifi_rssi: WiFi RSSI percentage (0-100).
+        wifi_signal: WiFi signal strength in dBm.
+        uptime: Device uptime string (e.g. "3T12:34:56").
+        module: Hardware module type string.
+        controls: Hostnames this device controls, parsed from spreadsheet.
+    """
+
+    device_name: str
+    friendly_name: str
+    hostname: str
+    firmware_version: str
+    mqtt_host: str
+    mqtt_port: int
+    mqtt_topic: str
+    mqtt_client: str
+    mac: str
+    ip: str
+    wifi_ssid: str = ""
+    wifi_rssi: int = 0
+    wifi_signal: int = 0
+    uptime: str = ""
+    module: str = ""
+    controls: tuple[str, ...] = ()
+
+
 @dataclass
 class Host:
     """A logical host with one or more network interfaces.
@@ -286,6 +331,7 @@ class Host:
     bridge_data: BridgeData | None = None
     nsdp_data: NSDPData | None = None
     switch_data: SwitchData | None = None
+    tasmota_data: TasmotaData | None = None
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:
