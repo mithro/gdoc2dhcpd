@@ -48,26 +48,31 @@ def compute_desired_config(host: Host, tasmota_config: TasmotaConfig) -> dict[st
     Returns:
         Mapping of Tasmota command name to desired value.
     """
-    # FriendlyName: "Power for X" where X is the controlled device(s)
+    is_plug = host.machine_name.startswith("au-plug-")
     controls_str = host.extra.get("Controls", "").strip()
-    if controls_str:
-        # Controls may be comma or newline separated
-        import re
-        controls = [c.strip() for c in re.split(r"[,\n]", controls_str) if c.strip()]
-        friendly = "Power for " + ", ".join(controls)
-    else:
-        friendly = host.machine_name
 
-    return {
-        "DeviceName": host.machine_name,
-        "FriendlyName1": friendly,
+    desired: dict[str, str] = {}
+
+    if is_plug:
+        desired["DeviceName"] = host.machine_name
+        if controls_str:
+            # Controls may be comma or newline separated
+            import re
+            controls = [c.strip() for c in re.split(r"[,\n]", controls_str) if c.strip()]
+            desired["FriendlyName1"] = "Power for " + ", ".join(controls)
+        else:
+            desired["FriendlyName1"] = host.machine_name
+
+    desired.update({
         "Hostname": host.hostname,
         "Topic": host.machine_name,
         "MqttHost": tasmota_config.mqtt_host,
         "MqttPort": str(tasmota_config.mqtt_port),
         "MqttUser": tasmota_config.mqtt_user,
         "MqttPassword": tasmota_config.mqtt_password,
-    }
+    })
+
+    return desired
 
 
 def _get_current_value(field: str, tasmota_data) -> str:
