@@ -139,8 +139,16 @@ def _send_tasmota_command(
     try:
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
-    except (urllib.error.URLError, OSError, json.JSONDecodeError, TimeoutError):
+            body = resp.read()
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return None
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        print(
+            f"Warning: {ip} returned invalid JSON for command",
+            file=sys.stderr,
+        )
         return None
 
 
@@ -192,18 +200,25 @@ def configure_tasmota_device(
     if dry_run:
         return True
 
-    # Apply each change
+    # Apply drifted fields + credentials (which we can't read back to detect drift)
     all_ok = True
     desired = compute_desired_config(host, tasmota_config)
-    for field, value in desired.items():
+    fields_to_push = {d.field: d.desired for d in drifts}
+    for cred_field in ("MqttUser", "MqttPassword"):
+        if cred_field in desired:
+            fields_to_push[cred_field] = desired[cred_field]
+
+    for field, value in fields_to_push.items():
+        # Mask credentials in log output
+        log_value = "****" if field in ("MqttPassword", "MqttUser") else field
         command = f"{field} {value}"
         result = _send_tasmota_command(ip, command)
         if result is None:
             if verbose:
-                print(f"    FAILED: {command}", file=sys.stderr)
+                print(f"    FAILED: {log_value}", file=sys.stderr)
             all_ok = False
         elif verbose:
-            print(f"    Applied: {field}", file=sys.stderr)
+            print(f"    Applied: {log_value}", file=sys.stderr)
 
     return all_ok
 

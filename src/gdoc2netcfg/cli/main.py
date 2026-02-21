@@ -1396,15 +1396,17 @@ def cmd_tasmota_scan(args: argparse.Namespace) -> int:
     # Report
     iot_hosts = [h for h in hosts if h.sheet_type == "IoT"]
     hosts_with_data = sum(1 for h in iot_hosts if h.tasmota_data is not None)
-    unknown = [k for k in tasmota_data if k.startswith("_unknown/")]
+    from gdoc2netcfg.supplements.tasmota import _UNKNOWN_PREFIX, _unknown_key
+
+    unknown = [k for k in tasmota_data if k.startswith(_UNKNOWN_PREFIX)]
     print(f"\nTasmota data for {hosts_with_data}/{len(iot_hosts)} IoT hosts.")
 
     if unknown:
         print(f"\n{len(unknown)} unknown device(s) found on subnet:")
         matches = match_unknown_devices(hosts, tasmota_data)
         for ip, matched in matches:
-            name = tasmota_data.get(f"_unknown/{ip}", {}).get("device_name", "?")
-            mac = tasmota_data.get(f"_unknown/{ip}", {}).get("mac", "?")
+            name = tasmota_data.get(_unknown_key(ip), {}).get("device_name", "?")
+            mac = tasmota_data.get(_unknown_key(ip), {}).get("mac", "?")
             if matched:
                 print(f"  {ip} — {name} (MAC {mac}) → matches {matched}")
             else:
@@ -1431,8 +1433,10 @@ def cmd_tasmota_show(args: argparse.Namespace) -> int:
         return 1
 
     # Separate known vs unknown
-    known = {k: v for k, v in tasmota_data.items() if not k.startswith("_unknown/")}
-    unknown = {k: v for k, v in tasmota_data.items() if k.startswith("_unknown/")}
+    from gdoc2netcfg.supplements.tasmota import _UNKNOWN_PREFIX
+
+    known = {k: v for k, v in tasmota_data.items() if not k.startswith(_UNKNOWN_PREFIX)}
+    unknown = {k: v for k, v in tasmota_data.items() if k.startswith(_UNKNOWN_PREFIX)}
 
     for hostname in sorted(known.keys()):
         data = known[hostname]
@@ -1460,7 +1464,7 @@ def cmd_tasmota_show(args: argparse.Namespace) -> int:
         print("Unknown devices (not in spreadsheet)")
         print("=" * 60)
         for key in sorted(unknown.keys()):
-            ip = key[len("_unknown/"):]
+            ip = key[len(_UNKNOWN_PREFIX):]
             data = unknown[key]
             name = data.get("device_name", "?")
             mac = data.get("mac", "?")
@@ -1563,18 +1567,10 @@ def cmd_tasmota_ha_status(args: argparse.Namespace) -> int:
         )
         return 1
 
-    from gdoc2netcfg.supplements.tasmota import (
-        enrich_hosts_with_tasmota,
-        load_tasmota_cache,
-    )
     from gdoc2netcfg.supplements.tasmota_ha import check_ha_status
 
-    # Build full pipeline for host data
-    _records, hosts, _inventory, _result = _build_pipeline(args)
-
-    cache_path = Path(config.cache.directory) / "tasmota.json"
-    tasmota_cache = load_tasmota_cache(cache_path)
-    enrich_hosts_with_tasmota(hosts, tasmota_cache)
+    # _build_pipeline already loads tasmota cache and enriches hosts
+    _records, hosts, _inventory, _result = _build_pipeline(config)
 
     tasmota_hosts = [h for h in hosts if h.tasmota_data is not None]
     if not tasmota_hosts:

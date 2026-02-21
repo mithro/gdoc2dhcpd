@@ -26,6 +26,13 @@ if TYPE_CHECKING:
     from gdoc2netcfg.models.host import Host
     from gdoc2netcfg.models.network import Site
 
+_UNKNOWN_PREFIX = "_unknown/"
+
+
+def _unknown_key(ip: str) -> str:
+    """Build cache key for an unknown device by IP."""
+    return f"{_UNKNOWN_PREFIX}{ip}"
+
 
 def _fetch_tasmota_status(ip: str, timeout: float = 3.0) -> dict | None:
     """Fetch Status 0 from a Tasmota device via HTTP.
@@ -41,8 +48,18 @@ def _fetch_tasmota_status(ip: str, timeout: float = 3.0) -> dict | None:
     try:
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
-    except (urllib.error.URLError, OSError, json.JSONDecodeError, TimeoutError):
+            body = resp.read()
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return None
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        # Device responded but returned non-JSON — log as warning since
+        # this indicates an unexpected device or firmware issue.
+        print(
+            f"Warning: {ip} responded but returned invalid JSON",
+            file=sys.stderr,
+        )
         return None
 
 
@@ -101,6 +118,10 @@ def _scan_subnet(
     verbose: bool = False,
 ) -> dict[str, dict]:
     """Probe all 254 IPs on a /24 subnet for Tasmota devices.
+
+    Note: Assumes a /24 subnet. The IoT VLAN is expected to be a single
+    /24 (e.g. 10.1.90.0/24). If the VLAN spans multiple /24s, this
+    function would need to be called once per third-octet.
 
     Args:
         subnet_prefix: First three octets with trailing dot (e.g. "10.1.90.").
@@ -230,7 +251,7 @@ def scan_tasmota(
             if ip in ip_to_hostname:
                 # Already captured in phase 1
                 continue
-            tasmota_data[f"_unknown/{ip}"] = parsed
+            tasmota_data[_unknown_key(ip)] = parsed
     elif verbose:
         print(
             "Phase 2: Skipped — no 'iot' VLAN found in site config.",
@@ -322,9 +343,9 @@ def match_unknown_devices(
 
     matches: list[tuple[str, str | None]] = []
     for key, info in sorted(tasmota_cache.items()):
-        if not key.startswith("_unknown/"):
+        if not key.startswith(_UNKNOWN_PREFIX):
             continue
-        ip = key[len("_unknown/"):]
+        ip = key[len(_UNKNOWN_PREFIX):]
         device_mac = info.get("mac", "").upper()
         matched = mac_to_hostname.get(device_mac)
         matches.append((ip, matched))
