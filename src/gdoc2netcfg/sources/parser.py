@@ -64,7 +64,7 @@ _MACHINE_COLUMNS = {"machine"}
 _MAC_COLUMNS = {"mac address", "mac"}
 _IP_COLUMNS = {"ip", "ipv4"}
 _INTERFACE_COLUMNS = {"interface"}
-_SITE_COLUMNS = {"site", "location"}
+_SITE_COLUMNS = {"site"}
 
 
 def parse_csv(csv_text: str, sheet_name: str) -> list[DeviceRecord]:
