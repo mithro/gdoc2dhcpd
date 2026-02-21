@@ -48,10 +48,10 @@ def compute_desired_config(host: Host, tasmota_config: TasmotaConfig) -> dict[st
     Returns:
         Mapping of Tasmota command name to desired value.
     """
-    # FriendlyName: use Controls column if present, otherwise machine name
-    controls_str = host.extra.get("Controls", "")
-    if controls_str.strip():
-        friendly = f"Power for {controls_str.strip()}"
+    # FriendlyName: use Notes/Comments column if present, otherwise machine name
+    notes = host.extra.get("Notes / Comments", "").strip()
+    if notes:
+        friendly = notes
     else:
         friendly = host.machine_name
 
@@ -242,7 +242,7 @@ def configure_all_tasmota_devices(
     """
     success = 0
     fail = 0
-    for host in sorted(hosts, key=lambda h: h.hostname):
+    for host in hosts:
         ok = configure_tasmota_device(
             host, tasmota_config, dry_run=dry_run, verbose=verbose,
         )

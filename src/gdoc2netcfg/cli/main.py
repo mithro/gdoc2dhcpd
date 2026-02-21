@@ -1523,7 +1523,10 @@ def cmd_tasmota_configure(args: argparse.Namespace) -> int:
     dry_run = args.dry_run
 
     if args.configure_all:
-        tasmota_hosts = [h for h in hosts if h.tasmota_data is not None]
+        tasmota_hosts = sorted(
+            [h for h in hosts if h.tasmota_data is not None],
+            key=lambda h: _natural_sort_key(h.tasmota_data.device_name if h.tasmota_data else h.hostname),
+        )
         success, fail = configure_all_tasmota_devices(
             tasmota_hosts, config.tasmota, dry_run=dry_run, verbose=True,
         )

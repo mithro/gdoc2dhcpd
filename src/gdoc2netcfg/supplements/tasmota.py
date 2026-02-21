@@ -12,6 +12,7 @@ tasmota_configure.py.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -296,10 +297,10 @@ def enrich_hosts_with_tasmota(
         if info is None:
             continue
 
-        # Parse controls from spreadsheet extra column
+        # Parse controls from spreadsheet extra column (comma or newline separated)
         controls_str = host.extra.get("Controls", "")
         controls = tuple(
-            c.strip() for c in controls_str.split(",") if c.strip()
+            c.strip() for c in re.split(r"[,\n]", controls_str) if c.strip()
         )
 
         host.tasmota_data = TasmotaData(
