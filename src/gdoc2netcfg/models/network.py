@@ -89,6 +89,7 @@ class Site:
     name: str
     domain: str
     site_octet: int = 0
+    all_sites: tuple[str, ...] = ()
     vlans: dict[int, VLAN] = field(default_factory=dict)
     ipv6_prefixes: list[IPv6Prefix] = field(default_factory=list)
     network_subdomains: dict[int, str] = field(default_factory=dict)

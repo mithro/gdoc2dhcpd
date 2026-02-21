@@ -1,5 +1,7 @@
 """Tests for IPv4 site remapping: X-placeholder resolution and site filtering."""
 
+import pytest
+
 from gdoc2netcfg.derivations.ip_remap import (
     filter_and_resolve_records,
     is_record_for_site,
@@ -185,3 +187,69 @@ class TestFilterAndResolveRecords:
         original = _record("10.2.10.11", site="monarto")
         result = filter_and_resolve_records([original], site)
         assert result[0] is original
+
+
+class TestSiteValidation:
+    """Validate that site column values are recognized site names."""
+
+    def _site_with_all(self, name: str = "welland", site_octet: int = 1) -> Site:
+        return Site(
+            name=name,
+            domain=f"{name}.mithis.com",
+            site_octet=site_octet,
+            all_sites=("welland", "monarto", "ps1"),
+        )
+
+    def test_invalid_site_raises(self):
+        """A site value not in all_sites raises ValueError."""
+        site = self._site_with_all()
+        records = [_record("10.X.90.1", site="Back Shed", machine="au-plug-28")]
+        with pytest.raises(ValueError, match="invalid site value 'Back Shed'"):
+            filter_and_resolve_records(records, site)
+
+    def test_valid_other_site_filtered_not_rejected(self):
+        """A valid site name for another site is filtered out, not rejected."""
+        site = self._site_with_all("welland")
+        records = [_record("10.2.10.1", site="monarto", machine="ten64")]
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 0
+
+    def test_valid_current_site_kept(self):
+        """A valid site name matching the current site is kept."""
+        site = self._site_with_all("welland")
+        records = [_record("10.X.10.1", site="welland", machine="desktop")]
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 1
+        assert result[0].ip == "10.1.10.1"
+
+    def test_empty_site_passes_validation(self):
+        """Empty site value is always valid (applies to all sites)."""
+        site = self._site_with_all()
+        records = [_record("10.X.90.1", site="", machine="thermostat")]
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 1
+
+    def test_case_insensitive_validation(self):
+        """Site validation is case-insensitive."""
+        site = self._site_with_all()
+        records = [_record("10.2.10.1", site="Monarto", machine="ten64")]
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 0  # Valid but filtered (different site)
+
+    def test_no_all_sites_skips_validation(self):
+        """When all_sites is empty, no validation is performed."""
+        site = _site("welland", site_octet=1)  # no all_sites
+        records = [_record("10.1.90.1", site="Back Shed", machine="au-plug-28")]
+        # Should not raise — validation skipped
+        result = filter_and_resolve_records(records, site)
+        assert len(result) == 0  # Filtered out but not rejected
+
+    def test_error_message_includes_context(self):
+        """Error message includes sheet, row, machine, and valid sites."""
+        site = self._site_with_all()
+        records = [DeviceRecord(
+            sheet_name="iot", row_number=42,
+            machine="au-plug-28", ip="10.X.90.78", site="Back Shed",
+        )]
+        with pytest.raises(ValueError, match=r"iot row 42.*au-plug-28.*welland, monarto, ps1"):
+            filter_and_resolve_records(records, site)

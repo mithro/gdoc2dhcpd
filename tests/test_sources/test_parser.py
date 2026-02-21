@@ -104,3 +104,19 @@ class TestParseCSV:
         assert records[0].machine == "desktop"
         assert records[0].mac_address == "aa:bb:cc:dd:ee:ff"
         assert records[0].ip == "10.1.10.1"
+
+    def test_site_column_populates_site_field(self):
+        """An explicit 'Site' column is used for site filtering."""
+        csv_text = "Machine,MAC Address,IP,Site\nserver,11:22:33:44:55:66,10.1.10.1,monarto"
+        records = parse_csv(csv_text, "Test")
+        assert records[0].site == "monarto"
+
+    def test_location_column_not_used_as_site(self):
+        """A 'Location' column must NOT be treated as a site filter."""
+        csv_text = (
+            "Machine,MAC Address,IP,Location\n"
+            "plug1,11:22:33:44:55:66,10.1.90.1,Back Shed"
+        )
+        records = parse_csv(csv_text, "Test")
+        assert records[0].site == ""
+        assert records[0].extra.get("Location") == "Back Shed"
