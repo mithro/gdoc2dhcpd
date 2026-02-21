@@ -1355,6 +1355,241 @@ def cmd_nsdp_show(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: tasmota scan
+# ---------------------------------------------------------------------------
+
+def cmd_tasmota_scan(args: argparse.Namespace) -> int:
+    """Scan for Tasmota devices on the IoT VLAN."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.tasmota import (
+        enrich_hosts_with_tasmota,
+        match_unknown_devices,
+        scan_tasmota,
+    )
+
+    # Minimal pipeline to get hosts with IPs
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    cache_path = Path(config.cache.directory) / "tasmota.json"
+    tasmota_data = scan_tasmota(
+        hosts,
+        cache_path=cache_path,
+        site=config.site,
+        force=args.force,
+        verbose=True,
+    )
+
+    enrich_hosts_with_tasmota(hosts, tasmota_data)
+
+    # Report
+    iot_hosts = [h for h in hosts if h.sheet_type == "IoT"]
+    hosts_with_data = sum(1 for h in iot_hosts if h.tasmota_data is not None)
+    unknown = [k for k in tasmota_data if k.startswith("_unknown/")]
+    print(f"\nTasmota data for {hosts_with_data}/{len(iot_hosts)} IoT hosts.")
+
+    if unknown:
+        print(f"\n{len(unknown)} unknown device(s) found on subnet:")
+        matches = match_unknown_devices(hosts, tasmota_data)
+        for ip, matched in matches:
+            name = tasmota_data.get(f"_unknown/{ip}", {}).get("device_name", "?")
+            mac = tasmota_data.get(f"_unknown/{ip}", {}).get("mac", "?")
+            if matched:
+                print(f"  {ip} — {name} (MAC {mac}) → matches {matched}")
+            else:
+                print(f"  {ip} — {name} (MAC {mac}) — not in spreadsheet")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: tasmota show
+# ---------------------------------------------------------------------------
+
+def cmd_tasmota_show(args: argparse.Namespace) -> int:
+    """Show cached Tasmota device data."""
+    config = _load_config(args)
+
+    from gdoc2netcfg.supplements.tasmota import load_tasmota_cache
+
+    cache_path = Path(config.cache.directory) / "tasmota.json"
+    tasmota_data = load_tasmota_cache(cache_path)
+
+    if not tasmota_data:
+        print("No Tasmota data cached. Run 'gdoc2netcfg tasmota scan' first.")
+        return 1
+
+    # Separate known vs unknown
+    known = {k: v for k, v in tasmota_data.items() if not k.startswith("_unknown/")}
+    unknown = {k: v for k, v in tasmota_data.items() if k.startswith("_unknown/")}
+
+    for hostname in sorted(known.keys()):
+        data = known[hostname]
+        print(f"\n{'='*60}")
+        print(f"{hostname}")
+        print("=" * 60)
+        print(f"  Device Name:  {data.get('device_name', '?')}")
+        print(f"  Friendly:     {data.get('friendly_name', '?')}")
+        print(f"  Hostname:     {data.get('hostname', '?')}")
+        print(f"  IP:           {data.get('ip', '?')}")
+        print(f"  MAC:          {data.get('mac', '?')}")
+        print(f"  Firmware:     {data.get('firmware_version', '?')}")
+        print(f"  Module:       {data.get('module', '?')}")
+        print(f"  Uptime:       {data.get('uptime', '?')}")
+        print(f"  WiFi SSID:    {data.get('wifi_ssid', '?')}")
+        print(f"  WiFi RSSI:    {data.get('wifi_rssi', '?')}%")
+        print(f"  WiFi Signal:  {data.get('wifi_signal', '?')} dBm")
+        print(f"  MQTT Host:    {data.get('mqtt_host', '?')}")
+        print(f"  MQTT Port:    {data.get('mqtt_port', '?')}")
+        print(f"  MQTT Topic:   {data.get('mqtt_topic', '?')}")
+        print(f"  MQTT Client:  {data.get('mqtt_client', '?')}")
+
+    if unknown:
+        print(f"\n{'='*60}")
+        print("Unknown devices (not in spreadsheet)")
+        print("=" * 60)
+        for key in sorted(unknown.keys()):
+            ip = key[len("_unknown/"):]
+            data = unknown[key]
+            name = data.get("device_name", "?")
+            mac = data.get("mac", "?")
+            fw = data.get("firmware_version", "?")
+            print(f"  {ip:15s}  {name:20s}  MAC={mac}  fw={fw}")
+
+    print(f"\n{len(known)} known + {len(unknown)} unknown device(s) in cache.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: tasmota configure
+# ---------------------------------------------------------------------------
+
+def cmd_tasmota_configure(args: argparse.Namespace) -> int:
+    """Push configuration to Tasmota devices."""
+    config = _load_config(args)
+
+    if not args.host and not args.configure_all:
+        print("Error: specify a hostname or use --all", file=sys.stderr)
+        return 1
+
+    if not config.tasmota.mqtt_host:
+        print(
+            "Error: [tasmota] mqtt_host not configured in gdoc2netcfg.toml",
+            file=sys.stderr,
+        )
+        return 1
+
+    from gdoc2netcfg.derivations.host_builder import build_hosts
+    from gdoc2netcfg.sources.parser import parse_csv
+    from gdoc2netcfg.supplements.tasmota import (
+        enrich_hosts_with_tasmota,
+        load_tasmota_cache,
+    )
+    from gdoc2netcfg.supplements.tasmota_configure import (
+        configure_all_tasmota_devices,
+        configure_tasmota_device,
+    )
+
+    # Minimal pipeline to get hosts
+    csv_data = _fetch_or_load_csvs(config, use_cache=True)
+    _enrich_site_from_vlan_sheet(config, csv_data)
+    all_records = []
+    for name, csv_text in csv_data:
+        if name == "vlan_allocations":
+            continue
+        records = parse_csv(csv_text, name)
+        all_records.extend(records)
+
+    hosts = build_hosts(all_records, config.site)
+
+    cache_path = Path(config.cache.directory) / "tasmota.json"
+    tasmota_cache = load_tasmota_cache(cache_path)
+    enrich_hosts_with_tasmota(hosts, tasmota_cache)
+
+    dry_run = args.dry_run
+
+    if args.configure_all:
+        tasmota_hosts = [h for h in hosts if h.tasmota_data is not None]
+        success, fail = configure_all_tasmota_devices(
+            tasmota_hosts, config.tasmota, dry_run=dry_run, verbose=True,
+        )
+        print(f"\n{success} succeeded, {fail} failed.")
+        return 1 if fail > 0 else 0
+    else:
+        # Find the specific host
+        target = None
+        for h in hosts:
+            if h.hostname == args.host or h.machine_name == args.host:
+                target = h
+                break
+        if target is None:
+            print(f"Error: host '{args.host}' not found", file=sys.stderr)
+            return 1
+        if target.tasmota_data is None:
+            print(
+                f"Error: no Tasmota data for '{args.host}'. Run 'tasmota scan' first.",
+                file=sys.stderr,
+            )
+            return 1
+        ok = configure_tasmota_device(
+            target, config.tasmota, dry_run=dry_run, verbose=True,
+        )
+        return 0 if ok else 1
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: tasmota ha-status
+# ---------------------------------------------------------------------------
+
+def cmd_tasmota_ha_status(args: argparse.Namespace) -> int:
+    """Check Home Assistant integration for Tasmota devices."""
+    config = _load_config(args)
+
+    if not config.homeassistant.url or not config.homeassistant.token:
+        print(
+            "Error: [homeassistant] url and token must be configured in gdoc2netcfg.toml",
+            file=sys.stderr,
+        )
+        return 1
+
+    from gdoc2netcfg.supplements.tasmota import (
+        enrich_hosts_with_tasmota,
+        load_tasmota_cache,
+    )
+    from gdoc2netcfg.supplements.tasmota_ha import check_ha_status
+
+    # Build full pipeline for host data
+    _records, hosts, _inventory, _result = _build_pipeline(args)
+
+    cache_path = Path(config.cache.directory) / "tasmota.json"
+    tasmota_cache = load_tasmota_cache(cache_path)
+    enrich_hosts_with_tasmota(hosts, tasmota_cache)
+
+    tasmota_hosts = [h for h in hosts if h.tasmota_data is not None]
+    if not tasmota_hosts:
+        print("No Tasmota devices found. Run 'tasmota scan' first.")
+        return 1
+
+    ha_status = check_ha_status(tasmota_hosts, config.homeassistant, verbose=True)
+
+    ok = sum(1 for s in ha_status.values() if s.get("exists"))
+    total = len(ha_status)
+    print(f"\n{ok}/{total} Tasmota devices registered in Home Assistant.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: password
 # ---------------------------------------------------------------------------
 
@@ -1566,6 +1801,42 @@ def main(argv: list[str] | None = None) -> int:
 
     nsdp_subparsers.add_parser("show", help="Show cached NSDP data")
 
+    # tasmota (with subcommands)
+    tasmota_parser = subparsers.add_parser(
+        "tasmota", help="Tasmota IoT device management",
+    )
+    tasmota_subparsers = tasmota_parser.add_subparsers(dest="tasmota_command")
+
+    tasmota_scan_parser = tasmota_subparsers.add_parser(
+        "scan", help="Scan for Tasmota devices on IoT VLAN",
+    )
+    tasmota_scan_parser.add_argument(
+        "--force", action="store_true",
+        help="Force re-scan even if cache is fresh",
+    )
+
+    tasmota_subparsers.add_parser("show", help="Show cached Tasmota data")
+
+    tasmota_configure_parser = tasmota_subparsers.add_parser(
+        "configure", help="Push configuration to Tasmota devices",
+    )
+    tasmota_configure_parser.add_argument(
+        "host", nargs="?", default=None,
+        help="Hostname to configure (omit with --all for all devices)",
+    )
+    tasmota_configure_parser.add_argument(
+        "--all", action="store_true", dest="configure_all",
+        help="Configure all known Tasmota devices",
+    )
+    tasmota_configure_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would change without applying",
+    )
+
+    tasmota_subparsers.add_parser(
+        "ha-status", help="Check Home Assistant integration status",
+    )
+
     # password (device credential lookup)
     pwd_parser = subparsers.add_parser(
         "password", help="Look up device credentials",
@@ -1614,6 +1885,20 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_nsdp_show(args)
         else:
             nsdp_parser.print_help()
+            return 0
+
+    # Handle tasmota subcommands
+    if args.command == "tasmota":
+        if args.tasmota_command == "scan":
+            return cmd_tasmota_scan(args)
+        elif args.tasmota_command == "show":
+            return cmd_tasmota_show(args)
+        elif args.tasmota_command == "configure":
+            return cmd_tasmota_configure(args)
+        elif args.tasmota_command == "ha-status":
+            return cmd_tasmota_ha_status(args)
+        else:
+            tasmota_parser.print_help()
             return 0
 
     commands = {
