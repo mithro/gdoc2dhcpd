@@ -182,6 +182,16 @@ def _build_pipeline(config):
     nsdp_cache = load_nsdp_cache(nsdp_cache_path)
     enrich_hosts_with_nsdp(hosts, nsdp_cache)
 
+    # Load Tasmota cache and enrich (don't scan — that's a separate subcommand)
+    from gdoc2netcfg.supplements.tasmota import (
+        enrich_hosts_with_tasmota,
+        load_tasmota_cache,
+    )
+
+    tasmota_cache_path = Path(config.cache.directory) / "tasmota.json"
+    tasmota_cache = load_tasmota_cache(tasmota_cache_path)
+    enrich_hosts_with_tasmota(hosts, tasmota_cache)
+
     # Validate
     result = validate_all(all_records, hosts, inventory)
 
