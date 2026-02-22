@@ -1006,6 +1006,58 @@ class TestComputeDrift:
         with pytest.raises(ValueError, match="no tasmota_data"):
             compute_drift(host, config)
 
+    def test_topic_drift_no_mqtt_host_is_safe(self):
+        """Topic change when mqtt_host is empty = initial setup, no warning."""
+        host = _make_host(hostname="au-plug-10")
+        host.tasmota_data = _make_tasmota_data(
+            device_name="au-plug-10",
+            friendly_name="au-plug-10",
+            hostname="au-plug-10",
+            mqtt_topic="tasmota_AABBCC",  # Default Tasmota topic
+            mqtt_host="",  # Not connected to any broker
+            mqtt_port=1883,
+        )
+        config = _make_tasmota_config()
+        drifts = compute_drift(host, config)
+        topic_drifts = [d for d in drifts if d.field == "Topic"]
+        assert len(topic_drifts) == 1
+        assert topic_drifts[0].warning == ""
+
+    def test_topic_drift_with_mqtt_host_warns(self):
+        """Topic change when mqtt_host is set = HA-breaking, gets warning."""
+        host = _make_host(hostname="au-plug-10")
+        host.tasmota_data = _make_tasmota_data(
+            device_name="au-plug-10",
+            friendly_name="au-plug-10",
+            hostname="au-plug-10",
+            mqtt_topic="old-topic",
+            mqtt_host="ha.welland.mithis.com",  # Connected to broker
+            mqtt_port=1883,
+        )
+        config = _make_tasmota_config()
+        drifts = compute_drift(host, config)
+        topic_drifts = [d for d in drifts if d.field == "Topic"]
+        assert len(topic_drifts) == 1
+        assert topic_drifts[0].warning != ""
+        assert "orphan" in topic_drifts[0].warning.lower()
+        assert "old_topic" in topic_drifts[0].warning  # Entity ID
+
+    def test_non_topic_drift_never_warns(self):
+        """Non-Topic drifts should never have warnings."""
+        host = _make_host(hostname="au-plug-10")
+        host.tasmota_data = _make_tasmota_data(
+            device_name="wrong",
+            friendly_name="wrong",
+            hostname="wrong",
+            mqtt_topic="au-plug-10",  # Topic is correct
+            mqtt_host="ha.welland.mithis.com",
+            mqtt_port=1883,
+        )
+        config = _make_tasmota_config()
+        drifts = compute_drift(host, config)
+        for d in drifts:
+            assert d.warning == "", f"Unexpected warning on {d.field}"
+
 
 # ---------------------------------------------------------------------------
 # _send_tasmota_command
@@ -1128,6 +1180,70 @@ class TestConfigureTasmotaDevice:
 
         result = configure_tasmota_device(host, config)
         assert result is False
+
+    @patch("gdoc2netcfg.supplements.tasmota_configure._send_tasmota_command")
+    def test_topic_rename_on_ha_device_skipped_without_force(self, mock_send):
+        """Topic change on HA-connected device should NOT be pushed without --force."""
+        host = _make_host(hostname="au-plug-10")
+        host.tasmota_data = _make_tasmota_data(
+            device_name="au-plug-10",
+            friendly_name="au-plug-10",
+            hostname="au-plug-10",
+            mqtt_topic="old-topic",
+            mqtt_host="ha.welland.mithis.com",  # Connected to broker
+            mqtt_port=1883,
+        )
+        config = _make_tasmota_config()
+        mock_send.return_value = {"Topic": "au-plug-10"}
+
+        result = configure_tasmota_device(host, config)
+        assert result is True
+
+        # Topic should NOT have been sent
+        sent_fields = [call.args[1].split(" ")[0] for call in mock_send.call_args_list]
+        assert "Topic" not in sent_fields
+
+    @patch("gdoc2netcfg.supplements.tasmota_configure._send_tasmota_command")
+    def test_topic_rename_on_ha_device_applied_with_force(self, mock_send):
+        """Topic change on HA-connected device SHOULD be pushed with --force."""
+        host = _make_host(hostname="au-plug-10")
+        host.tasmota_data = _make_tasmota_data(
+            device_name="au-plug-10",
+            friendly_name="au-plug-10",
+            hostname="au-plug-10",
+            mqtt_topic="old-topic",
+            mqtt_host="ha.welland.mithis.com",
+            mqtt_port=1883,
+        )
+        config = _make_tasmota_config()
+        mock_send.return_value = {"Topic": "au-plug-10"}
+
+        result = configure_tasmota_device(host, config, force=True)
+        assert result is True
+
+        sent_fields = [call.args[1].split(" ")[0] for call in mock_send.call_args_list]
+        assert "Topic" in sent_fields
+
+    @patch("gdoc2netcfg.supplements.tasmota_configure._send_tasmota_command")
+    def test_topic_initial_setup_applied_without_force(self, mock_send):
+        """Topic change when mqtt_host is empty = initial setup, no --force needed."""
+        host = _make_host(hostname="au-plug-10")
+        host.tasmota_data = _make_tasmota_data(
+            device_name="au-plug-10",
+            friendly_name="au-plug-10",
+            hostname="au-plug-10",
+            mqtt_topic="tasmota_AABBCC",  # Default topic
+            mqtt_host="",  # Not connected
+            mqtt_port=1883,
+        )
+        config = _make_tasmota_config()
+        mock_send.return_value = {"Topic": "au-plug-10"}
+
+        result = configure_tasmota_device(host, config)
+        assert result is True
+
+        sent_fields = [call.args[1].split(" ")[0] for call in mock_send.call_args_list]
+        assert "Topic" in sent_fields
 
 
 # ---------------------------------------------------------------------------

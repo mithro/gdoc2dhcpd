@@ -32,11 +32,14 @@ class ConfigDrift:
         field: Tasmota command name (e.g. "DeviceName", "MqttHost").
         current: Current value on the device.
         desired: Desired value from pipeline config.
+        warning: Non-empty if this change requires manual attention
+            (e.g. Topic rename on an HA-connected device).
     """
 
     field: str
     current: str
     desired: str
+    warning: str = ""
 
 
 def compute_desired_config(host: Host, tasmota_config: TasmotaConfig) -> dict[str, str]:
@@ -118,10 +121,23 @@ def compute_drift(host: Host, tasmota_config: TasmotaConfig) -> list[ConfigDrift
         if field in ("MqttUser", "MqttPassword"):
             continue
         if current != desired_value:
+            warning = ""
+            if field == "Topic" and host.tasmota_data.mqtt_host:
+                # Device is already connected to an MQTT broker, so HA
+                # has an entity registered under the current topic.
+                # Changing it would orphan that entity.
+                old_entity = "switch.tasmota_" + current.replace("-", "_")
+                warning = (
+                    f"Device is connected to MQTT broker "
+                    f"({host.tasmota_data.mqtt_host}); changing Topic "
+                    f"will orphan HA entity '{old_entity}' — use --force "
+                    f"to apply"
+                )
             drifts.append(ConfigDrift(
                 field=field,
                 current=current,
                 desired=desired_value,
+                warning=warning,
             ))
 
     return drifts
@@ -165,6 +181,7 @@ def configure_tasmota_device(
     tasmota_config: TasmotaConfig,
     dry_run: bool = False,
     verbose: bool = False,
+    force: bool = False,
 ) -> bool:
     """Push desired configuration to a single Tasmota device.
 
@@ -175,6 +192,8 @@ def configure_tasmota_device(
         tasmota_config: Desired MQTT settings.
         dry_run: If True, show changes without applying.
         verbose: Print progress to stderr.
+        force: If True, apply changes that would break HA integration
+            (e.g. Topic rename on an HA-connected device).
 
     Returns:
         True if all changes were applied (or no changes needed).
@@ -197,21 +216,42 @@ def configure_tasmota_device(
             print(f"  {host.hostname}: OK (no drift)", file=sys.stderr)
         return True
 
+    # Separate safe drifts from those requiring --force
+    safe_drifts = [d for d in drifts if not d.warning]
+    warned_drifts = [d for d in drifts if d.warning]
+
     if verbose:
         print(f"  {host.hostname} ({ip}):", file=sys.stderr)
-        for d in drifts:
+        for d in safe_drifts:
             print(
                 f"    {d.field}: {d.current!r} → {d.desired!r}",
                 file=sys.stderr,
             )
+        for d in warned_drifts:
+            if force:
+                print(
+                    f"    {d.field}: {d.current!r} → {d.desired!r} (forced)",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"    {d.field}: {d.current!r} → {d.desired!r} "
+                    f"(SKIPPED: {d.warning})",
+                    file=sys.stderr,
+                )
 
     if dry_run:
         return True
 
+    # Determine which drifts to actually apply
+    drifts_to_apply = safe_drifts
+    if force:
+        drifts_to_apply = drifts  # All drifts including warned ones
+
     # Apply drifted fields + credentials (which we can't read back to detect drift)
     all_ok = True
     desired = compute_desired_config(host, tasmota_config)
-    fields_to_push = {d.field: d.desired for d in drifts}
+    fields_to_push = {d.field: d.desired for d in drifts_to_apply}
     for cred_field in ("MqttUser", "MqttPassword"):
         if cred_field in desired:
             fields_to_push[cred_field] = desired[cred_field]
@@ -239,6 +279,7 @@ def configure_all_tasmota_devices(
     tasmota_config: TasmotaConfig,
     dry_run: bool = False,
     verbose: bool = False,
+    force: bool = False,
 ) -> tuple[int, int]:
     """Push configuration to all Tasmota devices.
 
@@ -247,6 +288,7 @@ def configure_all_tasmota_devices(
         tasmota_config: Desired MQTT settings.
         dry_run: If True, show changes without applying.
         verbose: Print progress to stderr.
+        force: If True, apply HA-breaking changes (e.g. Topic rename).
 
     Returns:
         (success_count, fail_count) tuple.
@@ -256,6 +298,7 @@ def configure_all_tasmota_devices(
     for host in hosts:
         ok = configure_tasmota_device(
             host, tasmota_config, dry_run=dry_run, verbose=verbose,
+            force=force,
         )
         if ok:
             success += 1

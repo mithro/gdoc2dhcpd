@@ -1521,6 +1521,7 @@ def cmd_tasmota_configure(args: argparse.Namespace) -> int:
     enrich_hosts_with_tasmota(hosts, tasmota_cache)
 
     dry_run = args.dry_run
+    force = args.force
 
     if args.configure_all:
         tasmota_hosts = sorted(
@@ -1529,6 +1530,7 @@ def cmd_tasmota_configure(args: argparse.Namespace) -> int:
         )
         success, fail = configure_all_tasmota_devices(
             tasmota_hosts, config.tasmota, dry_run=dry_run, verbose=True,
+            force=force,
         )
         print(f"\n{success} succeeded, {fail} failed.")
         return 1 if fail > 0 else 0
@@ -1550,6 +1552,7 @@ def cmd_tasmota_configure(args: argparse.Namespace) -> int:
             return 1
         ok = configure_tasmota_device(
             target, config.tasmota, dry_run=dry_run, verbose=True,
+            force=force,
         )
         return 0 if ok else 1
 
@@ -1829,6 +1832,10 @@ def main(argv: list[str] | None = None) -> int:
     tasmota_configure_parser.add_argument(
         "--dry-run", action="store_true",
         help="Show what would change without applying",
+    )
+    tasmota_configure_parser.add_argument(
+        "--force", action="store_true",
+        help="Apply HA-breaking changes (e.g. Topic rename on connected device)",
     )
 
     tasmota_subparsers.add_parser(
