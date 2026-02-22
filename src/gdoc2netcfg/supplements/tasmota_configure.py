@@ -11,6 +11,7 @@ the supplement pattern where supplements are read-only.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -57,8 +58,7 @@ def compute_desired_config(host: Host, tasmota_config: TasmotaConfig) -> dict[st
         desired["DeviceName"] = host.machine_name
         if controls_str:
             # Controls may be comma or newline separated
-            import re
-            controls = [c.strip() for c in re.split(r"[,\n]", controls_str) if c.strip()]
+            controls = [c.strip() for c in re.split(r"[,\r\n]", controls_str) if c.strip()]
             desired["FriendlyName1"] = "Power for " + ", ".join(controls)
         else:
             desired["FriendlyName1"] = host.machine_name
@@ -218,15 +218,18 @@ def configure_tasmota_device(
 
     for field, value in fields_to_push.items():
         # Mask credentials in log output
-        log_value = "****" if field in ("MqttPassword", "MqttUser") else field
+        if field in ("MqttPassword", "MqttUser"):
+            log_display = f"{field} ****"
+        else:
+            log_display = f"{field} {value}"
         command = f"{field} {value}"
         result = _send_tasmota_command(ip, command)
         if result is None:
             if verbose:
-                print(f"    FAILED: {log_value}", file=sys.stderr)
+                print(f"    FAILED: {log_display}", file=sys.stderr)
             all_ok = False
         elif verbose:
-            print(f"    Applied: {log_value}", file=sys.stderr)
+            print(f"    Applied: {log_display}", file=sys.stderr)
 
     return all_ok
 

@@ -183,6 +183,15 @@ def scan_tasmota(
     """
     tasmota_data = load_tasmota_cache(cache_path)
 
+    # Clear stale _unknown/ entries on forced rescan — the sweep will
+    # rediscover any that still exist, and stale entries from old IPs
+    # would otherwise accumulate indefinitely.
+    if force:
+        tasmota_data = {
+            k: v for k, v in tasmota_data.items()
+            if not k.startswith(_UNKNOWN_PREFIX)
+        }
+
     # Check cache freshness
     if not force and cache_path.exists():
         age = time.time() - cache_path.stat().st_mtime
@@ -300,7 +309,7 @@ def enrich_hosts_with_tasmota(
         # Parse controls from spreadsheet extra column (comma or newline separated)
         controls_str = host.extra.get("Controls", "")
         controls = tuple(
-            c.strip() for c in re.split(r"[,\n]", controls_str) if c.strip()
+            c.strip() for c in re.split(r"[,\r\n]", controls_str) if c.strip()
         )
 
         host.tasmota_data = TasmotaData(

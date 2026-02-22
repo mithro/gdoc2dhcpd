@@ -466,6 +466,15 @@ class TestEnrichHostsWithTasmota:
         assert host.tasmota_data is not None
         assert host.tasmota_data.controls == ("desktop", "monitor", "server")
 
+    def test_controls_with_newlines(self):
+        host = _make_host(extra={"Controls": "desktop\nmonitor\r\nserver"})
+        cache = {
+            "au-plug-10": _min_cache_entry(),
+        }
+        enrich_hosts_with_tasmota([host], cache)
+        assert host.tasmota_data is not None
+        assert host.tasmota_data.controls == ("desktop", "monitor", "server")
+
     def test_controls_empty_string(self):
         host = _make_host(extra={"Controls": ""})
         cache = {
@@ -739,6 +748,36 @@ class TestScanTasmota:
 
     @patch("gdoc2netcfg.supplements.tasmota._scan_subnet")
     @patch("gdoc2netcfg.supplements.tasmota._fetch_tasmota_status")
+    def test_force_clears_stale_unknowns(self, mock_fetch, mock_sweep, tmp_path):
+        """Forced rescan should clear stale _unknown/ entries before re-sweeping."""
+        from gdoc2netcfg.models.network import VLAN, Site
+        from gdoc2netcfg.supplements.tasmota import save_tasmota_cache, scan_tasmota
+
+        # Pre-populate cache with a stale _unknown entry
+        cache_path = tmp_path / "tasmota.json"
+        save_tasmota_cache(cache_path, {
+            "known-plug": {"device_name": "known"},
+            "_unknown/10.1.90.99": {"device_name": "stale-rogue", "ip": "10.1.90.99"},
+        })
+
+        mock_fetch.return_value = None
+        mock_sweep.return_value = {}  # Sweep finds nothing
+
+        site = Site(
+            name="welland",
+            domain="welland.mithis.com",
+            site_octet=1,
+            vlans={90: VLAN(id=90, name="iot", subdomain="iot")},
+        )
+
+        result = scan_tasmota([], cache_path, site, force=True)
+
+        # Known entries preserved, stale _unknown/ cleared
+        assert "known-plug" in result
+        assert "_unknown/10.1.90.99" not in result
+
+    @patch("gdoc2netcfg.supplements.tasmota._scan_subnet")
+    @patch("gdoc2netcfg.supplements.tasmota._fetch_tasmota_status")
     def test_scan_no_iot_vlan(self, mock_fetch, mock_sweep, tmp_path):
         """When site has no 'iot' VLAN, phase 2 sweep is skipped."""
         from gdoc2netcfg.models.network import Site
@@ -841,6 +880,23 @@ class TestComputeDesiredConfig:
         desired = compute_desired_config(host, config)
         # Whitespace-only should fall back to machine_name
         assert desired["FriendlyName1"] == "au-plug-10"
+
+    def test_friendly_name_with_newline_controls(self):
+        host = _make_host(extra={"Controls": "desktop\nmonitor\nserver"})
+        config = _make_tasmota_config()
+        desired = compute_desired_config(host, config)
+        assert desired["FriendlyName1"] == "Power for desktop, monitor, server"
+
+    def test_non_plug_has_no_device_name_or_friendly(self):
+        host = _make_host(hostname="ir-ac-remote")
+        config = _make_tasmota_config()
+        desired = compute_desired_config(host, config)
+        assert "DeviceName" not in desired
+        assert "FriendlyName1" not in desired
+        # But still has MQTT and hostname settings
+        assert desired["Hostname"] == "ir-ac-remote"
+        assert desired["MqttHost"] == "ha.welland.mithis.com"
+        assert desired["Topic"] == "ir-ac-remote"
 
 
 # ---------------------------------------------------------------------------
