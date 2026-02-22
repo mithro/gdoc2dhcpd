@@ -1040,7 +1040,8 @@ class TestComputeDrift:
         assert len(topic_drifts) == 1
         assert topic_drifts[0].warning != ""
         assert "orphan" in topic_drifts[0].warning.lower()
-        assert "old_topic" in topic_drifts[0].warning  # Entity ID
+        assert "'old-topic'" in topic_drifts[0].warning  # Topic name
+        assert "ha.welland.mithis.com" in topic_drifts[0].warning  # Broker
 
     def test_non_topic_drift_never_warns(self):
         """Non-Topic drifts should never have warnings."""

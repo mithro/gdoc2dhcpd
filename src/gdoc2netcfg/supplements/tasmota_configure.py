@@ -124,14 +124,13 @@ def compute_drift(host: Host, tasmota_config: TasmotaConfig) -> list[ConfigDrift
             warning = ""
             if field == "Topic" and host.tasmota_data.mqtt_host:
                 # Device is already connected to an MQTT broker, so HA
-                # has an entity registered under the current topic.
-                # Changing it would orphan that entity.
-                old_entity = "switch.tasmota_" + current.replace("-", "_")
+                # has entities registered under the current topic.
+                # Changing it would orphan those entities.
                 warning = (
                     f"Device is connected to MQTT broker "
                     f"({host.tasmota_data.mqtt_host}); changing Topic "
-                    f"will orphan HA entity '{old_entity}' — use --force "
-                    f"to apply"
+                    f"will orphan HA entities under topic "
+                    f"'{current}'"
                 )
             drifts.append(ConfigDrift(
                 field=field,
@@ -236,14 +235,16 @@ def configure_tasmota_device(
             else:
                 print(
                     f"    {d.field}: {d.current!r} → {d.desired!r} "
-                    f"(SKIPPED: {d.warning})",
+                    f"(SKIPPED: {d.warning} — use --force to apply)",
                     file=sys.stderr,
                 )
 
     if dry_run:
         return True
 
-    # Determine which drifts to actually apply
+    # Determine which drifts to actually apply.
+    # Skipped (warned) drifts are not counted as failures — they are
+    # expected to be resolved by the user via --force or HA reconfiguration.
     drifts_to_apply = safe_drifts
     if force:
         drifts_to_apply = drifts  # All drifts including warned ones
