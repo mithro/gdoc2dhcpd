@@ -89,7 +89,11 @@ class TestDnsmasqExternalGenerator:
 
         # Should use public IP, not the RFC 1918 internal IP
         assert "host-record=server.welland.mithis.com,203.0.113.1" in output
-        assert "10.1.10.1" not in output
+        # host-record lines must not contain the internal IP
+        # (PTR records correctly use original IPs, so check only host-record lines)
+        for line in output.split("\n"):
+            if line.startswith("host-record="):
+                assert "10.1.10.1" not in line, f"Internal IP leaked into host-record: {line}"
 
     def test_preserves_non_rfc1918_ips(self):
         host = _host_with_iface("external", "aa:bb:cc:dd:ee:ff", "198.51.100.10")
