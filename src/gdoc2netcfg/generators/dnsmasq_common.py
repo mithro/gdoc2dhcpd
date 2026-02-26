@@ -120,8 +120,58 @@ def host_sshfp_records(
     return output
 
 
+def _most_specific_fqdn(
+    host: Host, ip: str, domain: str, *, is_ipv6: bool = False,
+) -> str | None:
+    """Find the most-specific FQDN from host.dns_names for an IP address.
+
+    Most specific = FQDN with the most labels (dots) that contains the
+    target IP, excluding alt names, within the authoritative zone.
+
+    Args:
+        host: The host whose dns_names to search.
+        ip: The IP address string to match against.
+        domain: The authoritative DNS zone (e.g. 'welland.mithis.com').
+        is_ipv6: If True, match against IPv6 addresses; otherwise IPv4.
+
+    Returns:
+        The most-specific FQDN string, or None if no match found.
+    """
+    alt_names = set(host.alt_names) if host.alt_names else set()
+
+    best: str | None = None
+    best_dots = -1
+
+    for dns_name in host.dns_names:
+        if not dns_name.is_fqdn:
+            continue
+        # Must be within our authoritative zone
+        if not dns_name.name.endswith(f".{domain}"):
+            continue
+        # Exclude alt names
+        if dns_name.name in alt_names:
+            continue
+        # Must contain the target IP
+        if is_ipv6:
+            if not any(str(a) == ip for a in dns_name.ipv6_addresses):
+                continue
+        else:
+            if dns_name.ipv4 is None or str(dns_name.ipv4) != ip:
+                continue
+
+        dots = dns_name.name.count(".")
+        if dots > best_dots:
+            best = dns_name.name
+            best_dots = dots
+
+    return best
+
+
 def host_ptr_config(host: Host, inventory: NetworkInventory) -> list[str]:
     """Generate ptr-record entries (IPv4 and IPv6) for a single host.
+
+    Uses the most-specific FQDN from host.dns_names for each IP address.
+    IPv4 and IPv6 PTRs may get different names (e.g., ipv4.X vs ipv6.X).
 
     Uses original (non-transformed) IPs for both internal and external:
     IPv4 PTR records use RFC 1918 addresses (the in-addr.arpa name is
@@ -132,17 +182,19 @@ def host_ptr_config(host: Host, inventory: NetworkInventory) -> list[str]:
 
     for vi in sorted(host.virtual_interfaces, key=lambda v: ip_sort_key(str(v.ipv4))):
         ip = str(vi.ipv4)
-        hostname = inventory.ip_to_hostname.get(ip)
-        if not hostname:
-            continue
 
-        # IPv4 PTR
-        output.append(f"ptr-record=/{hostname}.{domain}/{ip}")
+        # IPv4 PTR — most-specific FQDN for this IPv4
+        fqdn = _most_specific_fqdn(host, ip, domain, is_ipv6=False)
+        if fqdn:
+            output.append(f"ptr-record=/{fqdn}/{ip}")
 
-        # IPv6 PTR
-        for ipv6_str in _ipv6_for_ip(ip, inventory):
-            ptr = _ipv6_to_ptr(ipv6_str)
-            output.append(f"ptr-record={ptr},{hostname}.{domain}")
+        # IPv6 PTRs — most-specific FQDN for each IPv6
+        for ipv6_addr in vi.ipv6_addresses:
+            ipv6_str = str(ipv6_addr)
+            ipv6_fqdn = _most_specific_fqdn(host, ipv6_str, domain, is_ipv6=True)
+            if ipv6_fqdn:
+                ptr = _ipv6_to_ptr(ipv6_str)
+                output.append(f"ptr-record={ptr},{ipv6_fqdn}")
 
     return output
 
