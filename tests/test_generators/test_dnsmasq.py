@@ -356,9 +356,9 @@ class TestMostSpecificFQDN:
         assert "ptr-record=/ipv4.desktop.int.welland.mithis.com/10.1.10.1" in output
         assert "ipv6.desktop.int.welland.mithis.com" in output
         # Verify they're different names
-        ipv4_ptrs = [l for l in output.split("\n") if l.startswith("ptr-record=/")]
-        ipv6_ptrs = [l for l in output.split("\n")
-                     if l.startswith("ptr-record=") and "ip6.arpa" in l]
+        ipv4_ptrs = [line for line in output.split("\n") if line.startswith("ptr-record=/")]
+        ipv6_ptrs = [line for line in output.split("\n")
+                     if line.startswith("ptr-record=") and "ip6.arpa" in line]
         assert len(ipv4_ptrs) == 1
         assert len(ipv6_ptrs) == 1
         assert "ipv4." in ipv4_ptrs[0]
@@ -380,7 +380,7 @@ class TestMostSpecificFQDN:
         result = generate_dnsmasq_internal(inv)
         output = result["desktop.conf"]
         # Should NOT have an interface prefix like eth0.desktop
-        ipv4_ptrs = [l for l in output.split("\n") if l.startswith("ptr-record=/")]
+        ipv4_ptrs = [line for line in output.split("\n") if line.startswith("ptr-record=/")]
         assert len(ipv4_ptrs) == 1
         assert "ipv4.desktop.int.welland.mithis.com" in ipv4_ptrs[0]
 
@@ -395,7 +395,7 @@ class TestMostSpecificFQDN:
         output = result["desktop.conf"]
         # PTR should use the regular most-specific name, not the alt name
         assert "a.b.c.d.desktop.welland.mithis.com" not in [
-            l.split("/")[1] for l in output.split("\n") if l.startswith("ptr-record=/")
+            line.split("/")[1] for line in output.split("\n") if line.startswith("ptr-record=/")
         ]
         assert "ptr-record=/ipv4.desktop.int.welland.mithis.com/10.1.10.1" in output
 
