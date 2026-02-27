@@ -311,6 +311,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         gen_names = list(config.generators.keys())
 
     generated = 0
+    post_gen_errors = False
     for name in gen_names:
         gen_func = _get_generator(name)
         if gen_func is None:
@@ -352,6 +353,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
             post_result = validate_dnsmasq_output(output)
             if post_result.has_errors:
+                post_gen_errors = True
                 print(
                     f"  {name}: post-generation FCrDNS validation errors:",
                     file=sys.stderr,
@@ -383,7 +385,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
     if not args.stdout:
         print(f"\nGenerated {generated} config file(s).")
-    return 0
+    return 1 if post_gen_errors else 0
 
 
 # ---------------------------------------------------------------------------

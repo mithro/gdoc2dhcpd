@@ -309,7 +309,7 @@ def validate_dnsmasq_output(files: dict[str, str]) -> ValidationResult:
             if after_eq.startswith("/"):
                 # IPv4 format: ptr-record=/FQDN/IP
                 parts = after_eq.strip("/").split("/")
-                if len(parts) >= 1:
+                if len(parts) >= 2:
                     ptr_name = parts[0]
                 else:
                     continue
