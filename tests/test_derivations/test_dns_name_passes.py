@@ -242,8 +242,8 @@ class TestPass4IpPrefix:
         assert ipv6_name.ipv4 is None
         assert len(ipv6_name.ipv6_addresses) == 1
 
-    def test_no_ipv6_means_no_prefixes(self):
-        """If host has no IPv6 addresses, no prefixed names are generated."""
+    def test_ipv4_only_still_gets_ipv4_prefix(self):
+        """If host has only IPv4, ipv4.{name} is still generated."""
         ipv4 = IPv4Address("192.168.1.1")
         host = Host(
             machine_name="printer",
@@ -259,7 +259,10 @@ class TestPass4IpPrefix:
         )
         host.dns_names = derive_dns_names_hostname(host, DOMAIN)
         names = derive_dns_names_ip_prefix(host, DOMAIN)
-        assert names == []
+        assert len(names) == 1
+        assert names[0].name == "ipv4.printer.welland.mithis.com"
+        assert names[0].ipv4 is not None
+        assert names[0].ipv6_addresses == ()
 
     def test_scans_all_previous_fqdn_names(self):
         """Pass 4 should create prefixed variants for all FQDNs."""
@@ -269,12 +272,14 @@ class TestPass4IpPrefix:
         host.dns_names.extend(derive_dns_names_subdomain(host, DOMAIN, SITE))
         names = derive_dns_names_ip_prefix(host, DOMAIN)
 
-        # All FQDNs with both IPv4+IPv6 get ipv4. and ipv6. variants
-        fqdn_with_dual = [
-            n for n in host.dns_names
-            if n.is_fqdn and n.ipv4 is not None and n.ipv6_addresses
-        ]
-        assert len(names) == len(fqdn_with_dual) * 2
+        # Each FQDN with IPv4 gets an ipv4. variant; each with IPv6 gets ipv6.
+        # This host has both on all FQDNs, so each FQDN produces 2 names.
+        fqdn_names = [n for n in host.dns_names if n.is_fqdn]
+        expected = sum(
+            bool(n.ipv4_addresses) + bool(n.ipv6_addresses)
+            for n in fqdn_names
+        )
+        assert len(names) == expected
 
 
 class TestDeriveAllDnsNames:

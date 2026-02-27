@@ -244,36 +244,37 @@ def derive_dns_names_subdomain(
 def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list[DNSName]:
     """Pass 4 — IPv4/IPv6 prefix: add ipv4.{name} and ipv6.{name} variants.
 
-    Scans ALL existing names. For any FQDN name that resolves to both IPv4
-    and IPv6, adds:
-      - ipv4.{name}  (all IPv4 addresses, no IPv6)
-      - ipv6.{name}  (all IPv6 addresses, no IPv4)
+    Scans ALL existing FQDN names. Independently generates:
+      - ipv4.{name}  whenever the name has any IPv4 addresses
+      - ipv6.{name}  whenever the name has any IPv6 addresses
+
+    This means single-stack hosts still get their prefix name, so
+    tooling can consistently use ipv4.{host} or ipv6.{host} without
+    needing to know the host's address families.
     """
     names: list[DNSName] = []
     for dns_name in list(host.dns_names):
         if not dns_name.is_fqdn:
             continue
-        if dns_name.ipv4 is None:
-            continue
-        if not dns_name.ipv6_addresses:
-            continue
-        names.append(
-            _make_dns_name(
-                f"ipv4.{dns_name.name}",
-                None,
-                (),
-                is_fqdn=True,
-                ipv4_addresses=dns_name.ipv4_addresses,
+        if dns_name.ipv4_addresses:
+            names.append(
+                _make_dns_name(
+                    f"ipv4.{dns_name.name}",
+                    None,
+                    (),
+                    is_fqdn=True,
+                    ipv4_addresses=dns_name.ipv4_addresses,
+                )
             )
-        )
-        names.append(
-            _make_dns_name(
-                f"ipv6.{dns_name.name}",
-                None,
-                dns_name.ipv6_addresses,
-                is_fqdn=True,
+        if dns_name.ipv6_addresses:
+            names.append(
+                _make_dns_name(
+                    f"ipv6.{dns_name.name}",
+                    None,
+                    dns_name.ipv6_addresses,
+                    is_fqdn=True,
+                )
             )
-        )
     return names
 
 

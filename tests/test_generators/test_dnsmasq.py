@@ -407,7 +407,7 @@ class TestMostSpecificFQDN:
         assert "ptr-record=/ipv4.eth0.desktop.int.welland.mithis.com/10.1.10.1" in output
 
     def test_ipv4_only_gets_subdomain_name_not_ipv4_prefix(self):
-        """IPv4-only host (no IPv6) doesn't get ipv4. prefix (no dual-stack split)."""
+        """IPv4-only host gets ipv4. prefix, which becomes most-specific PTR name."""
         # Create a host without IPv6 addresses
         ipv4 = IPv4Address("10.1.10.1")
         iface = NetworkInterface(
@@ -428,8 +428,9 @@ class TestMostSpecificFQDN:
         )
         result = generate_dnsmasq_internal(inv)
         output = result["desktop.conf"]
-        # No IPv6, so no ipv4. prefix variant; most-specific is subdomain
-        assert "ptr-record=/desktop.int.welland.mithis.com/10.1.10.1" in output
+        # ipv4. prefix is now always generated; it's the most-specific name
+        assert "ipv4.desktop.int.welland.mithis.com" in output
+        assert "ptr-record=" in output
         # No IPv6 PTRs
         assert "ip6.arpa" not in output
 
