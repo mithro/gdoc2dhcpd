@@ -24,11 +24,16 @@ class DNSName:
 
     @property
     def ipv4(self) -> IPv4Address | None:
-        """The IPv4 address for this name, or None."""
+        """The first IPv4 address for this name, or None."""
         for ip in self.ip_addresses:
             if isinstance(ip, IPv4Address):
                 return ip
         return None
+
+    @property
+    def ipv4_addresses(self) -> tuple[IPv4Address, ...]:
+        """All IPv4 addresses for this name."""
+        return tuple(ip for ip in self.ip_addresses if isinstance(ip, IPv4Address))
 
     @property
     def ipv6_addresses(self) -> tuple[IPv6Address, ...]:
@@ -332,6 +337,18 @@ class Host:
     nsdp_data: NSDPData | None = None
     switch_data: SwitchData | None = None
     tasmota_data: TasmotaData | None = None
+
+    @property
+    def first_ipv4(self) -> IPv4Address | None:
+        """First interface's IPv4 address, or None if no interfaces.
+
+        Convenience for consumers that need a single IP to talk to
+        (e.g. SNMP probe, Nagios check). Not semantically a "default" —
+        just the first in interface order.
+        """
+        if self.interfaces:
+            return self.interfaces[0].ipv4
+        return None
 
     @property
     def interface_by_name(self) -> dict[str | None, NetworkInterface]:
