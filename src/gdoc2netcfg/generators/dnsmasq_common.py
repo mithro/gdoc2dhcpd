@@ -15,9 +15,13 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from gdoc2netcfg.models.host import Host, NetworkInventory
 from gdoc2netcfg.utils.ip import ip_sort_key
+
+if TYPE_CHECKING:
+    from gdoc2netcfg.constraints.errors import ValidationResult
 
 Ipv4Transform = Callable[[str], str]
 
