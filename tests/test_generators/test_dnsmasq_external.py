@@ -266,6 +266,50 @@ class TestDnsmasqExternalGenerator:
         expected = "host-record=eth0.server.welland.mithis.com,203.0.113.1,2404:e80:a137:110::2"
         assert expected in output
 
+    def test_multi_interface_hostname_pairs_addresses(self):
+        """External hostname host-record emits paired lines, deduping public IPv4."""
+        iface1 = NetworkInterface(
+            name=None,
+            mac=MACAddress.parse("aa:bb:cc:dd:ee:01"),
+            ip_addresses=(
+                IPv4Address("10.1.10.1"),
+                IPv6Address("2404:e80:a137:110::1", "2404:e80:a137:"),
+            ),
+            dhcp_name="server",
+        )
+        iface2 = NetworkInterface(
+            name="eth0",
+            mac=MACAddress.parse("aa:bb:cc:dd:ee:02"),
+            ip_addresses=(
+                IPv4Address("10.1.10.2"),
+                IPv6Address("2404:e80:a137:110::2", "2404:e80:a137:"),
+            ),
+            dhcp_name="eth0-server",
+        )
+        host = Host(
+            machine_name="server",
+            hostname="server",
+            interfaces=[iface1, iface2],
+        )
+        derive_all_dns_names(host, SITE)
+        inv = _make_inventory(hosts=[host])
+        result = generate_dnsmasq_external(inv)
+        output = result["server.conf"]
+
+        # Both RFC 1918 IPs map to the same public IP, so IPv4 deduplicates
+        # to a single entry, but there are two IPv6 addresses.
+        hostname_lines = [
+            line for line in output.splitlines()
+            if line.startswith("host-record=server.welland.mithis.com,")
+        ]
+        # First line: public IPv4 + first IPv6. Second line: second IPv6 only.
+        assert len(hostname_lines) == 2
+        assert "203.0.113.1" in hostname_lines[0]
+        assert "2404:e80:a137:110::1" in hostname_lines[0]
+        assert "2404:e80:a137:110::2" in hostname_lines[1]
+        # Second line should NOT repeat the public IPv4
+        assert "203.0.113.1" not in hostname_lines[1]
+
     def test_generates_caa_record(self):
         """External DNS should include CAA records (for Let's Encrypt)."""
         host = _host_with_iface("server", "aa:bb:cc:dd:ee:ff", "10.1.10.1")

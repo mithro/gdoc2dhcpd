@@ -65,23 +65,35 @@ def host_record_config(
         if dns_name.is_fqdn and not dns_name.name.endswith(f".{domain}"):
             continue
 
-        addrs: list[str] = []
-        seen: set[str] = set()
+        # Collect unique IPv4 and IPv6 addresses separately.
+        # dnsmasq host-record accepts at most one IPv4 and one IPv6
+        # per line, so we emit one line per (IPv4, IPv6) pair.
+        ipv4_addrs: list[str] = []
+        seen_v4: set[str] = set()
         for ipv4_addr in dns_name.ipv4_addresses:
             transformed = ipv4_transform(str(ipv4_addr))
-            if transformed not in seen:
-                addrs.append(transformed)
-                seen.add(transformed)
+            if transformed not in seen_v4:
+                ipv4_addrs.append(transformed)
+                seen_v4.add(transformed)
+        ipv6_addrs: list[str] = []
+        seen_v6: set[str] = set()
         for ipv6_addr in dns_name.ipv6_addresses:
             addr_str = str(ipv6_addr)
-            if addr_str not in seen:
-                addrs.append(addr_str)
-                seen.add(addr_str)
+            if addr_str not in seen_v6:
+                ipv6_addrs.append(addr_str)
+                seen_v6.add(addr_str)
 
-        if not addrs:
+        if not ipv4_addrs and not ipv6_addrs:
             continue
 
-        output.append(f"host-record={dns_name.name},{','.join(addrs)}")
+        n_pairs = max(len(ipv4_addrs), len(ipv6_addrs))
+        for i in range(n_pairs):
+            parts = [dns_name.name]
+            if i < len(ipv4_addrs):
+                parts.append(ipv4_addrs[i])
+            if i < len(ipv6_addrs):
+                parts.append(ipv6_addrs[i])
+            output.append(f"host-record={','.join(parts)}")
 
     return output
 

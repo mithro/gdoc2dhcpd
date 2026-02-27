@@ -477,3 +477,65 @@ class TestMultiInterfacePTR:
         assert "ptr-record=/ipv4.server.int.welland.mithis.com/10.1.10.1" in output
         # Named interface IP gets interface-prefixed name
         assert "ptr-record=/ipv4.eth0.server.int.welland.mithis.com/10.1.10.2" in output
+
+    def test_hostname_host_record_one_pair_per_line(self):
+        """Multi-interface hostname host-record emits one (IPv4, IPv6) pair per line.
+
+        dnsmasq host-record accepts at most one IPv4 and one IPv6 per line.
+        For multi-interface hosts, the hostname DNS name includes all IPs,
+        so we must emit multiple host-record lines.
+        """
+        iface1 = NetworkInterface(
+            name=None,
+            mac=MACAddress.parse("aa:bb:cc:dd:ee:01"),
+            ip_addresses=(
+                IPv4Address("10.1.10.1"),
+                IPv6Address("2404:e80:a137:110::1", "2404:e80:a137:"),
+            ),
+            dhcp_name="server",
+        )
+        iface2 = NetworkInterface(
+            name="eth0",
+            mac=MACAddress.parse("aa:bb:cc:dd:ee:02"),
+            ip_addresses=(
+                IPv4Address("10.1.10.2"),
+                IPv6Address("2404:e80:a137:110::2", "2404:e80:a137:"),
+            ),
+            dhcp_name="eth0-server",
+        )
+        host = Host(
+            machine_name="server",
+            hostname="server",
+            interfaces=[iface1, iface2],
+        )
+        derive_all_dns_names(host, SITE)
+        inv = _make_inventory(
+            hosts=[host],
+            ip_to_macs={
+                "10.1.10.1": [(MACAddress.parse("aa:bb:cc:dd:ee:01"), "server")],
+                "10.1.10.2": [(MACAddress.parse("aa:bb:cc:dd:ee:02"), "eth0-server")],
+            },
+        )
+        result = generate_dnsmasq_internal(inv)
+        output = result["server.conf"]
+
+        # Hostname FQDN should have two separate host-record lines
+        # (one per IPv4/IPv6 pair), not one giant line with all IPs
+        hostname_lines = [
+            line for line in output.splitlines()
+            if line.startswith("host-record=server.welland.mithis.com,")
+        ]
+        assert len(hostname_lines) == 2
+        assert "10.1.10.1" in hostname_lines[0]
+        assert "2404:e80:a137:110::1" in hostname_lines[0]
+        assert "10.1.10.2" in hostname_lines[1]
+        assert "2404:e80:a137:110::2" in hostname_lines[1]
+
+        # Each line must have at most one IPv4 and one IPv6
+        for line in hostname_lines:
+            after_name = line.split(",", 1)[1]
+            addrs = after_name.split(",")
+            ipv4_count = sum(1 for a in addrs if "." in a)
+            ipv6_count = sum(1 for a in addrs if ":" in a)
+            assert ipv4_count <= 1, f"Multiple IPv4 on one line: {line}"
+            assert ipv6_count <= 1, f"Multiple IPv6 on one line: {line}"
