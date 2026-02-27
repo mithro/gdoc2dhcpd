@@ -39,7 +39,6 @@ def _make_switch(hostname="sw-test", ip="10.1.5.10"):
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=IPv4Address(ip),
         hardware_type="netgear-switch",
         extra={},
     )
@@ -647,7 +646,6 @@ class TestScanBridge:
                     dhcp_name="bmc-server",
                 ),
             ],
-            default_ipv4=IPv4Address("10.1.5.20"),
             hardware_type="supermicro-bmc",
             snmp_data=SNMPData(snmp_version="v2c"),
         )

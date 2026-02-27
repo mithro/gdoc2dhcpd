@@ -27,7 +27,6 @@ def _switch(hostname, ip, mac="AA:BB:CC:DD:EE:01", bridge_data=None):
         machine_name=hostname,
         hostname=hostname,
         interfaces=[_iface(mac=mac, ip=ip)],
-        default_ipv4=IPv4Address(ip),
         bridge_data=bridge_data or BridgeData(),
     )
 
@@ -38,7 +37,6 @@ def _host(hostname, ip, mac="AA:BB:CC:DD:EE:02"):
         machine_name=hostname,
         hostname=hostname,
         interfaces=[_iface(mac=mac, ip=ip)],
-        default_ipv4=IPv4Address(ip),
     )
 
 

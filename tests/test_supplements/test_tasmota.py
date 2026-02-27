@@ -53,7 +53,6 @@ def _make_host(
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=IPv4Address(ip),
         extra=extra or {},
     )
 

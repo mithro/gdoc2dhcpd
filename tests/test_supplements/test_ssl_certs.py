@@ -28,7 +28,6 @@ def _make_host(hostname="desktop", ip="10.1.10.100"):
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=IPv4Address(ip),
     )
 
 

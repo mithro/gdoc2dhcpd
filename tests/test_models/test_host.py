@@ -40,7 +40,7 @@ class TestHost:
         assert host.machine_name == 'desktop'
         assert host.hostname == 'desktop'
         assert host.interfaces == []
-        assert host.default_ipv4 is None
+        assert host.first_ipv4 is None
 
     def test_with_interface(self):
         iface = _make_interface(name='eth0', ip='10.1.10.1')

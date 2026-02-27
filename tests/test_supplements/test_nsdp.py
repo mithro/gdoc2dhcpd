@@ -39,7 +39,6 @@ def _make_host(hostname="gs110emx", ip="10.1.20.1", hardware_type="netgear-switc
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=IPv4Address(ip),
         hardware_type=hardware_type,
     )
 

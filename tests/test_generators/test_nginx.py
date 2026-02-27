@@ -42,8 +42,6 @@ def _make_host(hostname="desktop", ip="10.1.10.100"):
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=ipv4,
-        subdomain="int",
     )
     derive_all_dns_names(host, SITE)
     return host
@@ -89,7 +87,6 @@ class TestNginxFileStructure:
                     dhcp_name="local",
                 ),
             ],
-            default_ipv4=IPv4Address("192.168.1.1"),
         )
         files = generate_nginx(_make_inventory(host))
 
@@ -258,18 +255,15 @@ class TestMultipleHosts:
 def _make_multi_iface_host(
     hostname="rpi-sdr-kraken",
     iface_ips=None,
-    subdomain="iot",
 ):
     """Create a host with multiple named interfaces.
 
     iface_ips is a dict of {interface_name: ip_string}.
-    The first interface's IP becomes default_ipv4.
     """
     if iface_ips is None:
         iface_ips = {"eth0": "10.1.90.149", "wlan0": "10.1.90.150"}
 
     interfaces = []
-    default_ipv4 = None
     for i, (iface_name, ip) in enumerate(iface_ips.items()):
         ipv4 = IPv4Address(ip)
         parts = ip.split(".")
@@ -277,9 +271,6 @@ def _make_multi_iface_host(
         bb = parts[2].zfill(2)
         ccc = parts[3]
         ipv6 = IPv6Address(f"2404:e80:a137:{aa}{bb}::{ccc}", "2404:e80:a137:")
-
-        if i == 0:
-            default_ipv4 = ipv4
 
         interfaces.append(
             NetworkInterface(
@@ -294,8 +285,6 @@ def _make_multi_iface_host(
         machine_name=hostname,
         hostname=hostname,
         interfaces=interfaces,
-        default_ipv4=default_ipv4,
-        subdomain=subdomain,
     )
     derive_all_dns_names(host, SITE)
     return host
@@ -463,7 +452,6 @@ class TestSharedIPHost:
         host = _make_multi_iface_host(
             hostname="roku",
             iface_ips={"eth0": "10.1.90.50", "wlan0": "10.1.90.50"},
-            subdomain="iot",
         )
         files = generate_nginx(_make_inventory(host))
 
@@ -482,7 +470,6 @@ class TestSharedIPHost:
         host = _make_multi_iface_host(
             hostname="server",
             iface_ips={"eth0": "10.1.10.100", "wlan0": "10.1.10.100", "eth1": "10.1.10.101"},
-            subdomain="int",
         )
         files = generate_nginx(_make_inventory(host))
 
@@ -658,7 +645,6 @@ class TestHealthcheck:
         shared = _make_multi_iface_host(
             hostname="roku",
             iface_ips={"eth0": "10.1.90.50", "wlan0": "10.1.90.50"},
-            subdomain="iot",
         )
         files = generate_nginx(_make_inventory(shared))
 

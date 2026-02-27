@@ -49,8 +49,6 @@ def _make_host(
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=ipv4,
-        subdomain="int",
         hardware_type=hardware_type,
     )
     derive_all_dns_names(host, SITE)
@@ -206,7 +204,6 @@ class TestCertScripts:
                     dhcp_name="local",
                 ),
             ],
-            default_ipv4=IPv4Address("192.168.1.1"),
         )
         # No dns_names set → no FQDNs
         files = generate_letsencrypt(_make_inventory(host))

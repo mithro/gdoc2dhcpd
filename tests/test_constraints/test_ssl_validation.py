@@ -27,7 +27,6 @@ def _make_host(
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=IPv4Address("10.1.10.100"),
         ssl_cert_info=ssl_cert,
     )
     # Add DNS names

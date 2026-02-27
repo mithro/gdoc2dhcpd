@@ -47,8 +47,6 @@ def _host_with_iface(hostname, mac, ip, interface_name=None, dhcp_name="test"):
         machine_name=hostname,
         hostname=hostname,
         interfaces=[iface],
-        default_ipv4=ipv4,
-        subdomain="int" if ip.startswith("10.1.10.") else None,
     )
     # Run DNS name derivation to populate dns_names
     derive_all_dns_names(host, SITE)
@@ -284,8 +282,6 @@ def _shared_ip_host(hostname, ip, macs, dhcp_name="test"):
         machine_name=hostname,
         hostname=hostname,
         interfaces=ifaces,
-        default_ipv4=ipv4,
-        subdomain="int" if ip.startswith("10.1.10.") else None,
     )
     derive_all_dns_names(host, SITE)
     return host
@@ -424,8 +420,6 @@ class TestMostSpecificFQDN:
             machine_name="desktop",
             hostname="desktop",
             interfaces=[iface],
-            default_ipv4=ipv4,
-            subdomain="int",
         )
         derive_all_dns_names(host, SITE)
         inv = _make_inventory(
@@ -467,8 +461,6 @@ class TestMultiInterfacePTR:
             machine_name="server",
             hostname="server",
             interfaces=[iface1, iface2],
-            default_ipv4=IPv4Address("10.1.10.1"),
-            subdomain="int",
         )
         derive_all_dns_names(host, SITE)
         inv = _make_inventory(

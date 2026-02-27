@@ -30,7 +30,6 @@ def _make_host(
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=IPv4Address("10.1.10.100"),
         hardware_type=hardware_type,
         snmp_data=snmp_data,
     )

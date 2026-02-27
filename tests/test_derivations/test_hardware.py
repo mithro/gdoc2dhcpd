@@ -29,7 +29,6 @@ def _make_host(hostname, mac, is_bmc_hostname=False):
                 dhcp_name=hostname,
             )
         ],
-        default_ipv4=ipv4,
     )
 
 
@@ -81,7 +80,6 @@ class TestDetectHardwareType:
                     dhcp_name="bmc.server",
                 )
             ],
-            default_ipv4=IPv4Address("10.1.10.100"),
         )
         assert detect_hardware_type(host) == "supermicro-bmc"
 

@@ -24,7 +24,6 @@ def _make_host(hostname, ip):
                 ip_addresses=(IPv4Address(ip),),
             )
         ],
-        default_ipv4=IPv4Address(ip),
     )
 
 

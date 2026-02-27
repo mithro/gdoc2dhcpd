@@ -52,8 +52,7 @@ class TestBuildHosts:
         assert h.hostname == "desktop"
         assert h.machine_name == "desktop"
         assert len(h.interfaces) == 1
-        assert str(h.default_ipv4) == "10.1.10.100"
-        assert h.subdomain == "int"
+        assert str(h.first_ipv4) == "10.1.10.100"
 
     def test_multi_interface_host(self):
         records = [
@@ -116,11 +115,11 @@ class TestBuildHosts:
         hosts = build_hosts(records, SITE)
         assert len(hosts) == 1
 
-    def test_default_ip_no_name_interface(self):
-        """Interface with no name should be the default IP."""
+    def test_first_ipv4_from_interface(self):
+        """first_ipv4 returns the first interface's IPv4."""
         records = [_make_record(interface="", ip="10.1.10.50")]
         hosts = build_hosts(records, SITE)
-        assert str(hosts[0].default_ipv4) == "10.1.10.50"
+        assert str(hosts[0].first_ipv4) == "10.1.10.50"
 
 
 class TestBuildInventory:

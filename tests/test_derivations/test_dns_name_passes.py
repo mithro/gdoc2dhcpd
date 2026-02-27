@@ -34,7 +34,6 @@ def _make_host(
     hostname="desktop",
     ip="10.1.10.100",
     interfaces=None,
-    subdomain="int",
 ):
     """Build a Host with sensible defaults for testing."""
     ipv4 = IPv4Address(ip)
@@ -58,8 +57,6 @@ def _make_host(
         machine_name=hostname,
         hostname=hostname,
         interfaces=interfaces,
-        default_ipv4=ipv4,
-        subdomain=subdomain,
     )
 
 
@@ -87,8 +84,6 @@ def _make_multi_iface_host():
                 dhcp_name="eth1-ten64",
             ),
         ],
-        default_ipv4=ipv4_eth0,
-        subdomain="int",
     )
 
 
@@ -118,14 +113,17 @@ class TestPass1Hostname:
         assert str(names[0].ipv6_addresses[0]) == "2404:e80:a137:110::100"
         assert len(names[1].ipv6_addresses) == 1
 
-    def test_no_default_ip_returns_empty(self):
-        host = _make_host()
-        host.default_ipv4 = None
+    def test_no_interfaces_returns_empty(self):
+        host = Host(
+            machine_name="empty",
+            hostname="empty",
+            interfaces=[],
+        )
         names = derive_dns_names_hostname(host, DOMAIN)
         assert names == []
 
     def test_iot_hostname(self):
-        host = _make_host(hostname="thermostat.iot", ip="10.1.90.10", subdomain="iot")
+        host = _make_host(hostname="thermostat.iot", ip="10.1.90.10")
         names = derive_dns_names_hostname(host, DOMAIN)
 
         assert names[0].name == "thermostat.iot.welland.mithis.com"
@@ -200,7 +198,7 @@ class TestPass3Subdomain:
         assert "eth1.ten64.int.welland.mithis.com" in name_strs
 
     def test_no_subdomain_for_non_10_1_ip(self):
-        host = _make_host(ip="10.31.1.5", subdomain=None)
+        host = _make_host(ip="10.31.1.5")
         host.dns_names = derive_dns_names_hostname(host, DOMAIN)
         names = derive_dns_names_subdomain(host, DOMAIN, SITE)
         assert names == []
@@ -258,7 +256,6 @@ class TestPass4IpPrefix:
                     dhcp_name="printer",
                 )
             ],
-            default_ipv4=ipv4,
         )
         host.dns_names = derive_dns_names_hostname(host, DOMAIN)
         names = derive_dns_names_ip_prefix(host, DOMAIN)
@@ -323,7 +320,7 @@ class TestDeriveAllDnsNames:
                 assert not dns_name.is_fqdn, f"{dns_name.name} should not be FQDN"
 
     def test_host_with_no_subdomain(self):
-        host = _make_host(ip="10.31.1.5", subdomain=None)
+        host = _make_host(ip="10.31.1.5")
         derive_all_dns_names(host, SITE)
 
         name_strs = [n.name for n in host.dns_names]
@@ -361,18 +358,12 @@ class TestPass5AltNames:
         assert names[0].name == "alias.example.com"
         assert names[0].is_fqdn is True
 
-    def test_uses_default_ipv4(self):
+    def test_uses_all_interface_ips(self):
         host = _make_host()
         host.alt_names = ["alias.example.com"]
         names = derive_dns_names_alt_names(host)
 
         assert str(names[0].ipv4) == "10.1.10.100"
-
-    def test_uses_default_ipv6(self):
-        host = _make_host()
-        host.alt_names = ["alias.example.com"]
-        names = derive_dns_names_alt_names(host)
-
         assert len(names[0].ipv6_addresses) == 1
         assert str(names[0].ipv6_addresses[0]) == "2404:e80:a137:110::100"
 
@@ -393,9 +384,12 @@ class TestPass5AltNames:
         names = derive_dns_names_alt_names(host)
         assert names == []
 
-    def test_no_default_ip_returns_empty(self):
-        host = _make_host()
-        host.default_ipv4 = None
-        host.alt_names = ["alias.example.com"]
+    def test_no_interfaces_returns_empty(self):
+        host = Host(
+            machine_name="empty",
+            hostname="empty",
+            interfaces=[],
+            alt_names=["alias.example.com"],
+        )
         names = derive_dns_names_alt_names(host)
         assert names == []

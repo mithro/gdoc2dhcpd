@@ -29,7 +29,6 @@ def _make_host(hostname="switch", ip="10.1.10.1", extra=None):
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=IPv4Address(ip),
         extra=extra or {},
     )
 

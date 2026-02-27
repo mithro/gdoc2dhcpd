@@ -25,7 +25,6 @@ def _host(hostname, ip, driver="", parent=""):
                 ip_addresses=(IPv4Address(ip),),
             )
         ],
-        default_ipv4=IPv4Address(ip),
         extra=extra,
     )
 

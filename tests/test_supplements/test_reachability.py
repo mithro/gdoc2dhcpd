@@ -151,7 +151,6 @@ def _make_host(hostname, ip, ipv6_addrs=None):
                 ),
             )
         ],
-        default_ipv4=IPv4Address(ip),
     )
 
 
@@ -171,7 +170,6 @@ def _make_multi_iface_host(hostname, ips, ipv6_per_iface=None):
         machine_name=hostname,
         hostname=hostname,
         interfaces=ifaces,
-        default_ipv4=IPv4Address(ips[0]),
     )
 
 

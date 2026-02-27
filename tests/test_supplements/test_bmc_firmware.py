@@ -40,7 +40,6 @@ def _make_host(
                 dhcp_name=hostname,
             ),
         ],
-        default_ipv4=IPv4Address(ip),
         hardware_type=hardware_type,
         extra=extra or {},
     )
