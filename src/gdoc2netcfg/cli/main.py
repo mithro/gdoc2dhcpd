@@ -346,6 +346,24 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
         output = gen_func(inventory, **kwargs)
 
+        # Post-generation FCrDNS validation for dnsmasq generators
+        if name in ("dnsmasq_internal", "dnsmasq_external") and isinstance(output, dict):
+            from gdoc2netcfg.generators.dnsmasq_common import validate_dnsmasq_output
+
+            post_result = validate_dnsmasq_output(output)
+            if post_result.has_errors:
+                print(
+                    f"  {name}: post-generation FCrDNS validation errors:",
+                    file=sys.stderr,
+                )
+                print(post_result.report(), file=sys.stderr)
+                if not args.force:
+                    print(
+                        f"  {name}: skipping write (use --force to override)",
+                        file=sys.stderr,
+                    )
+                    continue
+
         # Write output: single file (str) or multiple files (dict)
         if isinstance(output, dict):
             _write_multi_file_output(name, output, gen_config, args)
