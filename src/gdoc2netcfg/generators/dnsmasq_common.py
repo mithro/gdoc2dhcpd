@@ -45,6 +45,12 @@ def host_record_config(
     The ipv4_transform is applied to each IPv4 address before output.
     Addresses are deduplicated after transform (important for external
     DNS where all RFC 1918 IPs map to the same public IP).
+
+    Output is sorted by name specificity (most dots first). dnsmasq
+    auto-generates PTR records from host-record lines — the first
+    host-record containing each IP determines its auto-PTR name.
+    Sorting ensures the most-specific interface name (e.g.,
+    ipv4.eth0.host.domain) wins over the hostname (host.domain).
     """
     if not host.dns_names:
         return []
@@ -94,6 +100,12 @@ def host_record_config(
             if i < len(ipv6_addrs):
                 parts.append(ipv6_addrs[i])
             output.append(f"host-record={','.join(parts)}")
+
+    # Sort by name specificity (most dots first). dnsmasq auto-generates
+    # PTR records from host-record lines; the first host-record for each IP
+    # determines its auto-PTR name. More-specific names (more labels/dots)
+    # must come first so the auto-PTR uses the interface-level name.
+    output.sort(key=lambda line: -line.split("=", 1)[1].split(",", 1)[0].count("."))
 
     return output
 
@@ -253,9 +265,10 @@ def shared_dns_sections(
     Returns [host_records, ptr, caa, sshfp] — a list of sections where each
     section is a list of config lines.
 
-    host-record is emitted BEFORE ptr-record because dnsmasq auto-generates
-    PTR entries from host-record directives. Explicit ptr-record lines after
-    host-record override the auto-generated PTRs with more-specific names.
+    host-record lines are sorted by name specificity (most dots first).
+    dnsmasq auto-generates PTR records from host-record lines — the first
+    host-record for each IP determines its auto-PTR name. Explicit
+    ptr-record lines provide additional named PTR entries.
     """
     return [
         host_record_config(host, inventory, ipv4_transform),
