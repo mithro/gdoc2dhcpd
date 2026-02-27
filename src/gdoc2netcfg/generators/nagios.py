@@ -36,13 +36,13 @@ def generate_nagios(inventory: NetworkInventory) -> str:
         if hardware != "switch":
             continue
 
-        if host.default_ipv4 is None:
+        if host.first_ipv4 is None:
             continue
 
         output.append(
             _SWITCH_TEMPLATE.render(
                 hostname=host.hostname,
-                ip=str(host.default_ipv4),
+                ip=str(host.first_ipv4),
                 parent=host.extra.get("Parent", ""),
             )
         )

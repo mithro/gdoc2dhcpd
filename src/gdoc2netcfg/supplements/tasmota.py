@@ -209,9 +209,9 @@ def scan_tasmota(
     for host in hosts:
         if host.sheet_type != "IoT":
             continue
-        if host.default_ipv4 is None:
+        if host.first_ipv4 is None:
             continue
-        ip_str = str(host.default_ipv4)
+        ip_str = str(host.first_ipv4)
         iot_hosts.append((host.hostname, ip_str))
         ip_to_hostname[ip_str] = host.hostname
 

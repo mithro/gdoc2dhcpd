@@ -151,9 +151,9 @@ def scan_nsdp(
     for host in hosts:
         if host.hardware_type not in NSDP_HARDWARE_TYPES:
             continue
-        if host.default_ipv4 is None:
+        if host.first_ipv4 is None:
             continue
-        switches_to_query.append((host.hostname, str(host.default_ipv4)))
+        switches_to_query.append((host.hostname, str(host.first_ipv4)))
 
     if not switches_to_query:
         if verbose:

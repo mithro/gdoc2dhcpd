@@ -1660,8 +1660,9 @@ def cmd_password(args: argparse.Namespace) -> int:
             print(value)
     else:
         print(f"Host:       {host.hostname}")
-        if host.default_ipv4:
-            print(f"IP:         {host.default_ipv4}")
+        all_ips = [str(iface.ipv4) for iface in host.interfaces]
+        if all_ips:
+            print(f"IP:         {', '.join(all_ips)}")
         if host.all_macs:
             print(f"MAC:        {host.all_macs[0]}")
         print(f"Matched by: {best.match_detail}")

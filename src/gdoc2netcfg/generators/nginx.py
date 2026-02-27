@@ -265,7 +265,7 @@ def generate_nginx(
         if not host.is_multi_interface():
             # Single-interface host
             primary_fqdn = fqdns[0]
-            target_ip = str(host.default_ipv4)
+            target_ip = str(host.virtual_interfaces[0].ipv4)
 
             _emit_http_files(
                 files, primary_fqdn, all_nginx_names, target_ip,
