@@ -113,10 +113,19 @@ def _make_dns_name(
     ipv4: "IPv4Address | None",
     ipv6_addresses: "tuple[IPv6Address, ...] | list[IPv6Address]",
     is_fqdn: bool,
+    *,
+    ipv4_addresses: "tuple[IPv4Address, ...] | None" = None,
 ) -> DNSName:
-    """Create a DNSName with unified ip_addresses tuple."""
+    """Create a DNSName with unified ip_addresses tuple.
+
+    When ipv4_addresses is provided, it takes precedence over the
+    single ipv4 parameter — used for multi-homed hosts where bare
+    hostnames resolve to ALL interface IPs.
+    """
     ips: list["IPv4Address | IPv6Address"] = []
-    if ipv4 is not None:
+    if ipv4_addresses is not None:
+        ips.extend(ipv4_addresses)
+    elif ipv4 is not None:
         ips.append(ipv4)
     ips.extend(ipv6_addresses)
     return DNSName(
