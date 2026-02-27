@@ -6,7 +6,6 @@ to build the enriched Host model from raw spreadsheet records.
 
 from __future__ import annotations
 
-from gdoc2netcfg.derivations.default_ip import select_default_ip
 from gdoc2netcfg.derivations.dns_names import (
     common_suffix,
     compute_dhcp_name,
@@ -16,7 +15,7 @@ from gdoc2netcfg.derivations.dns_names import (
 from gdoc2netcfg.derivations.hardware import detect_hardware_type
 from gdoc2netcfg.derivations.ip_remap import filter_and_resolve_records
 from gdoc2netcfg.derivations.ipv6 import ipv4_to_ipv6_list
-from gdoc2netcfg.derivations.vlan import ip_to_subdomain, ip_to_vlan_id
+from gdoc2netcfg.derivations.vlan import ip_to_vlan_id
 from gdoc2netcfg.models.addressing import IPv4Address, IPv6Address, MACAddress
 from gdoc2netcfg.models.host import Host, NetworkInterface, NetworkInventory
 from gdoc2netcfg.models.network import Site
@@ -64,7 +63,7 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
     """Build Host objects from raw DeviceRecords.
 
     Groups records by machine name into Host objects, computing all
-    derived fields (hostname, DHCP name, IPv6, VLAN, subdomain, default IP).
+    derived fields (hostname, DHCP name, IPv6, VLAN, DNS names).
 
     BMC interfaces are split into separate hosts: a record with interface
     'bmc' on machine 'big-storage' creates a host 'bmc.big-storage' with
@@ -132,15 +131,6 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
                 )
             interfaces.append(iface)
 
-        # Compute default IP
-        interface_ips: dict[str | None, IPv4Address] = {}
-        for iface in interfaces:
-            interface_ips[iface.name] = iface.ipv4
-        default_ipv4 = select_default_ip(interface_ips)
-
-        # Compute subdomain from default IP
-        subdomain = ip_to_subdomain(default_ipv4, site)
-
         # Collect extra fields from first record (they should be the same)
         extra = group[0].extra.copy()
 
@@ -161,8 +151,6 @@ def build_hosts(records: list[DeviceRecord], site: Site) -> list[Host]:
             hostname=hostname,
             sheet_type=sheet_type,
             interfaces=interfaces,
-            default_ipv4=default_ipv4,
-            subdomain=subdomain,
             extra=extra,
             alt_names=alt_names,
         )

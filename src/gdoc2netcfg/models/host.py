@@ -307,14 +307,14 @@ class Host:
     """A logical host with one or more network interfaces.
 
     Built by aggregating raw device records that share the same machine name.
+    All hosts are treated as multi-homed: bare hostnames resolve to ALL
+    interface IPs via round-robin DNS.
 
     Attributes:
         machine_name: Raw machine name from the spreadsheet
         hostname: Computed hostname (may include suffix like '.iot')
         sheet_type: Which spreadsheet sheet this came from ('Network', 'IoT', etc.)
         interfaces: All network interfaces for this host
-        default_ipv4: The primary IPv4 address for bare hostname resolution
-        subdomain: Network subdomain (e.g. 'int', 'iot', 'net')
         sshfp_records: SSH fingerprint records (populated by supplement)
         extra: Additional spreadsheet columns preserved for generators
     """
@@ -323,8 +323,6 @@ class Host:
     hostname: str
     sheet_type: str = "Network"
     interfaces: list[NetworkInterface] = field(default_factory=list)
-    default_ipv4: IPv4Address | None = None
-    subdomain: str | None = None
     sshfp_records: list[str] = field(default_factory=list)
     extra: dict[str, str] = field(default_factory=dict)
     alt_names: list[str] = field(default_factory=list)
