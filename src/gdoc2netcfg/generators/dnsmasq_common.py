@@ -39,6 +39,8 @@ def host_record_config(
     - ipv4./ipv6. prefix variants for all dual-stack names
 
     The ipv4_transform is applied to each IPv4 address before output.
+    Addresses are deduplicated after transform (important for external
+    DNS where all RFC 1918 IPs map to the same public IP).
     """
     if not host.dns_names:
         return []
@@ -60,9 +62,17 @@ def host_record_config(
             continue
 
         addrs: list[str] = []
-        if dns_name.ipv4:
-            addrs.append(ipv4_transform(str(dns_name.ipv4)))
-        addrs.extend(str(a) for a in dns_name.ipv6_addresses)
+        seen: set[str] = set()
+        for ipv4_addr in dns_name.ipv4_addresses:
+            transformed = ipv4_transform(str(ipv4_addr))
+            if transformed not in seen:
+                addrs.append(transformed)
+                seen.add(transformed)
+        for ipv6_addr in dns_name.ipv6_addresses:
+            addr_str = str(ipv6_addr)
+            if addr_str not in seen:
+                addrs.append(addr_str)
+                seen.add(addr_str)
 
         if not addrs:
             continue
@@ -156,7 +166,7 @@ def _most_specific_fqdn(
             if not any(str(a) == ip for a in dns_name.ipv6_addresses):
                 continue
         else:
-            if dns_name.ipv4 is None or str(dns_name.ipv4) != ip:
+            if not any(str(a) == ip for a in dns_name.ipv4_addresses):
                 continue
 
         dots = dns_name.name.count(".")

@@ -142,30 +142,32 @@ def derive_dns_names_hostname(host: "Host", domain: str) -> list[DNSName]:
       - {hostname}.{domain}  (FQDN)
       - {hostname}           (short name)
 
-    Uses the host's default IP and its IPv6 addresses.
+    Uses ALL interface IPv4 and IPv6 addresses so bare hostnames
+    resolve to every IP (round-robin DNS for multi-homed hosts).
     """
-    if host.default_ipv4 is None:
+    if not host.interfaces:
         return []
 
-    # Find IPv6 addresses for the default IP
-    ipv6_addrs: tuple["IPv6Address", ...] = ()
+    # Collect all IPv4s and all IPv6s across every interface
+    all_ipv4 = tuple(iface.ipv4 for iface in host.interfaces)
+    all_ipv6: list["IPv6Address"] = []
     for iface in host.interfaces:
-        if iface.ipv4 == host.default_ipv4:
-            ipv6_addrs = tuple(iface.ipv6_addresses)
-            break
+        all_ipv6.extend(iface.ipv6_addresses)
 
     return [
         _make_dns_name(
             f"{host.hostname}.{domain}",
-            host.default_ipv4,
-            ipv6_addrs,
+            None,
+            tuple(all_ipv6),
             is_fqdn=True,
+            ipv4_addresses=all_ipv4,
         ),
         _make_dns_name(
             host.hostname,
-            host.default_ipv4,
-            ipv6_addrs,
+            None,
+            tuple(all_ipv6),
             is_fqdn=False,
+            ipv4_addresses=all_ipv4,
         ),
     ]
 
@@ -209,6 +211,7 @@ def derive_dns_names_subdomain(
       - {x}.{subdomain}.{domain}
 
     Uses ip_to_subdomain from vlan.py for subdomain lookup.
+    Subdomain label is derived from the first IPv4; all IPs are propagated.
     """
     from gdoc2netcfg.derivations.vlan import ip_to_subdomain
 
@@ -232,6 +235,7 @@ def derive_dns_names_subdomain(
                     dns_name.ipv4,
                     dns_name.ipv6_addresses,
                     is_fqdn=True,
+                    ipv4_addresses=dns_name.ipv4_addresses or None,
                 )
             )
     return names
@@ -242,8 +246,8 @@ def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list[DNSName]:
 
     Scans ALL existing names. For any FQDN name that resolves to both IPv4
     and IPv6, adds:
-      - ipv4.{name}  (IPv4 only)
-      - ipv6.{name}  (IPv6 only)
+      - ipv4.{name}  (all IPv4 addresses, no IPv6)
+      - ipv6.{name}  (all IPv6 addresses, no IPv4)
     """
     names: list[DNSName] = []
     for dns_name in list(host.dns_names):
@@ -256,9 +260,10 @@ def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list[DNSName]:
         names.append(
             _make_dns_name(
                 f"ipv4.{dns_name.name}",
-                dns_name.ipv4,
+                None,
                 (),
                 is_fqdn=True,
+                ipv4_addresses=dns_name.ipv4_addresses,
             )
         )
         names.append(
@@ -275,27 +280,27 @@ def derive_dns_names_ip_prefix(host: "Host", domain: str) -> list[DNSName]:
 def derive_dns_names_alt_names(host: "Host") -> list[DNSName]:
     """Pass 5 — Alt names: add DNS names from the spreadsheet's Alt Names column.
 
-    Each alt name is treated as a FQDN pointing to the host's default
-    IPv4 and its associated IPv6 addresses.
+    Each alt name is treated as a FQDN pointing to ALL interface IPs,
+    matching the same treatment as Pass 1 (bare hostname).
     """
-    if not host.alt_names or host.default_ipv4 is None:
+    if not host.alt_names or not host.interfaces:
         return []
 
-    # Find IPv6 addresses for the default IP
-    ipv6_addrs: tuple["IPv6Address", ...] = ()
+    # Collect all IPv4s and all IPv6s across every interface
+    all_ipv4 = tuple(iface.ipv4 for iface in host.interfaces)
+    all_ipv6: list["IPv6Address"] = []
     for iface in host.interfaces:
-        if iface.ipv4 == host.default_ipv4:
-            ipv6_addrs = tuple(iface.ipv6_addresses)
-            break
+        all_ipv6.extend(iface.ipv6_addresses)
 
     names: list[DNSName] = []
     for alt_name in host.alt_names:
         names.append(
             _make_dns_name(
                 alt_name,
-                host.default_ipv4,
-                ipv6_addrs,
+                None,
+                tuple(all_ipv6),
                 is_fqdn=True,
+                ipv4_addresses=all_ipv4,
             )
         )
     return names
