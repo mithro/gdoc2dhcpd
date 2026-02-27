@@ -224,12 +224,16 @@ def shared_dns_sections(
 ) -> list[list[str]]:
     """Return the DNS record sections common to all dnsmasq generators.
 
-    Returns [ptr, host_records, caa, sshfp] — a list of sections where each
+    Returns [host_records, ptr, caa, sshfp] — a list of sections where each
     section is a list of config lines.
+
+    host-record is emitted BEFORE ptr-record because dnsmasq auto-generates
+    PTR entries from host-record directives. Explicit ptr-record lines after
+    host-record override the auto-generated PTRs with more-specific names.
     """
     return [
-        host_ptr_config(host, inventory),
         host_record_config(host, inventory, ipv4_transform),
+        host_ptr_config(host, inventory),
         host_caa_config(host, inventory),
         host_sshfp_records(host, inventory, ipv4_transform),
     ]
