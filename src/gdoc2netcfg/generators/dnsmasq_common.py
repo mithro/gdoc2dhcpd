@@ -258,3 +258,75 @@ def sections_to_text(sections: list[list[str]]) -> str:
     if not non_empty:
         return ""
     return "\n\n".join("\n".join(s) for s in non_empty) + "\n"
+
+
+def validate_dnsmasq_output(files: dict[str, str]) -> ValidationResult:
+    """Validate that every PTR record name has a matching host-record.
+
+    Parses all generated dnsmasq config files and checks that every forward
+    name referenced by a ptr-record also appears as a name in a host-record
+    line. This catches bugs in the DNS name derivation pipeline or generator
+    code that would break forward-confirmed reverse DNS (FCrDNS).
+
+    Args:
+        files: Dict mapping filename to config file content (as returned
+            by generate_dnsmasq_internal / generate_dnsmasq_external).
+
+    Returns:
+        ValidationResult with ERROR-severity violations for any PTR name
+        that lacks a matching host-record.
+    """
+    from gdoc2netcfg.constraints.errors import (
+        ConstraintViolation,
+        Severity,
+        ValidationResult,
+    )
+
+    result = ValidationResult()
+
+    # Collect all names from host-record lines across all files.
+    host_record_names: set[str] = set()
+    for content in files.values():
+        for line in content.splitlines():
+            if line.startswith("host-record="):
+                # host-record=NAME,ADDR[,ADDR...]
+                after_eq = line[len("host-record="):]
+                name = after_eq.split(",", 1)[0]
+                host_record_names.add(name)
+
+    # Check every PTR forward name has a matching host-record.
+    for filename, content in sorted(files.items()):
+        for line in content.splitlines():
+            if not line.startswith("ptr-record="):
+                continue
+
+            after_eq = line[len("ptr-record="):]
+
+            if after_eq.startswith("/"):
+                # IPv4 format: ptr-record=/FQDN/IP
+                parts = after_eq.strip("/").split("/")
+                if len(parts) >= 1:
+                    ptr_name = parts[0]
+                else:
+                    continue
+            else:
+                # IPv6 format: ptr-record=ARPA,FQDN
+                parts = after_eq.split(",", 1)
+                if len(parts) == 2:
+                    ptr_name = parts[1]
+                else:
+                    continue
+
+            if ptr_name not in host_record_names:
+                result.add(ConstraintViolation(
+                    severity=Severity.ERROR,
+                    code="ptr_without_forward",
+                    message=(
+                        f"PTR record references '{ptr_name}' but no "
+                        f"host-record exists for that name"
+                    ),
+                    record_id=filename,
+                    field="ptr-record",
+                ))
+
+    return result
